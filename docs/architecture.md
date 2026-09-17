@@ -29,4 +29,3 @@ flowchart LR
 ```
 
 Future executor adapters will depend on the same bounded command interface.
-

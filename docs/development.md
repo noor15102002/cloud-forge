@@ -18,4 +18,3 @@ machine.
 Keep operating-system commands behind `internal/command`. Keep public JSON
 changes explicit and versioned. Add packages only when they implement current
 behavior.
-

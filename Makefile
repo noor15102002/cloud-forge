@@ -19,4 +19,3 @@ vuln:
 	govulncheck ./...
 
 check: test vet lint vuln build
-

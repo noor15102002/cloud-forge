@@ -23,4 +23,3 @@ body:
       label: Minimal reproduction
     validations:
       required: true
-

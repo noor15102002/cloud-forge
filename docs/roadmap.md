@@ -37,4 +37,3 @@ issues rather than an exhaustive task list.
 - [ ] Test several external repositories without repository-specific behavior.
 - [ ] Harden cleanup, diagnostics, interruption, and unsupported-stack behavior.
 - [ ] Produce reproducible release binaries and checksums.
-

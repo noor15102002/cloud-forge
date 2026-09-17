@@ -78,4 +78,3 @@ metadata:
   name: node-api-secret
 stringData:
   password: never-include-this-value
-

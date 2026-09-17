@@ -31,4 +31,3 @@ spec:
           image: api-b:test
           ports:
             - containerPort: 8080
-

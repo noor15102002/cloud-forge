@@ -17,4 +17,3 @@ body:
       description: What measured or deterministic evidence should CloudForge produce?
     validations:
       required: true
-

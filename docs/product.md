@@ -12,4 +12,3 @@ diagnostics. Runtime verification remains on the roadmap.
 
 CloudForge is not a deployment platform, CI system, static Kubernetes linter,
 generic security scanner, hosted dashboard, or AI decision engine.
-

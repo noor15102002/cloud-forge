@@ -16,4 +16,3 @@ because they opened a pull request.
 
 Subprocesses use executable and argument arrays rather than shell command
 strings. Logs must never contain tokens, credentials, or full environments.
-

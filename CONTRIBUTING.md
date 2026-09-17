@@ -14,4 +14,3 @@ after CI passes and review is complete. Keep documentation and the changelog
 accurate; do not describe planned behavior as implemented.
 
 Please open a focused issue before starting a large architectural change.
-
