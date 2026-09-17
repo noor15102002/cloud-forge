@@ -1,0 +1,26 @@
+name: Bug report
+description: Report incorrect or unexpected CloudForge behavior
+title: "bug: "
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Include the command, expected behavior, and observed behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include CloudForge, OS, Docker, and Kubernetes tool versions where relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+    validations:
+      required: true
+

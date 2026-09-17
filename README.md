@@ -1,7 +1,83 @@
 # CloudForge
 
-CloudForge is an open-source production-behavior verification tool for
-containerized applications. Development is starting with deterministic
-repository analysis and environment diagnostics.
+CloudForge is an open-source CLI for proving how containerized applications
+behave under production-like Kubernetes conditions. It combines deterministic
+repository understanding with measured runtime experiments and evidence-based
+regression reporting.
 
-Licensed under the Apache License 2.0.
+> **Current status:** the first development slice implements environment
+> diagnostics and read-only repository analysis. Kubernetes execution,
+> experiments, reports, baselines, and the GitHub Action are planned and are
+> not yet available.
+
+## Why CloudForge
+
+Builds and static checks cannot show whether readiness gates traffic, SIGTERM
+drops requests, a replacement pod recovers promptly, or a rollout introduces
+downtime. CloudForge is being built to run these scenarios in disposable k3d
+clusters and report the observed evidence.
+
+```mermaid
+flowchart LR
+    Repo[Repository] --> Analyzer
+    Analyzer --> Model[Architecture model]
+    Model --> Planner[Risk and experiment planner]
+    Planner --> Executor[Local k3d executor]
+    Executor --> Evidence
+    Evidence --> Reporters[Terminal / JSON / Markdown]
+```
+
+## Install from source
+
+CloudForge currently requires Go 1.27:
+
+```console
+go install github.com/noor15102002/cloud-forge/cmd/cloudforge@latest
+```
+
+For development, clone the repository and run `make build`. Runtime verification
+will require Docker, k3d, kubectl, k6, and Trivy; repository analysis does not.
+
+## Commands
+
+```console
+cloudforge version
+cloudforge doctor
+cloudforge doctor --format json
+cloudforge analyze .
+cloudforge analyze ./services/api --format json
+```
+
+`analyze` supports application roots containing Node.js, TypeScript, or Python
+metadata, root Dockerfiles, and plain Kubernetes Deployment, Service, and HPA
+manifests. It recognizes Helm and Compose but does not render or analyze them
+yet. It does not execute repository code.
+
+JSON output uses the versioned `v1alpha1` schema. Collections are sorted for
+repeatable output; consumers must not depend on JSON object key ordering.
+
+## Planned verification experiments
+
+- Container build, startup, metadata, and Trivy findings
+- Health and readiness behavior
+- Pod recovery and graceful shutdown
+- Rolling deployments under continuous traffic
+- Deterministic k6 load profiles
+- HPA behavior when autoscaling is configured
+- Baseline-to-pull-request regression comparison
+
+The planned GitHub Action will upload reports and update one stable pull request
+comment. It is not included in the current slice.
+
+## Security and limitations
+
+Analysis reads bounded metadata files, skips generated directories and
+symbolic links, and does not load environment files or return Secret values.
+Future verification will build and run repository code, which must be treated
+as untrusted outside an isolated environment. See [SECURITY.md](SECURITY.md)
+and [docs/security.md](docs/security.md).
+
+Linux and WSL2 are the primary targets. See [the roadmap](docs/roadmap.md),
+[architecture](docs/architecture.md), and [contribution guide](CONTRIBUTING.md).
+
+Apache-2.0 licensed.

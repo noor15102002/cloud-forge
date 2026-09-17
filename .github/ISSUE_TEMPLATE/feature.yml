@@ -1,0 +1,20 @@
+name: Feature request
+description: Propose a focused CloudForge capability
+title: "feature: "
+labels: [feature]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Production verification problem
+      description: Describe the developer outcome this feature should improve.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Required evidence
+      description: What measured or deterministic evidence should CloudForge produce?
+    validations:
+      required: true
+
