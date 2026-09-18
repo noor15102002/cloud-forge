@@ -82,7 +82,7 @@ func newRootCommand(stdout, stderr io.Writer, runner command.Runner) *cobra.Comm
 	root.PersistentFlags().BoolVar(&verbose, "verbose", false, "show additional operational detail")
 	root.PersistentFlags().BoolVar(&debug, "debug", false, "show debug diagnostics")
 	getLogger := func() *slog.Logger { return logger }
-	root.AddCommand(newVersionCommand(stdout), newDoctorCommand(stdout, getLogger, runner), newAnalyzeCommand(stdout, getLogger), newVerifyCommand(stdout, getLogger, runner))
+	root.AddCommand(newVersionCommand(stdout), newDoctorCommand(stdout, getLogger, runner), newAnalyzeCommand(stdout, getLogger), newVerifyCommand(stdout, getLogger, runner), newReportCommand(stdout, getLogger))
 	return root
 }
 
@@ -223,6 +223,34 @@ func newAnalyzeCommand(stdout io.Writer, logger func() *slog.Logger) *cobra.Comm
 		return nil
 	}}
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	return cmd
+}
+
+func newReportCommand(stdout io.Writer, logger func() *slog.Logger) *cobra.Command {
+	var format string
+	cmd := &cobra.Command{Use: "report <verification.json>", Short: "Render a trusted view of a verification JSON report", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		if err := validateVerificationFormat(format); err != nil {
+			return &exitError{code: 2, err: err}
+		}
+		logger().Info("rendering verification report", "format", format)
+		run, err := regression.Load(args[0])
+		if err != nil {
+			return &exitError{code: 2, err: fmt.Errorf("CloudForge could not load the verification report: %w", err)}
+		}
+		switch format {
+		case "json":
+			err = render.JSON(stdout, run)
+		case "markdown":
+			err = render.VerificationMarkdown(stdout, run)
+		default:
+			err = render.VerificationText(stdout, run)
+		}
+		if err != nil {
+			return &exitError{code: 2, err: fmt.Errorf("CloudForge could not render the verification report: %w", err)}
+		}
+		return nil
+	}}
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, or markdown")
 	return cmd
 }
 

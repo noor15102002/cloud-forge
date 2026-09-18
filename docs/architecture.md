@@ -15,6 +15,8 @@ The implemented slice contains:
 - `internal/verification`: generated workload planning and lifecycle orchestration
 - `internal/regression`: bounded baseline loading and deterministic comparison
 - `internal/render`: canonical JSON plus terminal and Markdown reports
+- `action.yml`: read-only Ubuntu verification and artifact packaging
+- `.github/actions/report`: trusted report validation and stable comment update
 - `pkg/model`: versioned output contracts
 
 The analyzer never executes repository code. It uses structured JSON and TOML
@@ -75,3 +77,9 @@ experiments and actionable findings, while Markdown includes detailed
 collapsible measurements and findings for later PR comment integration.
 Repository-derived Markdown text is escaped before output; the canonical JSON
 retains the complete result when display limits apply.
+
+GitHub integration uses two jobs with separate trust levels. The verification
+job may execute pull-request code but has no write token or secrets. A later
+`workflow_run` job loads its code from the default branch, treats the JSON
+artifact as untrusted input, and receives narrowly scoped permission to update
+the pull-request comment. The reporter never executes artifact content.

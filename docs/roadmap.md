@@ -27,10 +27,10 @@ issues rather than an exhaustive task list.
 
 ## v0.4 — GitHub Action
 
-- [ ] Package and execute CloudForge in an Ubuntu action.
-- [ ] Upload reports and safely obtain configured baseline artifacts.
-- [ ] Update one marker-identified PR comment with minimum permissions.
-- [ ] Document the fork and untrusted-code security model.
+- [x] Package and execute CloudForge in an Ubuntu action.
+- [x] Upload reports and safely obtain configured baseline artifacts.
+- [x] Update one marker-identified PR comment with minimum permissions.
+- [x] Document the fork and untrusted-code security model.
 
 ## v1.0 — Public V1
 

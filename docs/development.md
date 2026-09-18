@@ -8,6 +8,7 @@ make test
 make vet
 make lint
 make vuln
+make actions
 make build
 ```
 
@@ -18,6 +19,11 @@ machine.
 Runtime verification requires access to a Docker daemon plus `k3d`, `kubectl`,
 `k6`, and Trivy. Run `cloudforge verify testdata/healthy-node` for the local
 smoke test. The command creates and removes its own uniquely named cluster.
+
+Action development also requires Node.js and `actionlint`. `make actions` tests
+the stable comment updater and validates the workflow and composite-action
+metadata. The runtime integration workflow then exercises the root action on a
+clean Ubuntu runner.
 
 Keep operating-system commands behind `internal/command`. Keep public JSON
 changes explicit and versioned. Add packages only when they implement current

@@ -1,0 +1,70 @@
+name: CloudForge Pull Request Report
+description: Validate a CloudForge JSON artifact and update one pull-request comment.
+
+inputs:
+  report-path:
+    description: Path to the untrusted verification.json artifact.
+    required: true
+  pull-request-number:
+    description: Pull request that receives the report.
+    required: true
+  github-token:
+    description: Token with pull-requests write permission.
+    required: true
+
+outputs:
+  comment-id:
+    description: ID of the created or updated comment.
+    value: ${{ steps.comment.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      with:
+        go-version: 1.27.1
+        cache: true
+        cache-dependency-path: ${{ github.action_path }}/../../../go.sum
+
+    - name: Build trusted report renderer
+      id: build
+      shell: bash
+      run: |
+        set -euo pipefail
+        binary="$RUNNER_TEMP/cloudforge-report-renderer"
+        cd "$GITHUB_ACTION_PATH/../../.."
+        go build -trimpath -o "$binary" ./cmd/cloudforge
+        echo "binary=$binary" >> "$GITHUB_OUTPUT"
+
+    - name: Validate and render untrusted JSON
+      id: render
+      shell: bash
+      env:
+        CLOUDFORGE_BINARY: ${{ steps.build.outputs.binary }}
+        CLOUDFORGE_REPORT_PATH: ${{ inputs.report-path }}
+      run: |
+        set -euo pipefail
+        markdown="$RUNNER_TEMP/cloudforge-pr-report.md"
+        "$CLOUDFORGE_BINARY" report "$CLOUDFORGE_REPORT_PATH" --format markdown > "$markdown"
+        echo "markdown=$markdown" >> "$GITHUB_OUTPUT"
+
+    - name: Create or update the CloudForge comment
+      id: comment
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+      env:
+        CLOUDFORGE_MARKDOWN_PATH: ${{ steps.render.outputs.markdown }}
+        CLOUDFORGE_PR_NUMBER: ${{ inputs.pull-request-number }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        result-encoding: string
+        script: |
+          const reporter = require(`${process.env.GITHUB_ACTION_PATH}/comment.cjs`)
+          const body = require('node:fs').readFileSync(process.env.CLOUDFORGE_MARKDOWN_PATH, 'utf8')
+          return await reporter.updateComment({
+            github,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pullRequestNumber: process.env.CLOUDFORGE_PR_NUMBER,
+            body
+          })

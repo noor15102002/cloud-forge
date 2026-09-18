@@ -1,0 +1,188 @@
+name: CloudForge Verification
+description: Verify a containerized application in an ephemeral k3d cluster and upload deterministic reports.
+author: CloudForge
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  path:
+    description: Application directory, relative to the GitHub workspace.
+    required: false
+    default: .
+  baseline-path:
+    description: Explicit local v1alpha1 verification JSON baseline.
+    required: false
+    default: ""
+  baseline-run-id:
+    description: Trusted workflow run ID containing the configured baseline artifact.
+    required: false
+    default: ""
+  baseline-artifact-name:
+    description: Artifact name to download when baseline-run-id is set.
+    required: false
+    default: cloudforge-verification
+  github-token:
+    description: Read-only token used only to download a configured baseline run artifact.
+    required: false
+    default: ""
+  artifact-name:
+    description: Name for the uploaded JSON and Markdown report artifact.
+    required: false
+    default: cloudforge-verification
+  retention-days:
+    description: Number of days to retain the report artifact.
+    required: false
+    default: "14"
+
+outputs:
+  report-json:
+    description: Absolute path to the canonical JSON report.
+    value: ${{ steps.verify.outputs.report-json }}
+  report-markdown:
+    description: Absolute path to the sanitized Markdown report.
+    value: ${{ steps.verify.outputs.report-markdown }}
+  binary:
+    description: Absolute path to the CloudForge binary built from this action ref.
+    value: ${{ steps.build.outputs.binary }}
+  exit-code:
+    description: CloudForge verification exit code.
+    value: ${{ steps.verify.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate action inputs
+      shell: bash
+      env:
+        CLOUDFORGE_BASELINE_PATH: ${{ inputs.baseline-path }}
+        CLOUDFORGE_BASELINE_RUN_ID: ${{ inputs.baseline-run-id }}
+        CLOUDFORGE_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        if [ "${RUNNER_OS:-}" != "Linux" ] || [ "${RUNNER_ARCH:-}" != "X64" ]; then
+          echo "CloudForge verification currently supports GitHub-hosted Ubuntu x64 runners." >&2
+          exit 2
+        fi
+        if [ -n "$CLOUDFORGE_BASELINE_PATH" ] && [ -n "$CLOUDFORGE_BASELINE_RUN_ID" ]; then
+          echo "Set either baseline-path or baseline-run-id, not both." >&2
+          exit 2
+        fi
+        if [[ "$CLOUDFORGE_BASELINE_PATH" == *$'\n'* || "$CLOUDFORGE_BASELINE_PATH" == *$'\r'* ]]; then
+          echo "baseline-path must not contain newline characters." >&2
+          exit 2
+        fi
+        if [ -n "$CLOUDFORGE_BASELINE_RUN_ID" ] && [[ ! "$CLOUDFORGE_BASELINE_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+          echo "baseline-run-id must be a positive integer." >&2
+          exit 2
+        fi
+        if [ -n "$CLOUDFORGE_BASELINE_RUN_ID" ] && [ -z "$CLOUDFORGE_GITHUB_TOKEN" ]; then
+          echo "github-token is required when baseline-run-id is set." >&2
+          exit 2
+        fi
+
+    - name: Set up Go
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      with:
+        go-version: 1.27.1
+        cache: true
+        cache-dependency-path: ${{ github.action_path }}/go.sum
+
+    - name: Install pinned runtime tools
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/scripts/install-tools.sh" "$RUNNER_TEMP/cloudforge-tools"
+
+    - name: Download configured baseline artifact
+      if: ${{ inputs.baseline-run-id != '' }}
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: ${{ inputs.baseline-artifact-name }}
+        path: ${{ runner.temp }}/cloudforge-baseline
+        github-token: ${{ inputs.github-token }}
+        run-id: ${{ inputs.baseline-run-id }}
+
+    - name: Resolve baseline
+      id: baseline
+      shell: bash
+      env:
+        CLOUDFORGE_BASELINE_PATH: ${{ inputs.baseline-path }}
+        CLOUDFORGE_BASELINE_RUN_ID: ${{ inputs.baseline-run-id }}
+      run: |
+        set -euo pipefail
+        baseline="$CLOUDFORGE_BASELINE_PATH"
+        if [ -n "$CLOUDFORGE_BASELINE_RUN_ID" ]; then
+          baseline="$RUNNER_TEMP/cloudforge-baseline/verification.json"
+        fi
+        if [ -n "$baseline" ] && [ ! -f "$baseline" ]; then
+          echo "Configured CloudForge baseline does not exist: $baseline" >&2
+          exit 2
+        fi
+        echo "path=$baseline" >> "$GITHUB_OUTPUT"
+
+    - name: Build pinned CloudForge action ref
+      id: build
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        install_dir="$RUNNER_TEMP/cloudforge-action"
+        mkdir -p "$install_dir"
+        binary="$install_dir/cloudforge"
+        go build -trimpath -o "$binary" ./cmd/cloudforge
+        echo "binary=$binary" >> "$GITHUB_OUTPUT"
+
+    - name: Verify application and render reports
+      id: verify
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        CLOUDFORGE_APPLICATION_PATH: ${{ inputs.path }}
+        CLOUDFORGE_BASELINE_PATH: ${{ steps.baseline.outputs.path }}
+        CLOUDFORGE_BINARY: ${{ steps.build.outputs.binary }}
+      run: |
+        set -euo pipefail
+        report_dir="$(mktemp -d "$RUNNER_TEMP/cloudforge-report.XXXXXX")"
+        json_report="$report_dir/verification.json"
+        markdown_report="$report_dir/verification.md"
+        arguments=(verify "$CLOUDFORGE_APPLICATION_PATH" --format json)
+        if [ -n "$CLOUDFORGE_BASELINE_PATH" ]; then
+          arguments+=(--baseline "$CLOUDFORGE_BASELINE_PATH")
+        fi
+        set +e
+        "$CLOUDFORGE_BINARY" "${arguments[@]}" > "$json_report"
+        status="$?"
+        set -e
+        if [ -s "$json_report" ]; then
+          if ! "$CLOUDFORGE_BINARY" report "$json_report" --format markdown > "$markdown_report"; then
+            status=2
+            markdown_report=""
+          fi
+          "$CLOUDFORGE_BINARY" report "$json_report" --format text || status=2
+        else
+          json_report=""
+          markdown_report=""
+        fi
+        echo "report-json=$json_report" >> "$GITHUB_OUTPUT"
+        echo "report-markdown=$markdown_report" >> "$GITHUB_OUTPUT"
+        echo "exit-code=$status" >> "$GITHUB_OUTPUT"
+
+    - name: Upload verification reports
+      if: ${{ always() && steps.verify.outputs.report-json != '' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          ${{ steps.verify.outputs.report-json }}
+          ${{ steps.verify.outputs.report-markdown }}
+        if-no-files-found: warn
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Apply verification result
+      if: ${{ always() }}
+      shell: bash
+      env:
+        CLOUDFORGE_EXIT_CODE: ${{ steps.verify.outputs.exit-code }}
+      run: |
+        set -euo pipefail
+        exit "${CLOUDFORGE_EXIT_CODE:-2}"

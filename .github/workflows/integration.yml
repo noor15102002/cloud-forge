@@ -2,6 +2,8 @@ name: Runtime integration
 
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -12,58 +14,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Check out repository
+      - name: Check out repository without persisted credentials
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: 1.27.1
-          cache: true
-      - name: Install k3d
-        run: |
-          curl --fail --silent --show-error --location --output k3d-linux-amd64 https://github.com/k3d-io/k3d/releases/download/v5.9.0/k3d-linux-amd64
-          curl --fail --silent --show-error --location --output checksums.txt https://github.com/k3d-io/k3d/releases/download/v5.9.0/checksums.txt
-          expected="$(awk '$2 == "_dist/k3d-linux-amd64" {print $1}' checksums.txt)"
-          test -n "$expected"
-          echo "$expected  k3d-linux-amd64" | sha256sum --check
-          sudo install -m 0755 k3d-linux-amd64 /usr/local/bin/k3d
-      - name: Install kubectl
-        run: |
-          curl --fail --silent --show-error --location --output kubectl https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl
-          curl --fail --silent --show-error --location --output kubectl.sha256 https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl.sha256
-          echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
-          sudo install -m 0755 kubectl /usr/local/bin/kubectl
-      - name: Install Trivy
-        run: |
-          archive=trivy_0.74.0_Linux-64bit.tar.gz
-          curl --fail --silent --show-error --location --output "$archive" https://github.com/aquasecurity/trivy/releases/download/v0.74.0/$archive
-          curl --fail --silent --show-error --location --output trivy-checksums.txt https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_checksums.txt
-          expected="$(awk '$2 == "trivy_0.74.0_Linux-64bit.tar.gz" {print $1}' trivy-checksums.txt)"
-          test -n "$expected"
-          echo "$expected  $archive" | sha256sum --check
-          tar --extract --gzip --file "$archive" trivy
-          sudo install -m 0755 trivy /usr/local/bin/trivy
-      - name: Install k6
-        run: |
-          archive=k6-v2.2.0-linux-amd64.tar.gz
-          curl --fail --silent --show-error --location --output "$archive" https://github.com/grafana/k6/releases/download/v2.2.0/$archive
-          curl --fail --silent --show-error --location --output k6-checksums.txt https://github.com/grafana/k6/releases/download/v2.2.0/k6-v2.2.0-checksums.txt
-          expected="$(awk '$2 == "k6-v2.2.0-linux-amd64.tar.gz" {print $1}' k6-checksums.txt)"
-          test -n "$expected"
-          echo "$expected  $archive" | sha256sum --check
-          tar --extract --gzip --file "$archive"
-          sudo install -m 0755 k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
-      - name: Build CloudForge
-        run: go build -o bin/cloudforge ./cmd/cloudforge
-      - name: Verify healthy Node fixture
-        run: bin/cloudforge verify testdata/healthy-node --format json > /tmp/cloudforge-result.json
+          persist-credentials: false
+
+      - name: Verify healthy Node fixture with the packaged action
+        id: cloudforge
+        uses: ./
+        with:
+          path: testdata/healthy-node
+          artifact-name: cloudforge-verification
+
       - name: Show safe verification result
-        if: always()
+        if: ${{ always() }}
+        env:
+          CLOUDFORGE_REPORT: ${{ steps.cloudforge.outputs.report-json }}
         run: |
-          if [ -f /tmp/cloudforge-result.json ]; then
-            jq . /tmp/cloudforge-result.json
+          if [ -f "$CLOUDFORGE_REPORT" ]; then
+            jq . "$CLOUDFORGE_REPORT"
           fi
+
       - name: Validate readiness evidence
+        env:
+          CLOUDFORGE_REPORT: ${{ steps.cloudforge.outputs.report-json }}
         run: |
           jq --exit-status '
             .schema_version == "v1alpha1" and
@@ -76,11 +50,14 @@ jobs:
             any(.evidence[]; .experiment_id == "rolling-deployment" and .status == "pass" and any(.measurements[]; .name == "source_version" and .value == "a") and any(.measurements[]; .name == "target_version" and .value == "b") and any(.measurements[]; .name == "target_ready_pods" and .value == "2") and any(.measurements[]; .name == "failed_requests" and .value == "0")) and
             any(.evidence[]; .experiment_id == "load-profile" and .status == "pass" and any(.measurements[]; .name == "request_count" and (.value | tonumber) > 0) and any(.measurements[]; .name == "error_rate" and .value == "0.000") and any(.measurements[]; .name == "latency_p95_ms")) and
             any(.evidence[]; .experiment_id == "horizontal-autoscaling" and .status == "pass" and any(.measurements[]; .name == "peak_replicas" and (.value | tonumber) > 2))
-          ' /tmp/cloudforge-result.json
+          ' "$CLOUDFORGE_REPORT"
+
       - name: Verify broken shutdown detection
+        env:
+          CLOUDFORGE_BINARY: ${{ steps.cloudforge.outputs.binary }}
         run: |
           set +e
-          bin/cloudforge verify testdata/broken-shutdown --format json > /tmp/cloudforge-broken-shutdown.json
+          "$CLOUDFORGE_BINARY" verify testdata/broken-shutdown --format json > /tmp/cloudforge-broken-shutdown.json
           status="$?"
           set -e
           jq . /tmp/cloudforge-broken-shutdown.json
@@ -90,10 +67,13 @@ jobs:
             any(.evidence[]; .experiment_id == "graceful-shutdown" and .status == "fail" and any(.measurements[]; .name == "dropped_requests" and (.value | tonumber) > 0)) and
             any(.diagnostics[]; .code == "graceful_shutdown_failed" and .status == "fail")
           ' /tmp/cloudforge-broken-shutdown.json
+
       - name: Verify broken rollout detection
+        env:
+          CLOUDFORGE_BINARY: ${{ steps.cloudforge.outputs.binary }}
         run: |
           set +e
-          bin/cloudforge verify testdata/broken-rollout --format json > /tmp/cloudforge-broken-rollout.json
+          "$CLOUDFORGE_BINARY" verify testdata/broken-rollout --format json > /tmp/cloudforge-broken-rollout.json
           status="$?"
           set -e
           jq . /tmp/cloudforge-broken-rollout.json
@@ -103,8 +83,9 @@ jobs:
             any(.evidence[]; .experiment_id == "rolling-deployment" and .status == "fail" and any(.measurements[]; .name == "target_ready_pods" and .value == "0")) and
             any(.diagnostics[]; .code == "rolling_deployment_failed" and .status == "fail")
           ' /tmp/cloudforge-broken-rollout.json
+
       - name: Confirm cluster cleanup
-        if: always()
+        if: ${{ always() }}
         run: |
           leaked="$(k3d cluster list --no-headers | awk '$1 ~ /^cloudforge-/ {print $1}')"
           if [ -n "$leaked" ]; then
