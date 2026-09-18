@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -27,6 +28,13 @@ func TestAnalyzeJSONContract(t *testing.T) {
 }
 
 func TestVerifyJSONContractAndExitCode(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "package.json"), []byte(`{"name":"cli-test"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "Dockerfile"), []byte("FROM node:22-alpine\nUSER node\nEXPOSE 8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
 		if request.Name == "trivy" {
@@ -34,14 +42,14 @@ func TestVerifyJSONContractAndExitCode(t *testing.T) {
 		}
 		for _, argument := range request.Args {
 			if argument == "pods" {
-				result.Stdout = `{"apiVersion":"v1","kind":"PodList","items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}},{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
+				result.Stdout = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"api"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
 			}
 		}
 		return result
 	})
 	var stdout, stderr bytes.Buffer
 	root := newRootCommand(&stdout, &stderr, runner)
-	root.SetArgs([]string{"verify", filepath.Join("..", "..", "testdata", "healthy-node"), "--format", "json"})
+	root.SetArgs([]string{"verify", directory, "--format", "json"})
 	err := root.ExecuteContext(context.Background())
 	if err != nil {
 		t.Fatalf("verify failed: %v stderr=%q", err, stderr.String())
@@ -50,7 +58,7 @@ func TestVerifyJSONContractAndExitCode(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != model.SchemaVersion || result.Status != model.StatusPass || len(result.Evidence) != 3 {
+	if result.SchemaVersion != model.SchemaVersion || result.Status != model.StatusPass || len(result.Evidence) != 4 {
 		t.Fatalf("unexpected verification contract: %#v", result)
 	}
 }

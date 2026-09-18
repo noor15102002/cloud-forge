@@ -2,6 +2,7 @@ package verification
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,24 +40,33 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 		}
 		return result
 	})
-	service := New(runner)
-	service.newID = func() (string, error) { return "0123abcd", nil }
-	service.now = clock(time.Unix(100, 0), time.Unix(101, 0))
+	service := fixedService(runner)
 
 	outcome := service.Run(context.Background(), fixturePath(t), Options{})
 	if outcome.ExitCode != 0 || outcome.Run.Status != model.StatusPass {
 		t.Fatalf("unexpected outcome: %#v", outcome)
 	}
-	if len(outcome.Run.Evidence) != 3 || outcome.Run.Evidence[2].Measurements[0].Value != "2" {
+	if len(outcome.Run.Evidence) != 4 || outcome.Run.Evidence[2].Measurements[0].Value != "2" {
 		t.Fatalf("missing readiness evidence: %#v", outcome.Run.Evidence)
 	}
-	if len(calls) != 9 || !containsArgument(calls[len(calls)-2].Args, "delete") || !containsArgument(calls[len(calls)-1].Args, "rm") {
+	if len(calls) != 12 || !containsArgument(calls[len(calls)-2].Args, "delete") || !containsArgument(calls[len(calls)-1].Args, "rm") {
 		t.Fatalf("unexpected command lifecycle: %#v", calls)
 	}
 	for _, expected := range []string{"kind: Namespace", "kind: Deployment", "kind: Service", "imagePullPolicy: Never", "path: /ready", "cpu: 100m", "replicas: 2"} {
 		if !strings.Contains(manifest, expected) {
 			t.Fatalf("generated manifest is missing %q:\n%s", expected, manifest)
 		}
+	}
+	for _, expected := range []string{"type: NodePort", "nodePort: 30080"} {
+		if !strings.Contains(manifest, expected) {
+			t.Fatalf("generated Service is missing %q:\n%s", expected, manifest)
+		}
+	}
+	if outcome.Run.Environment.Endpoint != "http://127.0.0.1:18080/ready" {
+		t.Fatalf("unexpected loopback endpoint: %q", outcome.Run.Environment.Endpoint)
+	}
+	if !hasCommand(calls, "k3d", "127.0.0.1:18080:30080@server:0") {
+		t.Fatalf("k3d did not receive the loopback port mapping: %#v", calls)
 	}
 	if strings.Contains(manifest, "never-include-this-value") {
 		t.Fatal("generated manifest leaked a source Secret value")
@@ -156,6 +166,88 @@ func TestReadinessFailureStillCleansUp(t *testing.T) {
 	}
 }
 
+func TestReadinessMeasuresHTTPGating(t *testing.T) {
+	service := fixedService(successRunner())
+	probeCalls := 0
+	var urls []string
+	service.probe = func(_ context.Context, url string) (int, error) {
+		probeCalls++
+		urls = append(urls, url)
+		if probeCalls == 1 {
+			return 503, nil
+		}
+		return 200, nil
+	}
+	outcome := service.Run(context.Background(), fixturePath(t), Options{})
+	if outcome.ExitCode != 0 {
+		t.Fatalf("unexpected outcome: %#v", outcome)
+	}
+	readiness := evidenceByID(outcome.Run.Evidence, "deployment-readiness")
+	if readiness == nil || measurementValue(readiness.Measurements, "readiness_http_status") != "200" || measurementValue(readiness.Measurements, "gated_attempts") != "1" {
+		t.Fatalf("readiness gating was not measured: %#v", readiness)
+	}
+	if len(urls) == 0 || !strings.HasSuffix(urls[len(urls)-1], "/health") {
+		t.Fatalf("final health check did not use the liveness endpoint: %#v", urls)
+	}
+}
+
+func TestPodRecoveryWaitsForReplacement(t *testing.T) {
+	podObservations := 0
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		result := successfulCommand(request)
+		if request.Name == "kubectl" && containsArgument(request.Args, "pods") {
+			podObservations++
+			if podObservations == 3 {
+				result.Stdout = degradedPodList
+			}
+		}
+		return result
+	})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	recovery := evidenceByID(outcome.Run.Evidence, "pod-recovery")
+	if outcome.ExitCode != 0 || recovery == nil || recovery.Status != model.StatusPass || podObservations < 4 {
+		t.Fatalf("replacement was not observed: outcome=%#v observations=%d", outcome, podObservations)
+	}
+}
+
+func TestPodRecoveryRecordsTrafficFailure(t *testing.T) {
+	service := fixedService(successRunner())
+	probeCalls := 0
+	service.probe = func(context.Context, string) (int, error) {
+		probeCalls++
+		if probeCalls == 3 {
+			return 503, errors.New("temporary failure")
+		}
+		return 200, nil
+	}
+	outcome := service.Run(context.Background(), fixturePath(t), Options{})
+	recovery := evidenceByID(outcome.Run.Evidence, "pod-recovery")
+	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || recovery == nil || measurementValue(recovery.Measurements, "failed_requests") != "1" {
+		t.Fatalf("traffic failure was not recorded: %#v", outcome)
+	}
+}
+
+func TestPodRecoveryTimeoutIsApplicationFailure(t *testing.T) {
+	deleted := false
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		result := successfulCommand(request)
+		if request.Name == "kubectl" && containsArgument(request.Args, "delete") {
+			deleted = true
+		}
+		if deleted && request.Name == "kubectl" && containsArgument(request.Args, "pods") {
+			result.Stdout = degradedPodList
+		}
+		return result
+	})
+	service := fixedService(runner)
+	service.recoveryTimeout = 5 * time.Millisecond
+	outcome := service.Run(context.Background(), fixturePath(t), Options{})
+	recovery := evidenceByID(outcome.Run.Evidence, "pod-recovery")
+	if outcome.ExitCode != 1 || recovery == nil || recovery.Status != model.StatusFail {
+		t.Fatalf("recovery timeout should be an observed failure: %#v", outcome)
+	}
+}
+
 func TestClusterCreateFailureUsesFreshCleanupContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var cleanupContextError error
@@ -227,6 +319,11 @@ func fixedService(runner command.Runner) *Service {
 	service := New(runner)
 	service.newID = func() (string, error) { return "0123abcd", nil }
 	service.now = clock(time.Unix(100, 0), time.Unix(101, 0))
+	service.port = func() (int, error) { return 18080, nil }
+	service.probe = func(context.Context, string) (int, error) { return 200, nil }
+	service.poll = time.Millisecond
+	service.readinessTimeout = 50 * time.Millisecond
+	service.recoveryTimeout = 50 * time.Millisecond
 	return service
 }
 
@@ -266,6 +363,41 @@ func hasDiagnosticCode(values []model.Diagnostic, code string) bool {
 	return false
 }
 
+func successRunner() command.Runner {
+	return runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		return successfulCommand(request)
+	})
+}
+
+func successfulCommand(request command.Request) model.CommandResult {
+	result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+	if request.Name == "trivy" {
+		result.Stdout = `{"Results":[]}`
+	}
+	if request.Name == "kubectl" && containsArgument(request.Args, "pods") {
+		result.Stdout = readyPodList
+	}
+	return result
+}
+
+func evidenceByID(values []model.Evidence, id string) *model.Evidence {
+	for index := range values {
+		if values[index].ExperimentID == id {
+			return &values[index]
+		}
+	}
+	return nil
+}
+
+func measurementValue(values []model.Measurement, name string) string {
+	for _, item := range values {
+		if item.Name == name {
+			return item.Value
+		}
+	}
+	return ""
+}
+
 func findingByID(values []model.Finding, id string) *model.Finding {
 	for index := range values {
 		if values[index].ID == id {
@@ -287,4 +419,6 @@ func clock(values ...time.Time) func() time.Time {
 	}
 }
 
-const readyPodList = `{"apiVersion":"v1","kind":"PodList","items":[{"status":{"conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"restartCount":0}]}},{"status":{"conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"restartCount":0}]}}]}`
+const readyPodList = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"api-a"},"status":{"conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"restartCount":0}]}},{"metadata":{"name":"api-b"},"status":{"conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"restartCount":0}]}}]}`
+
+const degradedPodList = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"api-a"},"status":{"conditions":[{"type":"Ready","status":"True"}]}},{"metadata":{"name":"api-new"},"status":{"conditions":[{"type":"Ready","status":"False"}]}}]}`

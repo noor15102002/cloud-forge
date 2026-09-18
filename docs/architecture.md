@@ -41,3 +41,8 @@ Verification generates one narrowly scoped Kubernetes workload from
 unambiguous analyzed metadata. A fresh k3d cluster isolates every run. Cleanup
 uses a separate bounded context so cancellation of the experiment does not
 cancel deletion.
+
+The generated Service uses a fixed NodePort mapped to a dynamically selected
+loopback-only host port. This allows the Go HTTP probe to measure readiness and
+send traffic during controlled pod deletion without exposing the application
+on a non-loopback interface.

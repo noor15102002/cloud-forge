@@ -7,6 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,7 +33,15 @@ import (
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
-const namespace = "cloudforge"
+const (
+	namespace       = "cloudforge"
+	nodePort        = 30080
+	httpTimeout     = 2 * time.Second
+	readinessWindow = 2 * time.Minute
+	recoveryWindow  = 2 * time.Minute
+)
+
+type probeFunc func(context.Context, string) (int, error)
 
 // Options controls one verification run.
 type Options struct {
@@ -45,14 +56,23 @@ type Outcome struct {
 
 // Service runs verification through injected command execution.
 type Service struct {
-	runner command.Runner
-	now    func() time.Time
-	newID  func() (string, error)
+	runner           command.Runner
+	now              func() time.Time
+	newID            func() (string, error)
+	port             func() (int, error)
+	probe            probeFunc
+	poll             time.Duration
+	readinessTimeout time.Duration
+	recoveryTimeout  time.Duration
 }
 
 // New creates a verification service.
 func New(runner command.Runner) *Service {
-	return &Service{runner: runner, now: time.Now, newID: randomID}
+	return &Service{
+		runner: runner, now: time.Now, newID: randomID, port: availablePort,
+		probe: httpProbe(&http.Client{Timeout: httpTimeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}),
+		poll:  200 * time.Millisecond, readinessTimeout: readinessWindow, recoveryTimeout: recoveryWindow,
+	}
 }
 
 // Run builds an image, deploys it to an isolated k3d cluster, observes
@@ -100,7 +120,12 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 
-	plan, err := buildPlan(analysis, id)
+	hostPort, err := s.port()
+	if err != nil {
+		out.addError("local_port_failed", "CloudForge could not reserve a local port for the verification endpoint.", err.Error())
+		return out
+	}
+	plan, err := buildPlan(analysis, id, hostPort)
 	if err != nil {
 		out.Run.Status = model.StatusFail
 		out.ExitCode = 1
@@ -113,6 +138,9 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	out.Run.Application = analysis.Application.Name
 	out.Run.Findings = append(out.Run.Findings, analysis.Findings...)
 	out.Run.Environment.ClusterName = plan.clusterName
+	if plan.readinessURL != "" {
+		out.Run.Environment.Endpoint = plan.readinessURL
+	}
 
 	temporary, err := os.MkdirTemp("", "cloudforge-verify-")
 	if err != nil {
@@ -201,7 +229,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	})
 
 	clusterAttempted = true
-	if result := k3dClient.Create(ctx, plan.clusterName); failed(result) {
+	if result := k3dClient.Create(ctx, plan.clusterName, plan.hostPort, nodePort); failed(result) {
 		out.addCommandDiagnostic("cluster_create_failed", "k3d could not create the verification cluster.", result)
 		return out
 	}
@@ -214,7 +242,23 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 
+	var httpResultChannel chan httpObservation
+	var stopHTTP context.CancelFunc
+	if plan.readinessURL != "" {
+		httpContext, cancel := context.WithTimeout(ctx, s.readinessTimeout)
+		stopHTTP = cancel
+		httpResultChannel = make(chan httpObservation, 1)
+		go func() { httpResultChannel <- s.waitForHTTP(httpContext, plan.readinessURL) }()
+	}
 	waitResult := kubernetesClient.WaitAvailable(ctx, plan.clusterName, namespace, plan.workloadName)
+	if failed(waitResult) && stopHTTP != nil {
+		stopHTTP()
+	}
+	httpResult := httpObservation{}
+	if httpResultChannel != nil {
+		httpResult = <-httpResultChannel
+		stopHTTP()
+	}
 	ready, total, restarts, podResult, podErr := kubernetesClient.ReadyPods(ctx, plan.clusterName, namespace, "app.kubernetes.io/name="+plan.workloadName)
 	readinessStatus := model.StatusPass
 	readinessSummary := "Deployment became available."
@@ -222,18 +266,32 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		readinessStatus = model.StatusFail
 		readinessSummary = "Deployment did not become available before the deadline."
 	}
+	if plan.readinessURL != "" && !httpResult.Success {
+		readinessStatus = model.StatusFail
+		readinessSummary = "The readiness endpoint did not return a successful HTTP status."
+	}
 	if podErr != nil || failed(podResult) {
 		out.addError("pod_observation_failed", "CloudForge could not decode the deployed pod state.", commandGuidance(podResult, podErr))
 		return out
 	}
+	readinessMeasurements := []model.Measurement{
+		{Name: "ready_pods", Value: strconv.Itoa(ready), Unit: "pods"},
+		{Name: "total_pods", Value: strconv.Itoa(total), Unit: "pods"},
+		{Name: "container_restarts", Value: strconv.FormatInt(int64(restarts), 10), Unit: "restarts"},
+		{Name: "readiness_duration_ms", Value: strconv.FormatInt(waitResult.DurationMS, 10), Unit: "ms"},
+	}
+	if plan.readinessURL != "" {
+		readinessMeasurements = append(readinessMeasurements,
+			model.Measurement{Name: "startup_duration_ms", Value: strconv.FormatInt(httpResult.DurationMS, 10), Unit: "ms"},
+			model.Measurement{Name: "readiness_http_status", Value: strconv.Itoa(httpResult.Status)},
+			model.Measurement{Name: "readiness_attempts", Value: strconv.Itoa(httpResult.Attempts), Unit: "requests"},
+			model.Measurement{Name: "gated_attempts", Value: strconv.Itoa(httpResult.Failures), Unit: "requests"},
+		)
+	}
 	out.Run.Evidence = append(out.Run.Evidence, model.Evidence{
 		ExperimentID: "deployment-readiness", Title: "Deployment readiness", Status: readinessStatus,
-		Summary: readinessSummary, DurationMS: waitResult.DurationMS,
-		Measurements: []model.Measurement{
-			{Name: "ready_pods", Value: strconv.Itoa(ready), Unit: "pods"},
-			{Name: "total_pods", Value: strconv.Itoa(total), Unit: "pods"},
-			{Name: "container_restarts", Value: strconv.FormatInt(int64(restarts), 10), Unit: "restarts"},
-		},
+		Summary: readinessSummary, DurationMS: maxInt64(waitResult.DurationMS, httpResult.DurationMS),
+		Measurements: readinessMeasurements,
 	})
 	if readinessStatus == model.StatusPass && (ready != int(plan.desiredReplicas) || total != int(plan.desiredReplicas)) {
 		readinessStatus = model.StatusFail
@@ -252,6 +310,11 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.ExitCode = 1
 		if failed(waitResult) {
 			out.addCommandDiagnostic("readiness_failed", readinessSummary, waitResult)
+		} else if plan.readinessURL != "" && !httpResult.Success {
+			out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
+				Code: "readiness_http_failed", Status: model.StatusFail, Message: readinessSummary,
+				Guidance: fmt.Sprintf("Observed HTTP status %d after %d attempts; verify the readiness path and Service port.", httpResult.Status, httpResult.Attempts),
+			})
 		} else {
 			out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
 				Code: "readiness_failed", Status: model.StatusFail, Message: readinessSummary,
@@ -266,6 +329,32 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		Summary: "The application started with all requested replicas ready.", Observed: fmt.Sprintf("%d/%d pods ready", ready, total),
 		Expected: "all requested replicas become ready", DurationMS: waitResult.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
 	})
+	if plan.readinessURL == "" {
+		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{
+			ExperimentID: "pod-recovery", Title: "Pod recovery under traffic", Status: model.StatusSkipped,
+			Summary: "Pod recovery traffic requires an explicit HTTP readiness endpoint.",
+		})
+	} else {
+		recovery := s.runPodRecovery(ctx, kubernetesClient, plan)
+		if recovery.Evidence.ExperimentID != "" {
+			out.Run.Evidence = append(out.Run.Evidence, recovery.Evidence)
+		}
+		if recovery.Finding != nil {
+			out.Run.Findings = append(out.Run.Findings, *recovery.Finding)
+		}
+		if recovery.Diagnostic != nil {
+			out.Run.Diagnostics = append(out.Run.Diagnostics, *recovery.Diagnostic)
+		}
+		if recovery.ExitCode != 0 {
+			out.ExitCode = recovery.ExitCode
+			if recovery.ExitCode == 1 {
+				out.Run.Status = model.StatusFail
+			} else {
+				out.Run.Status = model.StatusError
+			}
+			return out
+		}
+	}
 	out.Run.Status, out.ExitCode = outcomeForFindings(out.Run.Findings)
 	return out
 }
@@ -275,10 +364,13 @@ type plan struct {
 	workloadName    string
 	image           string
 	desiredReplicas int32
+	hostPort        int
+	readinessURL    string
+	healthURL       string
 	manifest        []byte
 }
 
-func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
+func buildPlan(analysis model.AnalysisResult, id string, hostPort int) (plan, error) {
 	application := analysis.Application
 	if len(application.Containers) != 1 || application.Containers[0].Source.Path != "Dockerfile" {
 		return plan{}, errors.New("verification requires exactly one root Dockerfile")
@@ -301,6 +393,8 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 	replicas := int32(1)
 	resources := corev1.ResourceRequirements{}
 	var readinessProbe, livenessProbe *corev1.Probe
+	readinessURL := ""
+	healthURL := ""
 	if len(application.Kubernetes.Deployments) == 1 {
 		deployment := application.Kubernetes.Deployments[0]
 		if deployment.Replicas != nil && *deployment.Replicas > 0 {
@@ -317,9 +411,17 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 		}
 		readinessProbe = probeFor(deployment.Endpoints, "readiness", port, portName)
 		livenessProbe = probeFor(deployment.Endpoints, "liveness", port, portName)
+		readinessURL = endpointURL(deployment.Endpoints, "readiness", hostPort)
+		healthURL = endpointURL(deployment.Endpoints, "liveness", hostPort)
+		if healthURL == "" {
+			healthURL = endpointURL(deployment.Endpoints, "startup", hostPort)
+		}
 	}
 	if readinessProbe == nil {
 		readinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}}
+	}
+	if healthURL == "" {
+		healthURL = readinessURL
 	}
 
 	labels := map[string]string{"app.kubernetes.io/name": workloadName, "app.kubernetes.io/managed-by": "cloudforge"}
@@ -340,14 +442,14 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 		&corev1.Service{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
 			ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: namespace, Labels: labels},
-			Spec:       corev1.ServiceSpec{Selector: labels, Ports: []corev1.ServicePort{{Name: portName, Port: port, TargetPort: intstr.FromString(portName), Protocol: corev1.ProtocolTCP}}},
+			Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeNodePort, Selector: labels, Ports: []corev1.ServicePort{{Name: portName, Port: port, TargetPort: intstr.FromString(portName), NodePort: nodePort, Protocol: corev1.ProtocolTCP}}},
 		},
 	}
 	manifest, err := marshalDocuments(objects)
 	if err != nil {
 		return plan{}, fmt.Errorf("encode generated Kubernetes resources: %w", err)
 	}
-	return plan{clusterName: clusterName, workloadName: workloadName, image: image, desiredReplicas: replicas, manifest: manifest}, nil
+	return plan{clusterName: clusterName, workloadName: workloadName, image: image, desiredReplicas: replicas, hostPort: hostPort, readinessURL: readinessURL, healthURL: healthURL, manifest: manifest}, nil
 }
 
 func selectPort(application model.Application) (int32, string, error) {
@@ -402,6 +504,24 @@ func probeFor(endpoints []model.Endpoint, purpose string, port int32, portName s
 		return &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: endpoint.Path, Port: probePort, Scheme: scheme}}}
 	}
 	return nil
+}
+
+func endpointURL(endpoints []model.Endpoint, purpose string, hostPort int) string {
+	for _, endpoint := range endpoints {
+		if endpoint.Purpose != purpose || endpoint.Path == "" {
+			continue
+		}
+		scheme := "http"
+		if strings.EqualFold(endpoint.Protocol, "https") {
+			scheme = "https"
+		}
+		path := endpoint.Path
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+		return fmt.Sprintf("%s://127.0.0.1:%d%s", scheme, hostPort, path)
+	}
+	return ""
 }
 
 func kubernetesResources(value model.ResourceRequirements) (corev1.ResourceRequirements, error) {
@@ -460,6 +580,39 @@ func randomID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value), nil
+}
+
+func availablePort() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	address, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = listener.Close()
+		return 0, errors.New("local listener did not return a TCP address")
+	}
+	port := address.Port
+	if err := listener.Close(); err != nil {
+		return 0, err
+	}
+	return port, nil
+}
+
+func httpProbe(client *http.Client) probeFunc {
+	return func(ctx context.Context, url string) (int, error) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return 0, err
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			return 0, err
+		}
+		defer func() { _ = response.Body.Close() }()
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1024))
+		return response.StatusCode, nil
+	}
 }
 
 func dnsName(value string) string {

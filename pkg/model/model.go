@@ -250,6 +250,7 @@ type VerificationEnvironment struct {
 	Backend     string `json:"backend"`
 	ClusterName string `json:"cluster_name,omitempty"`
 	Namespace   string `json:"namespace,omitempty"`
+	Endpoint    string `json:"endpoint,omitempty"`
 	Kept        bool   `json:"kept"`
 }
 

@@ -3,6 +3,7 @@ package k3d
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
@@ -15,10 +16,11 @@ type Client struct{ runner command.Runner }
 // New creates a k3d CLI adapter.
 func New(runner command.Runner) *Client { return &Client{runner: runner} }
 
-// Create creates a minimal cluster and waits for its API.
-func (c *Client) Create(ctx context.Context, name string) model.CommandResult {
+// Create creates a minimal cluster, publishes one NodePort on loopback, and waits for its API.
+func (c *Client) Create(ctx context.Context, name string, hostPort, nodePort int) model.CommandResult {
+	portMapping := "127.0.0.1:" + strconv.Itoa(hostPort) + ":" + strconv.Itoa(nodePort) + "@server:0"
 	return c.runner.Run(ctx, command.Request{
-		Name: "k3d", Args: []string{"cluster", "create", name, "--servers", "1", "--agents", "0", "--no-lb", "--wait", "--timeout", "90s"},
+		Name: "k3d", Args: []string{"cluster", "create", name, "--servers", "1", "--agents", "0", "--no-lb", "--port", portMapping, "--wait", "--timeout", "90s"},
 		Timeout: 2 * time.Minute, OutputLimit: 128 * 1024,
 	})
 }
