@@ -83,6 +83,55 @@ func TestConflictingCandidatesArePreserved(t *testing.T) {
 	}
 }
 
+func TestStaticFindingsCoverHealthyAndBrokenConfiguration(t *testing.T) {
+	healthy, err := New().Analyze(filepath.Join("..", "..", "testdata", "healthy-node"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if healthy.Status != model.StatusPass {
+		t.Fatalf("healthy fixture has unexpected findings: %#v", healthy.Findings)
+	}
+	for _, id := range []string{
+		"container.dockerfile.non-root",
+		"container.dockerfile.port",
+		"kubernetes.deployment.default-node-api.health-probe",
+		"kubernetes.deployment.default-node-api.readiness-probe",
+		"kubernetes.deployment.default-node-api.replicas",
+		"kubernetes.deployment.default-node-api.resources",
+		"kubernetes.hpa.default-node-api.range",
+		"kubernetes.service.default-node-api.ports",
+	} {
+		finding := findFinding(healthy.Findings, id)
+		if finding == nil || finding.Status != model.StatusPass {
+			t.Fatalf("missing healthy finding %q: %#v", id, finding)
+		}
+	}
+
+	broken, err := New().Analyze(filepath.Join("..", "..", "testdata", "broken-config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if broken.Status != model.StatusFail {
+		t.Fatalf("broken fixture should fail static checks: %#v", broken.Findings)
+	}
+	for _, id := range []string{
+		"container.dockerfile.non-root",
+		"kubernetes.deployment.default-broken-api.health-probe",
+		"kubernetes.deployment.default-broken-api.readiness-probe",
+		"kubernetes.deployment.default-broken-api.resources",
+		"kubernetes.hpa.default-broken-api.range",
+		"kubernetes.service.default-broken-api.ports",
+	} {
+		finding := findFinding(broken.Findings, id)
+		if finding == nil || finding.Status != model.StatusFail || finding.Source == nil {
+			t.Fatalf("missing broken finding %q: %#v", id, finding)
+		}
+	}
+	if finding := findFinding(broken.Findings, "container.dockerfile.port"); finding == nil || finding.Status != model.StatusWarn {
+		t.Fatalf("multiple ports should be preserved as a warning: %#v", finding)
+	}
+}
+
 func TestUnsupportedAndMalformedInput(t *testing.T) {
 	directory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(directory, "README.md"), []byte("hello"), 0o600); err != nil {
@@ -154,7 +203,7 @@ func TestMalformedKubernetesAndOversizedManifestAreDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "warn" || !hasDiagnostic(result, "kubernetes_invalid") || !hasDiagnostic(result, "manifest_unreadable") {
+	if !hasDiagnostic(result, "kubernetes_invalid") || !hasDiagnostic(result, "manifest_unreadable") {
 		t.Fatalf("expected bounded malformed input diagnostics: %#v", result.Diagnostics)
 	}
 }
@@ -166,4 +215,13 @@ func hasDiagnostic(result model.AnalysisResult, code string) bool {
 		}
 	}
 	return false
+}
+
+func findFinding(values []model.Finding, id string) *model.Finding {
+	for index := range values {
+		if values[index].ID == id {
+			return &values[index]
+		}
+	}
+	return nil
 }

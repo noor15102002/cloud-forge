@@ -29,6 +29,9 @@ func TestAnalyzeJSONContract(t *testing.T) {
 func TestVerifyJSONContractAndExitCode(t *testing.T) {
 	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		if request.Name == "trivy" {
+			result.Stdout = `{"Results":[]}`
+		}
 		for _, argument := range request.Args {
 			if argument == "pods" {
 				result.Stdout = `{"apiVersion":"v1","kind":"PodList","items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}},{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
@@ -47,7 +50,7 @@ func TestVerifyJSONContractAndExitCode(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != model.SchemaVersion || result.Status != model.StatusPass || len(result.Evidence) != 2 {
+	if result.SchemaVersion != model.SchemaVersion || result.Status != model.StatusPass || len(result.Evidence) != 3 {
 		t.Fatalf("unexpected verification contract: %#v", result)
 	}
 }

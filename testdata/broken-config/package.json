@@ -1,0 +1,5 @@
+{
+  "name": "broken-node-api",
+  "engines": { "node": ">=22" },
+  "dependencies": { "express": "5.1.0" }
+}

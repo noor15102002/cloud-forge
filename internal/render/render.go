@@ -68,6 +68,9 @@ func AnalysisText(w io.Writer, result model.AnalysisResult) error {
 	if _, err := fmt.Fprintf(w, "Containers: %d\nDeployments: %d\nServices: %d\nHPAs: %d\n", len(result.Application.Containers), len(result.Application.Kubernetes.Deployments), len(result.Application.Kubernetes.Services), len(result.Application.Kubernetes.HorizontalPodScalers)); err != nil {
 		return err
 	}
+	if err := findingsText(w, result.Findings); err != nil {
+		return err
+	}
 	for _, item := range result.Diagnostics {
 		if _, err := fmt.Fprintf(w, "%s: %s\n", strings.ToUpper(string(item.Status)), item.Message); err != nil {
 			return err
@@ -94,6 +97,9 @@ func VerificationText(w io.Writer, run model.VerificationRun) error {
 			}
 		}
 	}
+	if err := findingsText(w, run.Findings); err != nil {
+		return err
+	}
 	for _, item := range run.Diagnostics {
 		if _, err := fmt.Fprintf(w, "%s: %s\n", strings.ToUpper(string(item.Status)), item.Message); err != nil {
 			return err
@@ -107,6 +113,20 @@ func VerificationText(w io.Writer, run model.VerificationRun) error {
 	if run.Environment.Kept {
 		_, err := fmt.Fprintf(w, "Environment: kept k3d cluster %s\n", run.Environment.ClusterName)
 		return err
+	}
+	return nil
+}
+
+func findingsText(w io.Writer, findings []model.Finding) error {
+	for _, finding := range findings {
+		if _, err := fmt.Fprintf(w, "%s/%s %s: %s\n", strings.ToUpper(string(finding.Status)), strings.ToUpper(string(finding.Severity)), finding.ID, finding.Summary); err != nil {
+			return err
+		}
+		if finding.Remediation != "" {
+			if _, err := fmt.Fprintf(w, "  %s\n", finding.Remediation); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/noor15102002/cloud-forge/internal/executor/docker"
 	"github.com/noor15102002/cloud-forge/internal/executor/k3d"
 	"github.com/noor15102002/cloud-forge/internal/executor/kubernetes"
+	"github.com/noor15102002/cloud-forge/internal/executor/trivy"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -66,6 +68,9 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	}
 	out.ExitCode = 2
 	defer func() { out.Run.DurationMS = elapsedMilliseconds(s.now().Sub(started)) }()
+	defer func() {
+		sort.Slice(out.Run.Findings, func(i, j int) bool { return out.Run.Findings[i].ID < out.Run.Findings[j].ID })
+	}()
 
 	id, err := s.newID()
 	if err != nil {
@@ -106,6 +111,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 	out.Run.Application = analysis.Application.Name
+	out.Run.Findings = append(out.Run.Findings, analysis.Findings...)
 	out.Run.Environment.ClusterName = plan.clusterName
 
 	temporary, err := os.MkdirTemp("", "cloudforge-verify-")
@@ -135,6 +141,15 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		ExperimentID: "container-build", Title: "Container build", Status: buildStatus,
 		Summary: buildSummary, DurationMS: buildResult.DurationMS,
 	})
+	buildFinding := model.Finding{
+		ID: "container.build", Category: "container", Status: buildStatus, Severity: model.SeverityHigh,
+		Summary: buildSummary, Observed: strings.ToLower(string(buildStatus)), Expected: "image builds successfully",
+		DurationMS: buildResult.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
+	}
+	if buildStatus == model.StatusFail {
+		buildFinding.Remediation = "Run the Docker build locally, correct the failing instruction, and retry verification."
+	}
+	out.Run.Findings = append(out.Run.Findings, buildFinding)
 	if failed(buildResult) {
 		out.Run.Status = model.StatusFail
 		out.ExitCode = 1
@@ -142,12 +157,13 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 
+	clusterAttempted := false
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		if options.KeepEnvironment {
+		if options.KeepEnvironment && clusterAttempted {
 			out.Run.Environment.Kept = true
-		} else {
+		} else if clusterAttempted {
 			result := k3dClient.Delete(cleanupCtx, plan.clusterName)
 			if failed(result) {
 				out.Run.Status = model.StatusError
@@ -163,6 +179,28 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		}
 	}()
 
+	trivyClient := trivy.New(s.runner)
+	scan, scanErr := trivyClient.ScanImage(ctx, plan.image)
+	if scanErr != nil {
+		out.addError("trivy_output_invalid", "CloudForge could not parse Trivy's JSON report.", scanErr.Error())
+		return out
+	}
+	if failed(scan.Command) {
+		out.addCommandDiagnostic("trivy_scan_failed", "Trivy could not scan the application image.", scan.Command)
+		return out
+	}
+	out.Run.Findings = append(out.Run.Findings, scan.Findings...)
+	scanStatus := model.StatusPass
+	if countFindingStatus(scan.Findings, model.StatusWarn) > 0 {
+		scanStatus = model.StatusWarn
+	}
+	out.Run.Evidence = append(out.Run.Evidence, model.Evidence{
+		ExperimentID: "container-scan", Title: "Container vulnerability scan", Status: scanStatus,
+		Summary: scanSummary(scan.Findings), DurationMS: scan.Command.DurationMS,
+		Measurements: []model.Measurement{{Name: "vulnerabilities", Value: strconv.Itoa(countVulnerabilities(scan.Findings)), Unit: "findings"}},
+	})
+
+	clusterAttempted = true
 	if result := k3dClient.Create(ctx, plan.clusterName); failed(result) {
 		out.addCommandDiagnostic("cluster_create_failed", "k3d could not create the verification cluster.", result)
 		return out
@@ -204,6 +242,12 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.Run.Evidence[len(out.Run.Evidence)-1].Summary = readinessSummary
 	}
 	if readinessStatus == model.StatusFail {
+		out.Run.Findings = append(out.Run.Findings, model.Finding{
+			ID: "container.startup", Category: "container", Status: model.StatusFail, Severity: model.SeverityHigh,
+			Summary: "The application did not start with all requested replicas ready.", Observed: readinessSummary,
+			Expected: "all requested replicas become ready", Remediation: "Inspect the container entry point, application logs, port, and readiness probe.",
+			DurationMS: waitResult.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
+		})
 		out.Run.Status = model.StatusFail
 		out.ExitCode = 1
 		if failed(waitResult) {
@@ -217,8 +261,12 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 
-	out.Run.Status = model.StatusPass
-	out.ExitCode = 0
+	out.Run.Findings = append(out.Run.Findings, model.Finding{
+		ID: "container.startup", Category: "container", Status: model.StatusPass, Severity: model.SeverityInfo,
+		Summary: "The application started with all requested replicas ready.", Observed: fmt.Sprintf("%d/%d pods ready", ready, total),
+		Expected: "all requested replicas become ready", DurationMS: waitResult.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
+	})
+	out.Run.Status, out.ExitCode = outcomeForFindings(out.Run.Findings)
 	return out
 }
 
@@ -494,4 +542,46 @@ func commandGuidance(result model.CommandResult, err error) string {
 	default:
 		return fmt.Sprintf("%s could not be executed; run cloudforge doctor.", result.Command)
 	}
+}
+
+func countFindingStatus(values []model.Finding, status model.Status) int {
+	count := 0
+	for _, item := range values {
+		if item.Status == status {
+			count++
+		}
+	}
+	return count
+}
+
+func countVulnerabilities(values []model.Finding) int {
+	count := 0
+	for _, item := range values {
+		if strings.HasPrefix(item.ID, "security.trivy.") && item.ID != "security.trivy.vulnerabilities" {
+			count++
+		}
+	}
+	return count
+}
+
+func scanSummary(values []model.Finding) string {
+	count := countVulnerabilities(values)
+	if count == 0 {
+		return "Trivy detected no known vulnerabilities."
+	}
+	return fmt.Sprintf("Trivy detected %d known vulnerabilities.", count)
+}
+
+func outcomeForFindings(values []model.Finding) (model.Status, int) {
+	for _, item := range values {
+		if item.Status == model.StatusFail {
+			return model.StatusFail, 1
+		}
+	}
+	for _, item := range values {
+		if item.Status == model.StatusWarn {
+			return model.StatusWarn, 0
+		}
+	}
+	return model.StatusPass, 0
 }

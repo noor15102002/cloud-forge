@@ -10,7 +10,7 @@ permissions:
 jobs:
   readiness:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -33,6 +33,16 @@ jobs:
           curl --fail --silent --show-error --location --output kubectl.sha256 https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl.sha256
           echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
           sudo install -m 0755 kubectl /usr/local/bin/kubectl
+      - name: Install Trivy
+        run: |
+          archive=trivy_0.74.0_Linux-64bit.tar.gz
+          curl --fail --silent --show-error --location --output "$archive" https://github.com/aquasecurity/trivy/releases/download/v0.74.0/$archive
+          curl --fail --silent --show-error --location --output trivy-checksums.txt https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_checksums.txt
+          expected="$(awk '$2 == "trivy_0.74.0_Linux-64bit.tar.gz" {print $1}' trivy-checksums.txt)"
+          test -n "$expected"
+          echo "$expected  $archive" | sha256sum --check
+          tar --extract --gzip --file "$archive" trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
       - name: Build CloudForge
         run: go build -o bin/cloudforge ./cmd/cloudforge
       - name: Verify healthy Node fixture
@@ -41,8 +51,9 @@ jobs:
         run: |
           jq --exit-status '
             .schema_version == "v1alpha1" and
-            .status == "pass" and
+            (.status == "pass" or .status == "warn") and
             any(.evidence[]; .experiment_id == "container-build" and .status == "pass") and
+            any(.evidence[]; .experiment_id == "container-scan" and (.status == "pass" or .status == "warn")) and
             any(.evidence[]; .experiment_id == "deployment-readiness" and .status == "pass")
           ' /tmp/cloudforge-result.json
       - name: Confirm cluster cleanup

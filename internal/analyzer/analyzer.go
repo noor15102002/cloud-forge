@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/noor15102002/cloud-forge/internal/findings"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -64,6 +65,7 @@ func (a *Analyzer) Analyze(path string) (model.AnalysisResult, error) {
 	a.analyzeDocker(root, files, &result)
 	a.analyzeKubernetes(root, files, &result)
 	a.detectLimitedFormats(files, &result)
+	result.Findings = findings.Static(result.Application)
 
 	result.Supported = len(result.Application.Runtimes) > 0
 	if !result.Supported {
@@ -73,11 +75,31 @@ func (a *Analyzer) Analyze(path string) (model.AnalysisResult, error) {
 			Message:  "No supported Node.js, TypeScript, or Python application manifest was found.",
 			Guidance: "Analyze a directory containing package.json, pyproject.toml, or requirements.txt.",
 		})
-	} else if hasWarning(result.Diagnostics) {
+	} else if hasFailedFinding(result.Findings) {
+		result.Status = model.StatusFail
+	} else if hasWarning(result.Diagnostics) || hasWarningFinding(result.Findings) {
 		result.Status = model.StatusWarn
 	}
 	sortResult(&result)
 	return result, nil
+}
+
+func hasFailedFinding(values []model.Finding) bool {
+	for _, item := range values {
+		if item.Status == model.StatusFail {
+			return true
+		}
+	}
+	return false
+}
+
+func hasWarningFinding(values []model.Finding) bool {
+	for _, item := range values {
+		if item.Status == model.StatusWarn {
+			return true
+		}
+	}
+	return false
 }
 
 func discoverFiles(root string) ([]string, []model.Diagnostic, error) {
