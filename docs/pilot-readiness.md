@@ -9,18 +9,22 @@ Implementation: [PR #29](https://github.com/noor15102002/cloud-forge/pull/29).
 Tracking: [issue #30](https://github.com/noor15102002/cloud-forge/issues/30),
 [public milestone](https://github.com/noor15102002/cloud-forge/milestone/6).
 
+The acceptance gates passed on candidate `a01dd73`. See the
+[dated evidence record](pilot-readiness-evidence.md) for CI, complete artifacts,
+measured variance and scope limits.
+
 ## Acceptance gates
 
 - [x] Correct root-user, probe, HPA, ORM, unresolved-port and nonregular-file verdicts.
 - [x] Preserve supported deployment semantics and reject unsupported settings before execution.
-- [ ] Isolate kubeconfig and enforce replicas, CPU/memory and execution budgets.
+- [x] Isolate kubeconfig and enforce replicas, CPU/memory and execution budgets.
 - [x] Support strict versioned endpoint/load configuration without fixture-specific query parameters.
 - [x] Record effective configuration, source/image identity and tool fingerprints before comparisons.
-- [ ] Prove controlled readiness removal and a targeted in-flight shutdown request, or explicitly skip when unsupported.
-- [ ] Provide runnable healthy/broken Node and FastAPI reference applications.
-- [ ] Run each healthy reference application five times and publish variance.
-- [ ] Exercise real interruption during build, cluster creation, readiness and load, with ownership/cleanup checks.
-- [ ] Verify two or three pinned external stateless applications without application-specific core behavior.
+- [x] Prove controlled readiness removal and a targeted in-flight shutdown request, or explicitly skip when unsupported.
+- [x] Provide runnable healthy/broken Node and FastAPI reference applications.
+- [x] Run each healthy reference application five times and publish variance.
+- [x] Exercise real interruption during build, cluster creation, readiness and load, with ownership/cleanup checks.
+- [x] Verify two or three pinned external stateless applications without application-specific core behavior.
 
 Resource settings above the safety budget are rejected, not silently reduced.
 Baselines may compare different source commits/images, but require compatible
