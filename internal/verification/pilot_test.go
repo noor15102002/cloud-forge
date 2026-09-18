@@ -143,3 +143,21 @@ func TestPilotPrivateConfigurationAndBuildBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkloadFingerprintIgnoresRunIDYAMLQuoting(t *testing.T) {
+	analysis, err := analyzer.New().Analyze(fixturePath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, err := buildPlan(analysis, "12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := buildPlan(analysis, "abcdefab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workloadFingerprint(left) != workloadFingerprint(right) {
+		t.Fatal("generated YAML quoting changed experiment compatibility")
+	}
+}

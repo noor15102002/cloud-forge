@@ -105,3 +105,8 @@ declared two-replica reference deployment; the small FastAPI example receives
 a standard Dockerfile because upstream does not supply one. Application source
 is not edited. Only each app's stateless GET `/` route is exercised. Legitimate
 source findings, such as the Express image running as root, remain visible.
+An external application is not assumed healthy: measured lifecycle traffic
+failures are retained as application failures, with successful final health and
+nonzero failed-request evidence. Early termination means later experiments were
+not run. The pilot checks that these are application observations, not CloudForge
+execution errors; it does not turn the external application's verdict into PASS.

@@ -85,6 +85,7 @@ metricsComplete:
 	}
 	scaleDuration := int64(0)
 	scaleObserved := false
+	peakReady := startReplicas
 	scaleExpected := false
 	var demandSince time.Time
 	scaleCtx, cancelScale := context.WithTimeout(ctx, s.hpaScaleTimeout)
@@ -109,7 +110,7 @@ metricsComplete:
 			if demandSince.IsZero() {
 				demandSince = time.Now()
 			}
-			if time.Since(demandSince) >= 15*time.Second {
+			if !current.hpaScaleDisabled && time.Since(demandSince) >= max(15*time.Second, current.hpaDemandWindow) {
 				scaleExpected = true
 			}
 		} else {
@@ -121,6 +122,17 @@ metricsComplete:
 			peakCPU = maxInt32(peakCPU, *state.CurrentCPU)
 		}
 		if peakReplicas > startReplicas {
+			ready, _, _, readyResult, readyErr := client.ReadyPods(scaleCtx, current.clusterName, namespace, "app.kubernetes.io/name="+current.workloadName)
+			if readyErr != nil || failed(readyResult) || ready < 0 || ready > 10 {
+				cancelLoad()
+				if !loadFinished {
+					<-loadDone
+				}
+				return skippedLoad("Autoscaling observation could not complete."), lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_readiness_unavailable", "CloudForge could not inspect scaled pod readiness.", "Inspect the disposable cluster.", trafficObservation{})
+			}
+			peakReady = maxInt32(peakReady, int32(ready))
+		}
+		if peakReady > startReplicas {
 			if !scaleObserved {
 				scaleDuration = elapsedMilliseconds(time.Since(loadStarted))
 				scaleObserved = true
@@ -132,7 +144,7 @@ metricsComplete:
 		select {
 		case execution = <-loadDone:
 			loadFinished = true
-			if peakReplicas > startReplicas {
+			if peakReady > startReplicas {
 				goto scaleComplete
 			}
 		case <-scaleCtx.Done():
@@ -152,6 +164,7 @@ scaleComplete:
 	summary := execution.summary
 	measurements := []model.Measurement{
 		{Name: "starting_replicas", Value: strconv.FormatInt(int64(startReplicas), 10), Unit: "pods"},
+		{Name: "peak_ready_replicas", Value: strconv.FormatInt(int64(peakReady), 10), Unit: "pods"},
 		{Name: "peak_replicas", Value: strconv.FormatInt(int64(peakReplicas), 10), Unit: "pods"},
 		{Name: "starting_desired_replicas", Value: strconv.FormatInt(int64(startDesiredReplicas), 10), Unit: "pods"},
 		{Name: "peak_desired_replicas", Value: strconv.FormatInt(int64(peakDesiredReplicas), 10), Unit: "pods"},
@@ -164,15 +177,15 @@ scaleComplete:
 		{Name: "failed_requests", Value: strconv.FormatInt(failedRequests(summary), 10), Unit: "requests"},
 		{Name: "latency_p95_ms", Value: decimal(summary.P95MS), Unit: "ms"},
 	}
-	if peakReplicas <= startReplicas && !scaleExpected {
+	if peakReady <= startReplicas && !scaleExpected {
 		outcome := skippedAutoscaling("Insufficient scaling demand was observed; remaining at the starting replica count is not an application failure.")
 		outcome.Evidence.Measurements = measurements
 		return loadOutcome, outcome
 	}
-	if peakReplicas <= startReplicas {
+	if peakReady <= startReplicas {
 		return loadOutcome, lifecycleFailure("horizontal-autoscaling", "Horizontal autoscaling under load", "runtime.horizontal-autoscaling", "The HPA received CPU metrics but did not scale the Deployment.", "Review CPU requests, the utilization target, metrics-server, and the load profile.", elapsedMilliseconds(time.Since(loadStarted)), trafficObservation{}, measurements)
 	}
-	return loadOutcome, lifecycleSuccess("horizontal-autoscaling", "Horizontal autoscaling under load", "runtime.horizontal-autoscaling", "The HPA increased the requested replica count under bounded load.", elapsedMilliseconds(time.Since(loadStarted)), fmt.Sprintf("replicas increased from %d to %d", startReplicas, peakReplicas), measurements)
+	return loadOutcome, lifecycleSuccess("horizontal-autoscaling", "Horizontal autoscaling under load", "runtime.horizontal-autoscaling", "The HPA produced additional ready replicas under bounded load.", elapsedMilliseconds(time.Since(loadStarted)), fmt.Sprintf("replicas increased from %d to %d", startReplicas, peakReplicas), measurements)
 }
 
 type loadExecution struct {

@@ -38,9 +38,19 @@ for name, url, revision, subdirectory, port in apps:
         print(f"{name}: exit={result.returncode} status={report['status']}", flush=True)
         # Preserve legitimate source findings, including Express's root image.
         assert result.returncode in [0, 1], report
-        for experiment in ["container-build", "deployment-readiness", "load-profile"]:
+        for experiment in ["container-build", "deployment-readiness"]:
             assert any(item["experiment_id"] == experiment and item["status"] == "pass" for item in report["evidence"]), report
-        assert not any(item["status"] in ["fail", "error"] for item in report["evidence"]), report
+        assert not any(item["status"] == "error" for item in report["evidence"]), report
+        failures = [item for item in report["evidence"] if item["status"] == "fail"]
+        for failure in failures:
+            assert failure["experiment_id"] in ["graceful-shutdown", "pod-recovery", "rolling-deployment"], failure
+            measurements = {item["name"]: item["value"] for item in failure.get("measurements", [])}
+            assert int(measurements.get("dropped_requests", measurements.get("failed_requests", "0"))) > 0, failure
+            assert 200 <= int(measurements.get("final_http_status", "0")) < 300, failure
+        if not failures:
+            assert any(item["experiment_id"] == "load-profile" and item["status"] == "pass" for item in report["evidence"]), report
+        else:
+            print(f"{name}: observed application traffic failure in {failures[0]['experiment_id']}; report retained, later experiments not claimed", flush=True)
         assert report["fingerprint"]["source_commit"] == revision
         assert report["fingerprint"]["image_id"]
         assert "cloudforge-" not in subprocess.check_output(["k3d", "cluster", "list", "--no-headers"], text=True)

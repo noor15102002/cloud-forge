@@ -83,7 +83,7 @@ func boundedResources(declared corev1.ResourceRequirements, replicas int32, stra
 	}
 	cpu, memory := declared.Limits[corev1.ResourceCPU], declared.Limits[corev1.ResourceMemory]
 	cpuBudget, memoryBudget := resource.MustParse(safetyBudget().WorkloadCPU), resource.MustParse(safetyBudget().WorkloadMemory)
-	if cpu.MilliValue() > cpuBudget.MilliValue()/capacity || memory.Value() > memoryBudget.Value()/capacity {
+	if cpu.Cmp(*resource.NewMilliQuantity(cpuBudget.MilliValue()/capacity, resource.DecimalSI)) > 0 || memory.Cmp(*resource.NewQuantity(memoryBudget.Value()/capacity, resource.BinarySI)) > 0 {
 		return declared, errors.New("replicas plus rollout surge exceed the aggregate 4 CPU / 2 GiB workload budget")
 	}
 	return declared, nil

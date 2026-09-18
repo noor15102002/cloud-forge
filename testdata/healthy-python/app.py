@@ -1,9 +1,7 @@
 """Reference FastAPI service with explicit, disposable-test instrumentation."""
 import asyncio
 import os
-import signal
 import time
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -14,15 +12,7 @@ ready = True
 active = set()
 
 
-@asynccontextmanager
-async def lifespan(_app):
-    if FAILURE == "shutdown":
-        signal.signal(signal.SIGTERM, lambda *_: os._exit(1))
-    yield
-
-
-app = FastAPI(lifespan=lifespan)
-
+app = FastAPI()
 
 @app.get("/health")
 async def health():

@@ -5,11 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
 	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
 	"github.com/noor15102002/cloud-forge/internal/doctor"
@@ -27,16 +31,9 @@ func newFingerprint(ctx context.Context, runner command.Runner, root string, cur
 	if commit == "" {
 		commit = "unknown"
 	}
-	// Names, image tags and loopback ports vary per run; replace only those
-	// generated identifiers before hashing the effective manifest semantics.
-	manifest := string(current.manifest) + string(current.hpaManifest)
-	for _, name := range []string{current.image, current.workloadName, current.clusterName} {
-		manifest = strings.ReplaceAll(manifest, name, "<run>")
-	}
-	manifest = strings.ReplaceAll(manifest, strings.TrimPrefix(current.clusterName, "cloudforge-"), "<id>")
 	fingerprint := &model.RunFingerprint{CloudForgeVersion: version, CloudForgeCommit: commit,
 		Platform: runtime.GOOS + "/" + runtime.GOARCH, CPUs: runtime.NumCPU(), Tools: []model.ToolVersion{},
-		Configuration: current.config, Resources: current.effectiveResources, Budget: safetyBudget(), WorkloadHash: hashBytes([]byte(manifest))}
+		Configuration: current.config, Resources: current.effectiveResources, Budget: safetyBudget(), WorkloadHash: workloadFingerprint(current)}
 	result := runner.Run(ctx, command.Request{Name: "git", Args: []string{"rev-parse", "HEAD"}, Dir: root, Timeout: 5 * time.Second})
 	if !failed(result) && commitPattern.MatchString(strings.TrimSpace(result.Stdout)) {
 		fingerprint.SourceCommit = strings.TrimSpace(result.Stdout)
@@ -114,3 +111,40 @@ func fingerprintTools(ctx context.Context, runner command.Runner, current plan, 
 }
 
 func hashBytes(value []byte) string { sum := sha256.Sum256(value); return hex.EncodeToString(sum[:]) }
+
+func workloadFingerprint(current plan) string {
+	decoder := yaml.NewYAMLOrJSONDecoder(strings.NewReader(string(current.manifest)+"\n---\n"+string(current.hpaManifest)), 4096)
+	var documents []any
+	replacements := strings.NewReplacer(current.image, "<image>", current.workloadName, "<workload>", current.clusterName, "<cluster>", strings.TrimPrefix(current.clusterName, "cloudforge-"), "<run-id>")
+	var normalize func(any) any
+	normalize = func(value any) any {
+		switch v := value.(type) {
+		case string:
+			return replacements.Replace(v)
+		case []any:
+			for i := range v {
+				v[i] = normalize(v[i])
+			}
+		case map[string]any:
+			for key, item := range v {
+				v[key] = normalize(item)
+			}
+		}
+		return value
+	}
+	for {
+		var document any
+		err := decoder.Decode(&document)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return ""
+		}
+		if document != nil {
+			documents = append(documents, normalize(document))
+		}
+	}
+	data, _ := json.Marshal(documents)
+	return hashBytes(data)
+}

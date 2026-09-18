@@ -64,3 +64,21 @@ func TestRemoveImageTreatsMissingImageAsAlreadyClean(t *testing.T) {
 		t.Fatalf("missing image cleanup was not idempotent: %#v", result)
 	}
 }
+
+func TestRemnantCleanupRequiresOwnershipAndExactRunName(t *testing.T) {
+	var removals []string
+	client := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		result := model.CommandResult{}
+		if len(request.Args) > 1 && request.Args[1] == "ls" {
+			result.Stdout = "123456abcdef k3d-cloudforge-0123abcd\nabcdef123456 k3d-cloudforge-0123abcd-other\nfedcba123456 k3d-cloudforge-ffffaaaa\n"
+		}
+		if len(request.Args) > 1 && request.Args[1] == "rm" {
+			removals = append(removals, request.Args[len(request.Args)-1])
+		}
+		return result
+	}))
+	client.RemoveClusterRemnants(context.Background(), "cloudforge-0123abcd", "network")
+	if len(removals) != 1 || removals[0] != "123456abcdef" {
+		t.Fatalf("cleanup targeted unrelated resources: %#v", removals)
+	}
+}

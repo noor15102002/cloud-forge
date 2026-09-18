@@ -2,6 +2,7 @@ package verification
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -72,7 +73,7 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	if autoscaling == nil || autoscaling.Status != model.StatusPass || measurementValue(autoscaling.Measurements, "starting_replicas") != "2" || measurementValue(autoscaling.Measurements, "peak_replicas") != "3" {
 		t.Fatalf("missing autoscaling evidence: %#v", autoscaling)
 	}
-	if !containsArgument(calls[len(calls)-3].Args, "delete") || !containsArgument(calls[len(calls)-2].Args, "rm") || !containsArgument(calls[len(calls)-1].Args, "rm") {
+	if !hasCommand(calls, "k3d", "delete") || !containsArgument(calls[len(calls)-2].Args, "rm") || !containsArgument(calls[len(calls)-1].Args, "rm") {
 		t.Fatalf("unexpected command lifecycle: %#v", calls)
 	}
 	for _, expected := range []string{"kind: Namespace", "kind: Deployment", "kind: Service", "imagePullPolicy: Never", "path: /ready", "cpu: 100m", "replicas: 2"} {
@@ -734,6 +735,17 @@ func fixedService(runner command.Runner) *Service {
 			for index, argument := range request.Args {
 				if argument == "--summary-export" && index+1 < len(request.Args) {
 					_ = os.WriteFile(request.Args[index+1], []byte(`{"metrics":{"http_reqs":{"values":{"count":120,"rate":12.5}},"http_req_failed":{"values":{"rate":0}},"http_req_duration":{"values":{"p(50)":4.2,"p(95)":8.4,"p(99)":12.6}}}}`), 0o600)
+				}
+			}
+		}
+		if loadRan && request.Name == "kubectl" && containsArgument(request.Args, "pods") {
+			var pods map[string]any
+			if json.Unmarshal([]byte(result.Stdout), &pods) == nil {
+				items, _ := pods["items"].([]any)
+				if len(items) == 2 {
+					pods["items"] = append(items, map[string]any{"metadata": map[string]any{"name": "scaled"}, "status": map[string]any{"conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}})
+					data, _ := json.Marshal(pods)
+					result.Stdout = string(data)
 				}
 			}
 		}

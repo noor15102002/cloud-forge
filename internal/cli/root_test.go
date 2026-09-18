@@ -128,7 +128,7 @@ func TestVerifyBaselineRegressionProducesReportAndExitOne(t *testing.T) {
 	err = root.ExecuteContext(context.Background())
 	var coded *exitError
 	if !errors.As(err, &coded) || coded.code != 1 {
-		t.Fatalf("expected regression exit code 1, got %v", err)
+		t.Fatalf("expected regression exit code 1, got %v; baseline=%s current=%s", err, baselineData, stdout.String())
 	}
 	var current model.VerificationRun
 	if err := json.Unmarshal(stdout.Bytes(), &current); err != nil {

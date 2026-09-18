@@ -219,6 +219,16 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 				out.addCommandDiagnostic("cluster_cleanup_failed", "CloudForge could not remove its k3d cluster.", result)
 			}
 		}
+		if clusterAttempted && (!options.KeepEnvironment || !clusterCreated) {
+			for _, kind := range []string{"container", "network", "volume"} {
+				result := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult {
+					return dockerClient.RemoveClusterRemnants(cleanupCtx, plan.clusterName, kind)
+				})
+				if failed(result) {
+					out.addError("cluster_remnant_cleanup_failed", "CloudForge could not remove a run-owned cluster remnant.", "Inspect resources with the reported run name and app=k3d ownership label before retrying cleanup.")
+				}
+			}
+		}
 		for _, image := range imagesToCleanup {
 			imageResult := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult {
 				return dockerClient.RemoveImage(cleanupCtx, image)
@@ -523,6 +533,8 @@ type plan struct {
 	hpaMinReplicas     int32
 	hpaMaxReplicas     int32
 	hpaTargetCPU       int32
+	hpaDemandWindow    time.Duration
+	hpaScaleDisabled   bool
 	hpaSkipReason      string
 }
 
@@ -719,14 +731,13 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 		source := application.Kubernetes.HorizontalPodScalers[0]
 		deployment := application.Kubernetes.Deployments[0]
 		if source.TargetKind == "Deployment" && source.TargetName == deployment.Name && normalizedNamespace(source.Namespace) == normalizedNamespace(deployment.Namespace) && source.MaxReplicas > replicas && source.TargetCPU != nil && *source.TargetCPU > 0 {
-			minimum := replicas
+			minimum := int32(1)
 			if source.MinReplicas != nil && *source.MinReplicas > 0 {
 				minimum = *source.MinReplicas
 			}
 			maximum := source.MaxReplicas
-			if minimum >= maximum {
-				result.hpaSkipReason = "The HPA minimum replica count is too high for CloudForge's five-replica local safety bound."
-				return result, nil
+			if minimum > maximum {
+				return plan{}, errors.New("HPA minReplicas exceeds maxReplicas")
 			}
 			targetCPU := *source.TargetCPU
 			hpa := &autoscalingv2.HorizontalPodAutoscaler{
@@ -744,6 +755,15 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 			}
 			result.hpaName, result.hpaMinReplicas, result.hpaMaxReplicas, result.hpaTargetCPU = workloadName, minimum, maximum, targetCPU
 			result.hpaSkipReason = ""
+			if source.Behavior != nil && source.Behavior.ScaleUp != nil {
+				up := source.Behavior.ScaleUp
+				if up.StabilizationWindowSeconds != nil {
+					result.hpaDemandWindow = time.Duration(*up.StabilizationWindowSeconds) * time.Second
+				}
+				if up.SelectPolicy != nil && *up.SelectPolicy == autoscalingv2.DisabledPolicySelect {
+					result.hpaScaleDisabled = true
+				}
+			}
 		} else {
 			result.hpaSkipReason = "The discovered HPA must target the selected Deployment, define a positive CPU utilization target, and allow more replicas than the workload starts with."
 		}

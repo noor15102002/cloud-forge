@@ -93,9 +93,14 @@ func (s *Service) runReadinessGating(ctx context.Context, client *kubernetes.Cli
 			seen = true
 			break
 		}
+		if !pause(ctx, s.poll) {
+			break
+		}
 	}
 	if !seen {
-		return controlledSkip(id, title)
+		outcome := controlledSkip(id, title)
+		outcome.Evidence.Summary = "The Service did not route to the selected ready pod during the bounded precondition window; readiness-gating evidence is unavailable."
+		return outcome
 	}
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -109,6 +114,9 @@ func (s *Service) runReadinessGating(ctx context.Context, client *kubernetes.Cli
 	unready := false
 	for ctx.Err() == nil {
 		pods, result, err = client.ObservePods(ctx, current.clusterName, namespace, "app.kubernetes.io/name="+current.workloadName)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			break
+		}
 		if err != nil || failed(result) {
 			return controlError(id, title, "Could not observe the controlled readiness transition.")
 		}
