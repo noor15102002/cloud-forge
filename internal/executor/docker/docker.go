@@ -21,8 +21,18 @@ func New(runner command.Runner) *Client { return &Client{runner: runner} }
 
 // Build builds and tags a Dockerfile from root.
 func (c *Client) Build(ctx context.Context, root, image string) model.CommandResult {
+	return c.BuildVersion(ctx, root, image, "")
+}
+
+// BuildVersion builds and tags a Dockerfile with an optional public experiment version.
+func (c *Client) BuildVersion(ctx context.Context, root, image, version string) model.CommandResult {
+	args := []string{"build"}
+	if version != "" {
+		args = append(args, "--build-arg", "CLOUDFORGE_VERSION="+version)
+	}
+	args = append(args, "--tag", image, ".")
 	return c.runner.Run(ctx, command.Request{
-		Name: "docker", Args: []string{"build", "--tag", image, "."}, Dir: root,
+		Name: "docker", Args: args, Dir: root,
 		Timeout: 10 * time.Minute, OutputLimit: 256 * 1024,
 	})
 }

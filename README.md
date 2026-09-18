@@ -66,11 +66,13 @@ imports the image, deploys a generated Namespace, Deployment, and Service, and
 records build and readiness evidence. When an HTTP readiness endpoint is
 declared, it measures startup and readiness status, then deletes one ready pod
 while sending continuous traffic and records replacement time, failed requests,
-downtime, restarts, and final health. It deletes the cluster after success,
-failure, timeout, or cancellation. Use `--keep-environment` only when you need
-to inspect the cluster manually. Verification executes Dockerfile instructions
-and application code, and scans the built image with Trivy. Use it only with
-repositories you trust.
+downtime, restarts, and final health. It also measures traffic during graceful
+SIGTERM termination and rebuilds the working tree as synthetic versions `a`
+and `b` to observe a rolling Deployment update. It deletes the cluster and both
+temporary images after success, failure, timeout, or cancellation. Use
+`--keep-environment` only when you need to inspect the cluster manually.
+Verification executes Dockerfile instructions and application code, and scans
+the initial image with Trivy. Use it only with repositories you trust.
 
 This slice reports detected vulnerabilities as warnings while preserving
 Trivy's lowercase severity. A configurable blocking policy belongs to the
@@ -78,8 +80,6 @@ later regression and reporting work.
 
 ## Planned verification experiments
 
-- Graceful shutdown and rolling deployment behavior
-- Rolling deployments under continuous traffic
 - Deterministic k6 load profiles
 - HPA behavior when autoscaling is configured
 - Baseline-to-pull-request regression comparison
@@ -91,8 +91,8 @@ comment. It is not included in the current slice.
 
 Analysis reads bounded metadata files, skips generated directories and
 symbolic links, and does not load environment files or return Secret values.
-Verification builds and runs repository code, which must be treated
-as untrusted outside an isolated environment. See [SECURITY.md](SECURITY.md)
+Verification builds and runs repository code, which must be treated as
+untrusted outside an isolated environment. See [SECURITY.md](SECURITY.md)
 and [docs/security.md](docs/security.md).
 
 Linux and WSL2 are the primary targets. See [the roadmap](docs/roadmap.md),

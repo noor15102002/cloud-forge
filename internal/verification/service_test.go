@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,10 +51,14 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	if outcome.ExitCode != 0 || outcome.Run.Status != model.StatusPass {
 		t.Fatalf("unexpected outcome: %#v", outcome)
 	}
-	if len(outcome.Run.Evidence) != 4 || outcome.Run.Evidence[2].Measurements[0].Value != "2" {
+	if len(outcome.Run.Evidence) != 6 || outcome.Run.Evidence[2].Measurements[0].Value != "2" {
 		t.Fatalf("missing readiness evidence: %#v", outcome.Run.Evidence)
 	}
-	if len(calls) != 13 || !containsArgument(calls[len(calls)-2].Args, "delete") || !containsArgument(calls[len(calls)-1].Args, "rm") {
+	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
+	if rollout == nil || measurementValue(rollout.Measurements, "source_version") != "a" || measurementValue(rollout.Measurements, "target_version") != "b" || measurementValue(rollout.Measurements, "version_transitions") != "1" {
+		t.Fatalf("missing rolling deployment evidence: %#v", rollout)
+	}
+	if len(calls) != 22 || !containsArgument(calls[len(calls)-3].Args, "delete") || !containsArgument(calls[len(calls)-2].Args, "rm") || !containsArgument(calls[len(calls)-1].Args, "rm") {
 		t.Fatalf("unexpected command lifecycle: %#v", calls)
 	}
 	for _, expected := range []string{"kind: Namespace", "kind: Deployment", "kind: Service", "imagePullPolicy: Never", "path: /ready", "cpu: 100m", "replicas: 2"} {
@@ -202,30 +207,38 @@ func TestReadinessMeasuresHTTPGating(t *testing.T) {
 }
 
 func TestPodRecoveryWaitsForReplacement(t *testing.T) {
-	podObservations := 0
+	deleteCount := 0
+	degradedOnce := false
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := successfulCommand(request)
-		if request.Name == "kubectl" && containsArgument(request.Args, "pods") {
-			podObservations++
-			if podObservations == 3 {
-				result.Stdout = degradedPodList
-			}
+		if request.Name == "kubectl" && containsArgument(request.Args, "delete") {
+			deleteCount++
+		}
+		if deleteCount == 2 && !degradedOnce && request.Name == "kubectl" && containsArgument(request.Args, "pods") {
+			degradedOnce = true
+			result.Stdout = degradedPodList
 		}
 		return result
 	})
 	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
 	recovery := evidenceByID(outcome.Run.Evidence, "pod-recovery")
-	if outcome.ExitCode != 0 || recovery == nil || recovery.Status != model.StatusPass || podObservations < 4 {
-		t.Fatalf("replacement was not observed: outcome=%#v observations=%d", outcome, podObservations)
+	if outcome.ExitCode != 0 || recovery == nil || recovery.Status != model.StatusPass || !degradedOnce {
+		t.Fatalf("replacement was not observed: outcome=%#v degraded=%v", outcome, degradedOnce)
 	}
 }
 
 func TestPodRecoveryRecordsTrafficFailure(t *testing.T) {
-	service := fixedService(successRunner())
-	probeCalls := 0
+	var deleteCount atomic.Int32
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		if request.Name == "kubectl" && containsArgument(request.Args, "delete") {
+			deleteCount.Add(1)
+		}
+		return successfulCommand(request)
+	})
+	service := fixedService(runner)
+	var failedOnce atomic.Bool
 	service.probe = func(context.Context, string) (int, error) {
-		probeCalls++
-		if probeCalls == 3 {
+		if deleteCount.Load() == 2 && failedOnce.CompareAndSwap(false, true) {
 			return 503, errors.New("temporary failure")
 		}
 		return 200, nil
@@ -238,13 +251,13 @@ func TestPodRecoveryRecordsTrafficFailure(t *testing.T) {
 }
 
 func TestPodRecoveryTimeoutIsApplicationFailure(t *testing.T) {
-	deleted := false
+	deleteCount := 0
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := successfulCommand(request)
 		if request.Name == "kubectl" && containsArgument(request.Args, "delete") {
-			deleted = true
+			deleteCount++
 		}
-		if deleted && request.Name == "kubectl" && containsArgument(request.Args, "pods") {
+		if deleteCount == 2 && request.Name == "kubectl" && containsArgument(request.Args, "pods") {
 			result.Stdout = degradedPodList
 		}
 		return result
@@ -258,12 +271,80 @@ func TestPodRecoveryTimeoutIsApplicationFailure(t *testing.T) {
 	}
 }
 
+func TestGracefulShutdownRecordsDroppedTraffic(t *testing.T) {
+	var deleteCount atomic.Int32
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		if request.Name == "kubectl" && containsArgument(request.Args, "delete") {
+			deleteCount.Add(1)
+		}
+		result := successfulCommand(request)
+		if request.Name == "kubectl" && containsArgument(request.Args, "pods") {
+			result.Stdout = readySinglePodList
+		}
+		return result
+	})
+	service := fixedService(runner)
+	var failedOnce atomic.Bool
+	service.probe = func(context.Context, string) (int, error) {
+		if deleteCount.Load() == 1 && failedOnce.CompareAndSwap(false, true) {
+			return 503, errors.New("connection dropped during termination")
+		}
+		return 200, nil
+	}
+	outcome := service.Run(context.Background(), fixtureNamedPath(t, "broken-shutdown"), Options{})
+	shutdown := evidenceByID(outcome.Run.Evidence, "graceful-shutdown")
+	if outcome.ExitCode != 1 || shutdown == nil || shutdown.Status != model.StatusFail || measurementValue(shutdown.Measurements, "dropped_requests") != "1" {
+		t.Fatalf("shutdown traffic failure was not recorded: %#v", outcome)
+	}
+}
+
+func TestRollingDeploymentTimeoutIsApplicationFailure(t *testing.T) {
+	rolloutStarted := false
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		result := successfulCommand(request)
+		if request.Name == "kubectl" && containsArgument(request.Args, "set") {
+			rolloutStarted = true
+		}
+		if rolloutStarted && request.Name == "kubectl" && containsArgument(request.Args, "pods") {
+			result.Stdout = oldVersionPodList
+		}
+		return result
+	})
+	service := fixedService(runner)
+	service.rolloutTimeout = 5 * time.Millisecond
+	outcome := service.Run(context.Background(), fixtureNamedPath(t, "broken-rollout"), Options{})
+	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
+	if outcome.ExitCode != 1 || rollout == nil || rollout.Status != model.StatusFail || measurementValue(rollout.Measurements, "target_ready_pods") != "0" {
+		t.Fatalf("rollout timeout should be an observed application failure: %#v", outcome)
+	}
+}
+
+func TestRollingDeploymentCommandFailureIsExecutionError(t *testing.T) {
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		result := successfulCommand(request)
+		if request.Name == "kubectl" && containsArgument(request.Args, "set") {
+			result.ExitCode = 1
+			result.FailureType = model.FailureExit
+		}
+		return result
+	})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
+	if outcome.ExitCode != 2 || rollout == nil || rollout.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "rollout_update_failed") {
+		t.Fatalf("rollout command failure should remain an execution error: %#v", outcome)
+	}
+}
+
 func TestPodDeleteErrorPreservesCollectedTraffic(t *testing.T) {
+	deleteCount := 0
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := successfulCommand(request)
 		if request.Name == "kubectl" && containsArgument(request.Args, "delete") {
-			result.ExitCode = 1
-			result.FailureType = model.FailureExit
+			deleteCount++
+			if deleteCount == 2 {
+				result.ExitCode = 1
+				result.FailureType = model.FailureExit
+			}
 		}
 		return result
 	})
@@ -284,6 +365,20 @@ func TestTrafficCancellationIsNotAnApplicationFailure(t *testing.T) {
 	observed := service.collectTraffic(ctx, "http://127.0.0.1:18080/ready", make(chan trafficSample, 1))
 	if observed.Requests != 0 || observed.Failures != 0 {
 		t.Fatalf("CloudForge cancellation was counted as application traffic: %#v", observed)
+	}
+}
+
+func TestOverlappingRequestsCountsOnlyTerminationWindow(t *testing.T) {
+	started := time.Unix(100, 0)
+	completed := started.Add(100 * time.Millisecond)
+	samples := []trafficSample{
+		{StartedAt: started.Add(-20 * time.Millisecond), CompletedAt: started.Add(-time.Millisecond)},
+		{StartedAt: started.Add(-time.Millisecond), CompletedAt: started.Add(time.Millisecond)},
+		{StartedAt: started.Add(50 * time.Millisecond), CompletedAt: started.Add(60 * time.Millisecond)},
+		{StartedAt: completed.Add(time.Millisecond), CompletedAt: completed.Add(2 * time.Millisecond)},
+	}
+	if got := overlappingRequests(samples, started, completed); got != 2 {
+		t.Fatalf("expected two requests overlapping termination, got %d", got)
 	}
 }
 
@@ -415,14 +510,20 @@ func fixedService(runner command.Runner) *Service {
 	service.now = clock(time.Unix(100, 0), time.Unix(101, 0))
 	service.probe = func(context.Context, string) (int, error) { return 200, nil }
 	service.poll = time.Millisecond
+	service.trafficPoll = time.Millisecond
 	service.readinessTimeout = 50 * time.Millisecond
 	service.recoveryTimeout = 50 * time.Millisecond
+	service.rolloutTimeout = 50 * time.Millisecond
 	return service
 }
 
 func fixturePath(t *testing.T) string {
+	return fixtureNamedPath(t, "healthy-node")
+}
+
+func fixtureNamedPath(t *testing.T, name string) string {
 	t.Helper()
-	path, err := filepath.Abs(filepath.Join("..", "..", "testdata", "healthy-node"))
+	path, err := filepath.Abs(filepath.Join("..", "..", "testdata", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,6 +616,10 @@ func clock(values ...time.Time) func() time.Time {
 	}
 }
 
-const readyPodList = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"api-a"},"status":{"conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"restartCount":0}]}},{"metadata":{"name":"api-b"},"status":{"conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"restartCount":0}]}}]}`
+const readyPodList = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"api-a"},"spec":{"containers":[{"name":"application","image":"cloudforge/healthy-node-api:0123abcd-b"}]},"status":{"conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"restartCount":0}]}},{"metadata":{"name":"api-b"},"spec":{"containers":[{"name":"application","image":"cloudforge/healthy-node-api:0123abcd-b"}]},"status":{"conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"restartCount":0}]}}]}`
 
 const degradedPodList = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"api-a"},"status":{"conditions":[{"type":"Ready","status":"True"}]}},{"metadata":{"name":"api-new"},"status":{"conditions":[{"type":"Ready","status":"False"}]}}]}`
+
+const readySinglePodList = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"api-a"},"spec":{"containers":[{"name":"application","image":"cloudforge/broken-shutdown-api:0123abcd-a"}]},"status":{"conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"restartCount":0}]}}]}`
+
+const oldVersionPodList = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"api-a"},"spec":{"containers":[{"name":"application","image":"cloudforge/healthy-node-api:0123abcd-a"}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}},{"metadata":{"name":"api-b"},"spec":{"containers":[{"name":"application","image":"cloudforge/healthy-node-api:0123abcd-a"}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`

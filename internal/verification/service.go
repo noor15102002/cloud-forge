@@ -60,8 +60,10 @@ type Service struct {
 	newID            func() (string, error)
 	probe            probeFunc
 	poll             time.Duration
+	trafficPoll      time.Duration
 	readinessTimeout time.Duration
 	recoveryTimeout  time.Duration
+	rolloutTimeout   time.Duration
 }
 
 // New creates a verification service.
@@ -69,7 +71,8 @@ func New(runner command.Runner) *Service {
 	return &Service{
 		runner: runner, now: time.Now, newID: randomID,
 		probe: httpProbe(directHTTPClient()),
-		poll:  200 * time.Millisecond, readinessTimeout: readinessWindow, recoveryTimeout: recoveryWindow,
+		poll:  200 * time.Millisecond, trafficPoll: 20 * time.Millisecond, readinessTimeout: readinessWindow,
+		recoveryTimeout: recoveryWindow, rolloutTimeout: recoveryWindow,
 	}
 }
 
@@ -154,7 +157,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	k3dClient := k3d.New(s.runner)
 	kubernetesClient := kubernetes.New(s.runner)
 
-	buildResult := dockerClient.Build(ctx, root, plan.image)
+	buildResult := dockerClient.BuildVersion(ctx, root, plan.image, "a")
 	buildStatus := model.StatusPass
 	buildSummary := "Container image built successfully."
 	if failed(buildResult) {
@@ -182,6 +185,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	}
 
 	clusterAttempted := false
+	imagesToCleanup := []string{plan.image}
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
@@ -195,11 +199,13 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 				out.addCommandDiagnostic("cluster_cleanup_failed", "CloudForge could not remove its k3d cluster.", result)
 			}
 		}
-		imageResult := dockerClient.RemoveImage(cleanupCtx, plan.image)
-		if failed(imageResult) {
-			out.Run.Status = model.StatusError
-			out.ExitCode = 2
-			out.addCommandDiagnostic("image_cleanup_failed", "CloudForge could not remove its temporary Docker image.", imageResult)
+		for _, image := range imagesToCleanup {
+			imageResult := dockerClient.RemoveImage(cleanupCtx, image)
+			if failed(imageResult) {
+				out.Run.Status = model.StatusError
+				out.ExitCode = 2
+				out.addCommandDiagnostic("image_cleanup_failed", "CloudForge could not remove a temporary Docker image.", imageResult)
+			}
 		}
 	}()
 
@@ -336,28 +342,29 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		Expected: "all requested replicas become ready", DurationMS: waitResult.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
 	})
 	if plan.readinessURL == "" {
-		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{
-			ExperimentID: "pod-recovery", Title: "Pod recovery under traffic", Status: model.StatusSkipped,
-			Summary: "Pod recovery traffic requires an explicit HTTP readiness endpoint.",
-		})
+		out.Run.Evidence = append(out.Run.Evidence,
+			model.Evidence{ExperimentID: "graceful-shutdown", Title: "Graceful shutdown under traffic", Status: model.StatusSkipped, Summary: "Graceful shutdown traffic requires an explicit HTTP readiness endpoint."},
+			model.Evidence{ExperimentID: "pod-recovery", Title: "Pod recovery under traffic", Status: model.StatusSkipped, Summary: "Pod recovery traffic requires an explicit HTTP readiness endpoint."},
+			model.Evidence{ExperimentID: "rolling-deployment", Title: "Rolling deployment under traffic", Status: model.StatusSkipped, Summary: "Rolling deployment traffic requires an explicit HTTP readiness endpoint."},
+		)
 	} else {
+		shutdown := s.runGracefulShutdown(ctx, kubernetesClient, plan)
+		applyExperimentOutcome(&out, shutdown)
+		if shutdown.ExitCode != 0 {
+			return out
+		}
 		recovery := s.runPodRecovery(ctx, kubernetesClient, plan)
-		if recovery.Evidence.ExperimentID != "" {
-			out.Run.Evidence = append(out.Run.Evidence, recovery.Evidence)
-		}
-		if recovery.Finding != nil {
-			out.Run.Findings = append(out.Run.Findings, *recovery.Finding)
-		}
-		if recovery.Diagnostic != nil {
-			out.Run.Diagnostics = append(out.Run.Diagnostics, *recovery.Diagnostic)
-		}
+		applyExperimentOutcome(&out, recovery)
 		if recovery.ExitCode != 0 {
-			out.ExitCode = recovery.ExitCode
-			if recovery.ExitCode == 1 {
-				out.Run.Status = model.StatusFail
-			} else {
-				out.Run.Status = model.StatusError
-			}
+			return out
+		}
+		rolloutBuild := dockerClient.BuildVersion(ctx, root, plan.rolloutImage, "b")
+		if !failed(rolloutBuild) {
+			imagesToCleanup = append(imagesToCleanup, plan.rolloutImage)
+		}
+		rollout := s.runRollingDeployment(ctx, k3dClient, kubernetesClient, plan, rolloutBuild)
+		applyExperimentOutcome(&out, rollout)
+		if rollout.ExitCode != 0 {
 			return out
 		}
 	}
@@ -365,10 +372,32 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	return out
 }
 
+func applyExperimentOutcome(out *Outcome, experiment recoveryOutcome) {
+	if experiment.Evidence.ExperimentID != "" {
+		out.Run.Evidence = append(out.Run.Evidence, experiment.Evidence)
+	}
+	if experiment.Finding != nil {
+		out.Run.Findings = append(out.Run.Findings, *experiment.Finding)
+	}
+	if experiment.Diagnostic != nil {
+		out.Run.Diagnostics = append(out.Run.Diagnostics, *experiment.Diagnostic)
+	}
+	if experiment.ExitCode == 0 {
+		return
+	}
+	out.ExitCode = experiment.ExitCode
+	if experiment.ExitCode == 1 {
+		out.Run.Status = model.StatusFail
+	} else {
+		out.Run.Status = model.StatusError
+	}
+}
+
 type plan struct {
 	clusterName     string
 	workloadName    string
 	image           string
+	rolloutImage    string
 	desiredReplicas int32
 	readinessScheme string
 	readinessPath   string
@@ -398,7 +427,8 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 	}
 	workloadName := trimDNSName("cf-" + name + "-" + id)
 	clusterName := trimDNSName("cloudforge-" + id)
-	image := "cloudforge/" + name + ":" + id
+	image := "cloudforge/" + name + ":" + id + "-a"
+	rolloutImage := "cloudforge/" + name + ":" + id + "-b"
 
 	replicas := int32(1)
 	resources := corev1.ResourceRequirements{}
@@ -480,7 +510,7 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 		return plan{}, fmt.Errorf("encode generated Kubernetes resources: %w", err)
 	}
 	return plan{
-		clusterName: clusterName, workloadName: workloadName, image: image, desiredReplicas: replicas,
+		clusterName: clusterName, workloadName: workloadName, image: image, rolloutImage: rolloutImage, desiredReplicas: replicas,
 		readinessScheme: readinessScheme, readinessPath: readinessPath, healthScheme: healthScheme, healthPath: healthPath,
 		httpSkipReason: httpSkipReason, manifest: manifest,
 	}, nil

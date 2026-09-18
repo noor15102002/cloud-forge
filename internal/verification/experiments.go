@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/noor15102002/cloud-forge/internal/executor/k3d"
 	"github.com/noor15102002/cloud-forge/internal/executor/kubernetes"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
@@ -23,10 +25,13 @@ type trafficObservation struct {
 	Failures       int
 	MaxDowntimeMS  int64
 	LastHTTPStatus int
+	Samples        []trafficSample
 }
 
 type trafficSample struct {
-	StartedAt time.Time
+	StartedAt   time.Time
+	CompletedAt time.Time
+	Failed      bool
 }
 
 type recoveryOutcome struct {
@@ -58,6 +63,196 @@ func (s *Service) waitForHTTP(ctx context.Context, url string) httpObservation {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Client, current plan) recoveryOutcome {
+	selector := "app.kubernetes.io/name=" + current.workloadName
+	pods, commandResult, err := client.ObservePods(ctx, current.clusterName, namespace, selector)
+	if err != nil || failed(commandResult) {
+		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_observation_failed", "CloudForge could not inspect a pod before the shutdown experiment.", commandGuidance(commandResult, err), trafficObservation{})
+	}
+	podName := firstReadyPod(pods)
+	if podName == "" {
+		return lifecycleFailure("graceful-shutdown", "Graceful shutdown under traffic", "runtime.graceful-shutdown", "No ready application pod was available for controlled termination.", "Verify that the Deployment has a ready replica before testing shutdown behavior.", 0, trafficObservation{}, nil)
+	}
+
+	trafficCtx, stopTraffic := context.WithCancel(ctx)
+	sampled := make(chan trafficSample, 1)
+	trafficDone := make(chan trafficObservation, 1)
+	go func() { trafficDone <- s.collectTraffic(trafficCtx, current.readinessURL, sampled) }()
+	if _, ok := waitForSample(ctx, sampled, time.Time{}); !ok {
+		stopTraffic()
+		traffic := <-trafficDone
+		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_canceled", "Graceful shutdown was canceled before traffic started.", ctx.Err().Error(), traffic)
+	}
+
+	terminationStarted := time.Now()
+	deleteResult := client.DeletePod(ctx, current.clusterName, namespace, podName)
+	terminationCompleted := time.Now()
+	if failed(deleteResult) {
+		stopTraffic()
+		traffic := <-trafficDone
+		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_delete_failed", "kubectl could not terminate the selected application pod.", commandGuidance(deleteResult, nil), traffic)
+	}
+
+	recoveryCtx, cancelRecovery := context.WithTimeout(ctx, s.recoveryTimeout)
+	defer cancelRecovery()
+	ready, total := 0, 0
+	var restarts int32
+	recovered := false
+	for {
+		observed, result, observeErr := client.ObservePods(recoveryCtx, current.clusterName, namespace, selector)
+		if observeErr != nil || failed(result) {
+			stopTraffic()
+			traffic := <-trafficDone
+			return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_recovery_observation_failed", "CloudForge could not inspect the replacement pod after SIGTERM.", commandGuidance(result, observeErr), traffic)
+		}
+		ready, total, restarts = summarizePods(observed)
+		if ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) {
+			recovered = true
+			break
+		}
+		select {
+		case <-recoveryCtx.Done():
+			goto shutdownComplete
+		case <-time.After(s.poll):
+		}
+	}
+
+shutdownComplete:
+	_, _ = waitForSample(ctx, sampled, terminationCompleted)
+	stopTraffic()
+	traffic := <-trafficDone
+	duration := elapsedMilliseconds(time.Since(terminationStarted))
+	if ctx.Err() != nil {
+		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_canceled", "Graceful shutdown was canceled before completion.", ctx.Err().Error(), traffic)
+	}
+	finalStatus, finalErr := s.probe(ctx, current.healthURL)
+	if finalErr != nil {
+		finalStatus = 0
+	}
+	inFlight := overlappingRequests(traffic.Samples, terminationStarted, terminationCompleted)
+	measurements := []model.Measurement{
+		{Name: "request_count", Value: strconv.Itoa(traffic.Requests), Unit: "requests"},
+		{Name: "in_flight_requests", Value: strconv.Itoa(inFlight), Unit: "requests"},
+		{Name: "dropped_requests", Value: strconv.Itoa(traffic.Failures), Unit: "requests"},
+		{Name: "downtime_ms", Value: strconv.FormatInt(traffic.MaxDowntimeMS, 10), Unit: "ms"},
+		{Name: "termination_duration_ms", Value: strconv.FormatInt(elapsedMilliseconds(terminationCompleted.Sub(terminationStarted)), 10), Unit: "ms"},
+		{Name: "replacement_duration_ms", Value: strconv.FormatInt(duration, 10), Unit: "ms"},
+		{Name: "ready_pods", Value: strconv.Itoa(ready), Unit: "pods"},
+		{Name: "total_pods", Value: strconv.Itoa(total), Unit: "pods"},
+		{Name: "container_restarts", Value: strconv.FormatInt(int64(restarts), 10), Unit: "restarts"},
+		{Name: "final_http_status", Value: strconv.Itoa(finalStatus)},
+	}
+	if !recovered || traffic.Failures > 0 || finalStatus < 200 || finalStatus >= 300 {
+		return lifecycleFailure("graceful-shutdown", "Graceful shutdown under traffic", "runtime.graceful-shutdown", "The application dropped traffic or did not recover cleanly after SIGTERM.", "Inspect SIGTERM handling, readiness removal, connection draining, replica count, and termination grace period.", duration, traffic, measurements)
+	}
+	return lifecycleSuccess("graceful-shutdown", "Graceful shutdown under traffic", "runtime.graceful-shutdown", "The application remained healthy while Kubernetes terminated and replaced a pod.", duration, fmt.Sprintf("%d in-flight requests, %d dropped requests", inFlight, traffic.Failures), measurements)
+}
+
+func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Client, client *kubernetes.Client, current plan, buildResult model.CommandResult) recoveryOutcome {
+	title := "Rolling deployment under traffic"
+	if failed(buildResult) {
+		return lifecycleFailure("rolling-deployment", title, "runtime.rolling-deployment", "Version B could not be built for the rolling deployment.", "Correct the version B container build before evaluating rollout behavior.", buildResult.DurationMS, trafficObservation{}, []model.Measurement{{Name: "version_b_build_duration_ms", Value: strconv.FormatInt(buildResult.DurationMS, 10), Unit: "ms"}})
+	}
+	if result := k3dClient.ImportImage(ctx, current.clusterName, current.rolloutImage); failed(result) {
+		return lifecycleExecutionError("rolling-deployment", title, "rollout_image_import_failed", "k3d could not import the version B image.", commandGuidance(result, nil), trafficObservation{})
+	}
+	selector := "app.kubernetes.io/name=" + current.workloadName
+	before, beforeResult, beforeErr := client.ObservePods(ctx, current.clusterName, namespace, selector)
+	if beforeErr != nil || failed(beforeResult) {
+		return lifecycleExecutionError("rolling-deployment", title, "rollout_observation_failed", "CloudForge could not inspect version A before rollout.", commandGuidance(beforeResult, beforeErr), trafficObservation{})
+	}
+	baselineReady, _, _ := summarizePods(before)
+
+	trafficCtx, stopTraffic := context.WithCancel(ctx)
+	sampled := make(chan trafficSample, 1)
+	trafficDone := make(chan trafficObservation, 1)
+	go func() { trafficDone <- s.collectTraffic(trafficCtx, current.readinessURL, sampled) }()
+	if _, ok := waitForSample(ctx, sampled, time.Time{}); !ok {
+		stopTraffic()
+		traffic := <-trafficDone
+		return lifecycleExecutionError("rolling-deployment", title, "rollout_canceled", "Rolling deployment was canceled before traffic started.", ctx.Err().Error(), traffic)
+	}
+
+	rolloutStarted := time.Now()
+	setResult := client.SetImage(ctx, current.clusterName, namespace, current.workloadName, "application", current.rolloutImage)
+	if failed(setResult) {
+		stopTraffic()
+		traffic := <-trafficDone
+		return lifecycleExecutionError("rolling-deployment", title, "rollout_update_failed", "kubectl could not start the version B rollout.", commandGuidance(setResult, nil), traffic)
+	}
+
+	rolloutCtx, cancelRollout := context.WithTimeout(ctx, s.rolloutTimeout)
+	defer cancelRollout()
+	var ready, total, targetReady int
+	readinessTransitions, versionTransitions := 0, 0
+	minimumReady := baselineReady
+	previousReady, previousTarget := baselineReady, 0
+	completed := false
+	for {
+		pods, result, observeErr := client.ObservePods(rolloutCtx, current.clusterName, namespace, selector)
+		if observeErr != nil || failed(result) {
+			stopTraffic()
+			traffic := <-trafficDone
+			return lifecycleExecutionError("rolling-deployment", title, "rollout_observation_failed", "CloudForge could not inspect the rolling Deployment.", commandGuidance(result, observeErr), traffic)
+		}
+		ready, total, _ = summarizePods(pods)
+		targetReady = readyPodsWithImage(pods, current.rolloutImage)
+		if ready != previousReady {
+			readinessTransitions++
+			previousReady = ready
+		}
+		if targetReady != previousTarget {
+			versionTransitions++
+			previousTarget = targetReady
+		}
+		if ready < minimumReady {
+			minimumReady = ready
+		}
+		if total == int(current.desiredReplicas) && ready == int(current.desiredReplicas) && targetReady == int(current.desiredReplicas) {
+			completed = true
+			break
+		}
+		select {
+		case <-rolloutCtx.Done():
+			goto rolloutComplete
+		case <-time.After(s.poll):
+		}
+	}
+
+rolloutComplete:
+	completedAt := time.Now()
+	_, _ = waitForSample(ctx, sampled, completedAt)
+	stopTraffic()
+	traffic := <-trafficDone
+	duration := elapsedMilliseconds(completedAt.Sub(rolloutStarted))
+	if ctx.Err() != nil {
+		return lifecycleExecutionError("rolling-deployment", title, "rollout_canceled", "Rolling deployment was canceled before completion.", ctx.Err().Error(), traffic)
+	}
+	finalStatus, finalErr := s.probe(ctx, current.healthURL)
+	if finalErr != nil {
+		finalStatus = 0
+	}
+	measurements := []model.Measurement{
+		{Name: "source_version", Value: "a"},
+		{Name: "target_version", Value: "b"},
+		{Name: "version_b_build_duration_ms", Value: strconv.FormatInt(buildResult.DurationMS, 10), Unit: "ms"},
+		{Name: "rollout_duration_ms", Value: strconv.FormatInt(duration, 10), Unit: "ms"},
+		{Name: "readiness_transitions", Value: strconv.Itoa(readinessTransitions), Unit: "transitions"},
+		{Name: "version_transitions", Value: strconv.Itoa(versionTransitions), Unit: "transitions"},
+		{Name: "minimum_ready_pods", Value: strconv.Itoa(minimumReady), Unit: "pods"},
+		{Name: "target_ready_pods", Value: strconv.Itoa(targetReady), Unit: "pods"},
+		{Name: "total_pods", Value: strconv.Itoa(total), Unit: "pods"},
+		{Name: "request_count", Value: strconv.Itoa(traffic.Requests), Unit: "requests"},
+		{Name: "failed_requests", Value: strconv.Itoa(traffic.Failures), Unit: "requests"},
+		{Name: "downtime_ms", Value: strconv.FormatInt(traffic.MaxDowntimeMS, 10), Unit: "ms"},
+		{Name: "final_http_status", Value: strconv.Itoa(finalStatus)},
+	}
+	if !completed || traffic.Failures > 0 || finalStatus < 200 || finalStatus >= 300 {
+		return lifecycleFailure("rolling-deployment", title, "runtime.rolling-deployment", "Version B did not roll out without failed traffic.", "Inspect version B readiness, rolling update strategy, capacity, and application startup behavior.", duration, traffic, measurements)
+	}
+	return lifecycleSuccess("rolling-deployment", title, "runtime.rolling-deployment", "Version B became ready without interrupting application traffic.", duration, fmt.Sprintf("%d/%d version B pods ready with %d failed requests", targetReady, total, traffic.Failures), measurements)
 }
 
 func (s *Service) runPodRecovery(ctx context.Context, client *kubernetes.Client, current plan) recoveryOutcome {
@@ -186,7 +381,7 @@ complete:
 
 func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<- trafficSample) trafficObservation {
 	result := trafficObservation{}
-	ticker := time.NewTicker(s.poll)
+	ticker := time.NewTicker(s.trafficPoll)
 	defer ticker.Stop()
 	var failureStarted time.Time
 	for {
@@ -201,7 +396,8 @@ func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<-
 		}
 		result.Requests++
 		result.LastHTTPStatus = status
-		if err != nil || status < 200 || status >= 300 {
+		requestFailed := err != nil || status < 200 || status >= 300
+		if requestFailed {
 			result.Failures++
 			if failureStarted.IsZero() {
 				failureStarted = now
@@ -210,8 +406,10 @@ func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<-
 			result.MaxDowntimeMS = maxInt64(result.MaxDowntimeMS, elapsedMilliseconds(now.Sub(failureStarted)))
 			failureStarted = time.Time{}
 		}
+		sample := trafficSample{StartedAt: requestStarted, CompletedAt: now, Failed: requestFailed}
+		result.Samples = append(result.Samples, sample)
 		select {
-		case sampled <- trafficSample{StartedAt: requestStarted}:
+		case sampled <- sample:
 		default:
 		}
 		select {
@@ -223,6 +421,88 @@ func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<-
 		case <-ticker.C:
 		}
 	}
+}
+
+func waitForSample(ctx context.Context, sampled <-chan trafficSample, notBefore time.Time) (trafficSample, bool) {
+	for {
+		select {
+		case sample := <-sampled:
+			if notBefore.IsZero() || !sample.StartedAt.Before(notBefore) {
+				return sample, true
+			}
+		case <-ctx.Done():
+			return trafficSample{}, false
+		}
+	}
+}
+
+func firstReadyPod(pods []kubernetes.PodState) string {
+	for _, pod := range pods {
+		if pod.Ready {
+			return pod.Name
+		}
+	}
+	return ""
+}
+
+func overlappingRequests(samples []trafficSample, started, completed time.Time) int {
+	count := 0
+	for _, sample := range samples {
+		if !sample.StartedAt.After(completed) && !sample.CompletedAt.Before(started) {
+			count++
+		}
+	}
+	return count
+}
+
+func readyPodsWithImage(pods []kubernetes.PodState, image string) int {
+	count := 0
+	for _, pod := range pods {
+		if pod.Ready && pod.Image == image {
+			count++
+		}
+	}
+	return count
+}
+
+func lifecycleSuccess(experimentID, title, findingID, summary string, duration int64, observed string, measurements []model.Measurement) recoveryOutcome {
+	evidence := model.Evidence{ExperimentID: experimentID, Title: title, Status: model.StatusPass, Summary: summary, DurationMS: duration, Measurements: measurements}
+	finding := model.Finding{
+		ID: findingID, Category: "reliability", Status: model.StatusPass, Severity: model.SeverityInfo,
+		Summary: summary, Observed: observed, Expected: "no dropped requests and a healthy final state", DurationMS: duration,
+	}
+	return recoveryOutcome{Evidence: evidence, Finding: &finding}
+}
+
+func lifecycleFailure(experimentID, title, findingID, summary, guidance string, duration int64, traffic trafficObservation, measurements []model.Measurement) recoveryOutcome {
+	if measurements == nil {
+		measurements = []model.Measurement{
+			{Name: "request_count", Value: strconv.Itoa(traffic.Requests), Unit: "requests"},
+			{Name: "failed_requests", Value: strconv.Itoa(traffic.Failures), Unit: "requests"},
+			{Name: "downtime_ms", Value: strconv.FormatInt(traffic.MaxDowntimeMS, 10), Unit: "ms"},
+		}
+	}
+	evidence := model.Evidence{ExperimentID: experimentID, Title: title, Status: model.StatusFail, Summary: summary, DurationMS: duration, Measurements: measurements}
+	finding := model.Finding{
+		ID: findingID, Category: "reliability", Status: model.StatusFail, Severity: model.SeverityHigh,
+		Summary: summary, Observed: fmt.Sprintf("%d failed requests and %d ms downtime", traffic.Failures, traffic.MaxDowntimeMS),
+		Expected: "no dropped requests and a healthy final state", Remediation: guidance, DurationMS: duration,
+	}
+	diagnostic := model.Diagnostic{Code: strings.ReplaceAll(experimentID, "-", "_") + "_failed", Status: model.StatusFail, Message: summary, Guidance: guidance}
+	return recoveryOutcome{Evidence: evidence, Finding: &finding, Diagnostic: &diagnostic, ExitCode: 1}
+}
+
+func lifecycleExecutionError(experimentID, title, code, summary, guidance string, traffic trafficObservation) recoveryOutcome {
+	evidence := model.Evidence{
+		ExperimentID: experimentID, Title: title, Status: model.StatusError, Summary: summary,
+		Measurements: []model.Measurement{
+			{Name: "request_count", Value: strconv.Itoa(traffic.Requests), Unit: "requests"},
+			{Name: "failed_requests", Value: strconv.Itoa(traffic.Failures), Unit: "requests"},
+			{Name: "downtime_ms", Value: strconv.FormatInt(traffic.MaxDowntimeMS, 10), Unit: "ms"},
+		},
+	}
+	diagnostic := model.Diagnostic{Code: code, Status: model.StatusError, Message: summary, Guidance: guidance}
+	return recoveryOutcome{Evidence: evidence, Diagnostic: &diagnostic, ExitCode: 2}
 }
 
 func summarizePods(pods []kubernetes.PodState) (int, int, int32) {

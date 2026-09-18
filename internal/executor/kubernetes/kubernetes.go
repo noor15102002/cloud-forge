@@ -22,6 +22,7 @@ type PodState struct {
 	Name     string
 	Ready    bool
 	Restarts int32
+	Image    string
 }
 
 // New creates a kubectl adapter.
@@ -76,6 +77,9 @@ func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector s
 	states := make([]PodState, 0, len(pods.Items))
 	for _, pod := range pods.Items {
 		state := PodState{Name: pod.Name, Ready: podReady(pod)}
+		if len(pod.Spec.Containers) > 0 {
+			state.Image = pod.Spec.Containers[0].Image
+		}
 		for _, status := range pod.Status.ContainerStatuses {
 			state.Restarts += status.RestartCount
 		}
@@ -83,6 +87,17 @@ func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector s
 	}
 	sort.Slice(states, func(i, j int) bool { return states[i].Name < states[j].Name })
 	return states, result, nil
+}
+
+// SetImage starts a Deployment rollout to a locally imported image.
+func (c *Client) SetImage(ctx context.Context, cluster, namespace, deployment, container, image string) model.CommandResult {
+	return c.runner.Run(ctx, command.Request{
+		Name: "kubectl", Args: []string{
+			"--context", "k3d-" + cluster, "--namespace", namespace,
+			"set", "image", "deployment/" + deployment, container + "=" + image,
+		},
+		Timeout: 30 * time.Second, OutputLimit: 128 * 1024,
+	})
 }
 
 // DeletePod removes one application pod and waits until that object is gone.

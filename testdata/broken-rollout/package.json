@@ -1,0 +1,4 @@
+{
+  "name": "broken-rollout-api",
+  "engines": { "node": ">=22" }
+}
