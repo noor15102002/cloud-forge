@@ -18,5 +18,5 @@ const server = http.createServer((request, response) => {
 server.listen(8080, "0.0.0.0");
 
 process.on("SIGTERM", () => {
-  setTimeout(() => server.close(() => process.exit(0)), 500);
+  setTimeout(() => server.close(() => process.exit(0)), 2000);
 });
