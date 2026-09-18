@@ -330,7 +330,6 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addError("kubeconfig_failed", "CloudForge could not write its private kubeconfig.", err.Error())
 		return out
 	}
-	fingerprintTools(ctx, scoped, plan, out.Run.Fingerprint)
 	if plan.readinessPath != "" {
 		hostPort, portResult, portErr := dockerClient.PublishedPort(ctx, plan.clusterName, nodePort)
 		if portErr != nil || failed(portResult) {
@@ -348,6 +347,11 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addCommandDiagnostic("image_import_failed", "k3d could not import the application image.", result)
 		return out
 	}
+	if result, reason := kubernetesClient.WaitReady(ctx, plan.clusterName); failed(result) {
+		out.addError("cluster_not_ready", "The isolated cluster did not become ready before application deployment.", "Cluster condition: "+reason+"; inspect Docker capacity and cluster health before retrying.")
+		return out
+	}
+	fingerprintTools(ctx, scoped, plan, out.Run.Fingerprint)
 	if result := kubernetesClient.Apply(ctx, plan.clusterName, manifestPath); failed(result) {
 		out.addCommandDiagnostic("deployment_apply_failed", "kubectl could not apply the generated workload.", result)
 		return out

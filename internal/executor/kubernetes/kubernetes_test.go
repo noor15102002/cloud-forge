@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
 	"github.com/noor15102002/cloud-forge/pkg/model"
@@ -13,6 +14,41 @@ type runnerFunc func(context.Context, command.Request) model.CommandResult
 
 func (f runnerFunc) Run(ctx context.Context, request command.Request) model.CommandResult {
 	return f(ctx, request)
+}
+
+func TestClusterReadinessWaitsForAPIAndNode(t *testing.T) {
+	apiCalls := 0
+	client := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		if strings.Contains(strings.Join(request.Args, " "), "/readyz") {
+			apiCalls++
+			if apiCalls == 1 {
+				return model.CommandResult{FailureType: model.FailureExit, ExitCode: 1}
+			}
+			return model.CommandResult{Stdout: "ok"}
+		}
+		return model.CommandResult{Stdout: `{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`}
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, reason := client.WaitReady(ctx, "test")
+	if result.FailureType != model.FailureNone || reason != "" || apiCalls != 2 {
+		t.Fatalf("did not establish readiness after API startup: %#v %s", result, reason)
+	}
+}
+
+func TestClusterPressureIsNotApplicationReadiness(t *testing.T) {
+	client := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		if strings.Contains(strings.Join(request.Args, " "), "/readyz") {
+			return model.CommandResult{Stdout: "ok"}
+		}
+		return model.CommandResult{Stdout: `{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"},{"type":"DiskPressure","status":"True","message":"private"}]}}]}`}
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	result, reason := client.WaitReady(ctx, "test")
+	if result.FailureType != model.FailureTimeout || reason != "node_disk_pressure" {
+		t.Fatalf("unhealthy cluster accepted: %#v %s", result, reason)
+	}
 }
 
 func TestStartupDiagnosticsOmitMessagesAndCustomReasons(t *testing.T) {

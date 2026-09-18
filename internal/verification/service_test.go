@@ -29,7 +29,8 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	var manifest string
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		calls = append(calls, request)
-		result := model.CommandResult{Command: request.Name, Arguments: request.Args, DurationMS: 12}
+		result := successfulCommand(request)
+		result.DurationMS = 12
 		if request.Name == "trivy" {
 			result.Stdout = `{"Results":[]}`
 		}
@@ -164,7 +165,7 @@ func TestTrivyFailureIsExecutionErrorAndRemovesImage(t *testing.T) {
 	var calls []command.Request
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		calls = append(calls, request)
-		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		result := successfulCommand(request)
 		if request.Name == "trivy" {
 			result.ExitCode = 1
 			result.FailureType = model.FailureExit
@@ -182,7 +183,7 @@ func TestTrivyFailureIsExecutionErrorAndRemovesImage(t *testing.T) {
 
 func TestMalformedTrivyOutputIsExecutionError(t *testing.T) {
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
-		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		result := successfulCommand(request)
 		if request.Name == "trivy" {
 			result.Stdout = "{"
 		}
@@ -196,7 +197,7 @@ func TestMalformedTrivyOutputIsExecutionError(t *testing.T) {
 
 func TestVulnerabilityFindingProducesWarningWithoutExecutionFailure(t *testing.T) {
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
-		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		result := successfulCommand(request)
 		if request.Name == "trivy" {
 			result.Stdout = `{"Results":[{"Target":"image (alpine 3.23)","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libc","InstalledVersion":"1","Severity":"HIGH"}]}]}`
 		}
@@ -221,7 +222,7 @@ func TestReadinessFailureStillCleansUp(t *testing.T) {
 	var calls []command.Request
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		calls = append(calls, request)
-		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		result := successfulCommand(request)
 		if request.Name == "trivy" {
 			result.Stdout = `{"Results":[]}`
 		}
@@ -486,7 +487,7 @@ func TestClusterCreateFailureUsesFreshCleanupContext(t *testing.T) {
 	var cleanupContextError error
 	runner := runnerFunc(func(callCtx context.Context, request command.Request) model.CommandResult {
 		calls = append(calls, request)
-		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		result := successfulCommand(request)
 		if request.Name == "trivy" {
 			result.Stdout = `{"Results":[]}`
 		}
@@ -558,7 +559,7 @@ func TestKeepEnvironmentSkipsDelete(t *testing.T) {
 		if request.Name == "k3d" && containsArgument(request.Args, "delete") {
 			deleted = true
 		}
-		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		result := successfulCommand(request)
 		if request.Name == "trivy" {
 			result.Stdout = `{"Results":[]}`
 		}
@@ -824,6 +825,12 @@ func successRunner() command.Runner {
 
 func successfulCommand(request command.Request) model.CommandResult {
 	result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+	if request.Name == "kubectl" && containsArgument(request.Args, "/readyz") {
+		result.Stdout = "ok"
+	}
+	if request.Name == "kubectl" && containsArgument(request.Args, "nodes") {
+		result.Stdout = `{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
+	}
 	if request.Name == "trivy" {
 		result.Stdout = `{"Results":[]}`
 	}

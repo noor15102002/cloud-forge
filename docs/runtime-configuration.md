@@ -43,6 +43,8 @@ the report. Replicas/HPA maxima above five are rejected. Aggregate workload
 limits, including rollout surge, must fit four CPUs and 2 GiB. The cluster has
 4 GiB and the private BuildKit builder has two CPUs/2 GiB. Build timeout is ten
 minutes; readiness and lifecycle experiment windows are bounded to two minutes.
+After importing the image, CloudForge separately waits up to 90 seconds for a
+ready API and node without resource pressure before applying the workload.
 These controls limit resource use; unfamiliar source still runs only on
 disposable machines.
 

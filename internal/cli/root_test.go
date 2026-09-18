@@ -38,7 +38,7 @@ func TestVerifyJSONContractAndExitCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
-		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		result := successfulCLIRunner()(context.Background(), request)
 		if request.Name == "trivy" && len(request.Args) > 1 {
 			result.Stdout = `{"Results":[]}`
 		}
@@ -74,7 +74,7 @@ func TestVerifyMarkdownReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
-		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		result := successfulCLIRunner()(context.Background(), request)
 		if request.Name == "trivy" && len(request.Args) > 1 {
 			result.Stdout = `{"Results":[]}`
 		}
@@ -171,6 +171,12 @@ func successfulCLIRunner() cliRunnerFunc {
 func cliTestRunner(vulnerable bool) cliRunnerFunc {
 	return func(_ context.Context, request command.Request) model.CommandResult {
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		if request.Name == "kubectl" && slices.Contains(request.Args, "/readyz") {
+			result.Stdout = "ok"
+		}
+		if request.Name == "kubectl" && slices.Contains(request.Args, "nodes") {
+			result.Stdout = `{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
+		}
 		if request.Name == "k3d" || request.Name == "k6" || (request.Name == "trivy" && len(request.Args) == 1) || (request.Name == "docker" && len(request.Args) > 0 && request.Args[0] == "info") {
 			result.Stdout = "version 1.2.3"
 		}
