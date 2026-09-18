@@ -1,8 +1,8 @@
 # Roadmap and Backlog
 
-This document is the local source of truth until GitHub project write access is
-configured. Each milestone contains coherent work intended to become GitHub
-issues rather than an exhaustive task list.
+This document mirrors the public GitHub milestones and project at a durable,
+reviewable level. Each milestone contains coherent work rather than an
+exhaustive task list.
 
 ## v0.1 — Core CLI
 
@@ -34,7 +34,7 @@ issues rather than an exhaustive task list.
 
 ## v1.0 — Public V1
 
-- [ ] Validate representative healthy and intentionally broken fixtures.
-- [ ] Test several external repositories without repository-specific behavior.
-- [ ] Harden cleanup, diagnostics, interruption, and unsupported-stack behavior.
+- [x] Validate representative healthy and intentionally broken fixtures.
+- [x] Test several external repositories without repository-specific behavior.
+- [x] Harden cleanup, diagnostics, interruption, and unsupported-stack behavior.
 - [ ] Produce reproducible release binaries and checksums.

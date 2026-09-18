@@ -31,11 +31,21 @@ an explicit read-only token. Use it only from a trusted pinned workflow, and
 select successful default-branch runs. The token is scoped to the download step
 and is not passed to application verification.
 
+The public Action canonicalizes the application directory and requires it to
+remain inside the checked-out workspace. It rejects malformed artifact names,
+out-of-range retention periods, unsafe run IDs, and incomplete baseline inputs
+before installing tools or running CloudForge. Token validation passes only a
+presence flag to the shell; the token value is not placed in a shell
+environment.
+
 CloudForge generates a Namespace, Deployment, and Service from analyzed
 metadata. It does not apply source manifests or copy Secret, ConfigMap, or
-environment values into the generated workload. A separate cleanup context
-deletes the cluster after success, failure, timeout, or cancellation unless the
-operator explicitly passes `--keep-environment`.
+environment values into the generated workload. Independent cleanup contexts
+delete the cluster after success, failure, timeout, or cancellation unless the
+operator explicitly passes `--keep-environment`. Each image and cluster removal
+gets its own bounded context, so one failed removal cannot consume the timeout
+for later resources. A partially created cluster is always deleted; the keep
+flag applies only after cluster creation succeeds.
 
 Runtime HTTP experiments publish the generated Service only on a dynamically
 selected `127.0.0.1` port. CloudForge reads at most 1 KiB of each response body
