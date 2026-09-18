@@ -16,7 +16,7 @@ issues rather than an exhaustive task list.
 
 - [x] Add health/readiness and pod recovery experiments.
 - [x] Measure graceful shutdown and rolling deployment behavior under traffic.
-- [ ] Integrate deterministic k6 load testing and HPA observation.
+- [x] Integrate deterministic k6 load testing and HPA observation.
 
 ## v0.3 — Regression Engine
 

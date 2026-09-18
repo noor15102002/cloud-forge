@@ -1,7 +1,14 @@
 const http = require("node:http");
 
 const server = http.createServer((request, response) => {
-  if (request.url === "/health" || request.url === "/ready") {
+  const parsed = new URL(request.url, "http://127.0.0.1");
+  if (parsed.pathname === "/health" || parsed.pathname === "/ready") {
+    if (parsed.searchParams.get("cloudforge_load") === "1") {
+      const deadline = process.hrtime.bigint() + 5_000_000n;
+      while (process.hrtime.bigint() < deadline) {
+        // Deliberately bounded CPU work lets the fixture exercise its HPA.
+      }
+    }
     response.writeHead(200, { "content-type": "text/plain" });
     response.end("ok\n");
     return;

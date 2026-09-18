@@ -12,7 +12,7 @@ protects failed and warning finding behavior.
 The separate runtime integration workflow builds CloudForge, provisions real
 k3d clusters, verifies the healthy Node fixture, and confirms that the broken
 shutdown and rollout fixtures fail for their intended behavioral reasons. It
-validates structured evidence and Trivy scan output and fails if a CloudForge
+validates structured lifecycle, load, HPA, and Trivy evidence and fails if a CloudForge
 cluster remains. Unit tests inject the command runner to cover build, readiness,
 cluster creation, cancellation, and retained-environment paths without requiring
 local runtime tools. Parser tests cover normalized and malformed Trivy output.
@@ -26,3 +26,7 @@ Runtime tests also cover readiness HTTP retries, successful replacement after
 a temporary unready state, request failures during deletion, recovery timeout,
 final health, graceful termination traffic, version rollout transitions,
 broken shutdown and rollout fixtures, and cancellation-safe cleanup.
+
+The k6 adapter tests valid and malformed summary exports. HPA tests use official
+Kubernetes status types and injected runners to cover metrics availability,
+replica observations, bounded scale-up, and explicit skip behavior.

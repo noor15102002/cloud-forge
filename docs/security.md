@@ -31,6 +31,12 @@ Rolling-deployment verification rebuilds the trusted repository with the
 non-secret `CLOUDFORGE_VERSION` build argument set to `a` and `b`. CloudForge
 does not pass environment variables or credentials into either Docker build.
 
+Load verification writes a generated k6 script containing only the loopback
+endpoint into the run's temporary directory. Profiles are capped at 64 virtual
+users and one minute; the default is 16 users for 20 seconds. Generated HPAs
+are capped at five replicas to bound local resource use. Neither raw response
+bodies nor source environment values enter the load report.
+
 Trivy runs against the locally built image. CloudForge parses bounded JSON and
 retains vulnerability identifier, package, installed version, fixed version,
 severity, and image target metadata. Raw scanner output is not included in the
