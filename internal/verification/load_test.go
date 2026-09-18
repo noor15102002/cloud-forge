@@ -3,6 +3,7 @@ package verification
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,8 +35,47 @@ func TestUnavailableHPAMetricsAreExplicitlySkipped(t *testing.T) {
 	service.loadProfile = k6executor.Profile{VirtualUsers: 2, Duration: time.Second}
 	current := plan{clusterName: "test", workloadName: "api", readinessURL: "http://127.0.0.1:8080/ready", hpaName: "api", hpaTargetCPU: 70}
 	load, autoscaling := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), current, t.TempDir(), "hpa.yaml")
-	if load.Evidence.Status != model.StatusPass || autoscaling.Evidence.Status != model.StatusSkipped || autoscaling.Diagnostic == nil || autoscaling.Diagnostic.Code != "hpa_metrics_unavailable" || autoscaling.Diagnostic.Guidance != "FailedGetResourceMetric" {
+	if load.Evidence.Status != model.StatusPass || autoscaling.Evidence.Status != model.StatusSkipped || autoscaling.Diagnostic == nil || autoscaling.Diagnostic.Code != "hpa_metrics_unavailable" || !strings.Contains(autoscaling.Diagnostic.Guidance, "FailedGetResourceMetric") || !strings.Contains(autoscaling.Diagnostic.Guidance, "metrics-server") {
 		t.Fatalf("unexpected unavailable metrics outcome: load=%#v autoscaling=%#v", load, autoscaling)
+	}
+}
+
+func TestHPAMetricsDeadlineBecomesExplicitSkip(t *testing.T) {
+	runner := runnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {
+		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		if request.Name == "kubectl" && containsArgument(request.Args, "horizontalpodautoscaler") {
+			<-ctx.Done()
+			result.ExitCode = -1
+			result.FailureType = model.FailureCanceled
+		}
+		if request.Name == "k6" {
+			writeLoadSummary(request, `{"metrics":{"http_reqs":{"values":{"count":20,"rate":10}},"http_req_failed":{"values":{"rate":0}},"http_req_duration":{"values":{"p(50)":1,"p(95)":2,"p(99)":3}}}}`)
+		}
+		return result
+	})
+	service := New(runner)
+	service.poll = time.Millisecond
+	service.hpaMetricsTimeout = 3 * time.Millisecond
+	service.loadProfile = k6executor.Profile{VirtualUsers: 2, Duration: time.Second}
+	current := plan{clusterName: "test", workloadName: "api", readinessURL: "http://127.0.0.1:8080/ready", hpaName: "api", hpaTargetCPU: 70}
+	load, autoscaling := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), current, t.TempDir(), "hpa.yaml")
+	if load.Evidence.Status != model.StatusPass || autoscaling.Evidence.Status != model.StatusSkipped || autoscaling.Diagnostic == nil || autoscaling.Diagnostic.Code != "hpa_metrics_unavailable" {
+		t.Fatalf("deadline should be a metrics skip: load=%#v autoscaling=%#v", load, autoscaling)
+	}
+}
+
+func TestDesiredReplicaGrowthWithoutRunningPodsFails(t *testing.T) {
+	hpa := `{"status":{"currentReplicas":2,"desiredReplicas":3,"currentMetrics":[{"type":"Resource","resource":{"name":"cpu","current":{"averageUtilization":90,"averageValue":"90m"}}}],"conditions":[{"type":"ScalingActive","status":"True"}]}}`
+	runner := loadRunner(`{"metrics":{"http_reqs":{"values":{"count":20,"rate":10}},"http_req_failed":{"values":{"rate":0}},"http_req_duration":{"values":{"p(50)":1,"p(95)":2,"p(99)":3}}}}`, hpa)
+	service := New(runner)
+	service.poll = time.Millisecond
+	service.hpaMetricsTimeout = 3 * time.Millisecond
+	service.hpaScaleTimeout = 3 * time.Millisecond
+	service.loadProfile = k6executor.Profile{VirtualUsers: 2, Duration: time.Second}
+	current := plan{clusterName: "test", workloadName: "api", desiredReplicas: 2, readinessURL: "http://127.0.0.1:8080/ready", hpaName: "api", hpaMinReplicas: 2, hpaMaxReplicas: 5, hpaTargetCPU: 70}
+	load, autoscaling := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), current, t.TempDir(), "hpa.yaml")
+	if load.Evidence.Status != model.StatusPass || autoscaling.ExitCode != 1 || measurementValue(autoscaling.Evidence.Measurements, "peak_replicas") != "2" || measurementValue(autoscaling.Evidence.Measurements, "peak_desired_replicas") != "3" {
+		t.Fatalf("desired replicas must not count as actual scale-up: load=%#v autoscaling=%#v", load, autoscaling)
 	}
 }
 
@@ -53,15 +93,19 @@ func loadRunner(summary, hpa string) command.Runner {
 	return runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
 		if request.Name == "k6" {
-			for index, argument := range request.Args {
-				if argument == "--summary-export" && index+1 < len(request.Args) {
-					_ = os.WriteFile(request.Args[index+1], []byte(summary), 0o600)
-				}
-			}
+			writeLoadSummary(request, summary)
 		}
 		if request.Name == "kubectl" && containsArgument(request.Args, "horizontalpodautoscaler") {
 			result.Stdout = hpa
 		}
 		return result
 	})
+}
+
+func writeLoadSummary(request command.Request, summary string) {
+	for index, argument := range request.Args {
+		if argument == "--summary-export" && index+1 < len(request.Args) {
+			_ = os.WriteFile(request.Args[index+1], []byte(summary), 0o600)
+		}
+	}
 }

@@ -550,7 +550,7 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 	if len(application.Kubernetes.HorizontalPodScalers) == 1 && len(application.Kubernetes.Deployments) == 1 {
 		source := application.Kubernetes.HorizontalPodScalers[0]
 		deployment := application.Kubernetes.Deployments[0]
-		if source.TargetKind == "Deployment" && source.TargetName == deployment.Name && source.MaxReplicas > replicas && source.TargetCPU != nil && *source.TargetCPU > 0 {
+		if source.TargetKind == "Deployment" && source.TargetName == deployment.Name && normalizedNamespace(source.Namespace) == normalizedNamespace(deployment.Namespace) && source.MaxReplicas > replicas && source.TargetCPU != nil && *source.TargetCPU > 0 {
 			minimum := replicas
 			if source.MinReplicas != nil && *source.MinReplicas > 0 {
 				minimum = *source.MinReplicas
@@ -885,4 +885,11 @@ func minInt32(left, right int32) int32 {
 		return left
 	}
 	return right
+}
+
+func normalizedNamespace(value string) string {
+	if value == "" {
+		return "default"
+	}
+	return value
 }

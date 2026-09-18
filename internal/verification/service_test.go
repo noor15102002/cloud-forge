@@ -532,6 +532,22 @@ func TestBuildPlanGeneratesBoundedHPAFromAnalyzedTarget(t *testing.T) {
 	}
 }
 
+func TestBuildPlanDoesNotMatchHPAFromAnotherNamespace(t *testing.T) {
+	analysis := verificationAnalysis([]model.Endpoint{{Purpose: "readiness", Path: "/ready", Port: "http", Protocol: "HTTP"}})
+	targetCPU := int32(70)
+	analysis.Application.Kubernetes.Deployments[0].Namespace = "application"
+	analysis.Application.Kubernetes.HorizontalPodScalers = []model.HorizontalPodAutoscaler{{
+		Name: "api", Namespace: "other", TargetKind: "Deployment", TargetName: "api", MaxReplicas: 5, TargetCPU: &targetCPU,
+	}}
+	planned, err := buildPlan(analysis, "0123abcd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planned.hpaManifest) != 0 || planned.hpaSkipReason == "" {
+		t.Fatalf("cross-namespace HPA must be skipped: %#v", planned)
+	}
+}
+
 func TestDirectHTTPClientDoesNotUseProxyEnvironment(t *testing.T) {
 	client := directHTTPClient()
 	transport, ok := client.Transport.(*http.Transport)
@@ -577,10 +593,12 @@ func fixedService(runner command.Runner) *Service {
 		}
 		if request.Name == "kubectl" && containsArgument(request.Args, "horizontalpodautoscaler") && result.Stdout == "" {
 			desired := 2
+			current := 2
 			if loadRan {
 				desired = 3
+				current = 3
 			}
-			result.Stdout = `{"status":{"currentReplicas":2,"desiredReplicas":` + strconv.Itoa(desired) + `,"currentMetrics":[{"type":"Resource","resource":{"name":"cpu","current":{"averageUtilization":80,"averageValue":"80m"}}}],"conditions":[{"type":"ScalingActive","status":"True","reason":"ValidMetricFound"}]}}`
+			result.Stdout = `{"status":{"currentReplicas":` + strconv.Itoa(current) + `,"desiredReplicas":` + strconv.Itoa(desired) + `,"currentMetrics":[{"type":"Resource","resource":{"name":"cpu","current":{"averageUtilization":80,"averageValue":"80m"}}}],"conditions":[{"type":"ScalingActive","status":"True","reason":"ValidMetricFound"}]}}`
 		}
 		return result
 	})

@@ -2,6 +2,7 @@ package verification
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -30,8 +31,14 @@ func (s *Service) runLoadAndAutoscaling(ctx context.Context, loadClient *k6execu
 		metricsCtx, cancel := context.WithTimeout(ctx, s.hpaMetricsTimeout)
 		defer cancel()
 		for {
+			if errors.Is(metricsCtx.Err(), context.DeadlineExceeded) {
+				goto metricsComplete
+			}
 			state, result, observeErr := client.ObserveHPA(metricsCtx, current.clusterName, namespace, current.hpaName)
 			if observeErr != nil || failed(result) {
+				if errors.Is(metricsCtx.Err(), context.DeadlineExceeded) {
+					goto metricsComplete
+				}
 				failure := lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_observation_failed", "CloudForge could not inspect the HPA.", commandGuidance(result, observeErr), trafficObservation{})
 				return skippedLoad("The load profile was not started because HPA state could not be inspected."), failure
 			}
@@ -67,8 +74,13 @@ metricsComplete:
 	}
 
 	loadStarted := time.Now()
-	startReplicas := maxInt32(current.desiredReplicas, maxInt32(starting.CurrentReplicas, starting.DesiredReplicas))
+	startReplicas := starting.CurrentReplicas
+	if startReplicas == 0 {
+		startReplicas = current.desiredReplicas
+	}
+	startDesiredReplicas := starting.DesiredReplicas
 	peakReplicas := startReplicas
+	peakDesiredReplicas := startDesiredReplicas
 	peakCPU := int32(0)
 	if starting.CurrentCPU != nil {
 		peakCPU = *starting.CurrentCPU
@@ -89,7 +101,8 @@ metricsComplete:
 			<-loadDone
 			return skippedLoad("The load profile was canceled because HPA state could not be inspected."), lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_observation_failed", "CloudForge could not inspect HPA behavior during load.", commandGuidance(result, observeErr), trafficObservation{})
 		}
-		peakReplicas = maxInt32(peakReplicas, maxInt32(state.CurrentReplicas, state.DesiredReplicas))
+		peakReplicas = maxInt32(peakReplicas, state.CurrentReplicas)
+		peakDesiredReplicas = maxInt32(peakDesiredReplicas, state.DesiredReplicas)
 		if state.CurrentCPU != nil {
 			peakCPU = maxInt32(peakCPU, *state.CurrentCPU)
 		}
@@ -123,6 +136,8 @@ scaleComplete:
 	measurements := []model.Measurement{
 		{Name: "starting_replicas", Value: strconv.FormatInt(int64(startReplicas), 10), Unit: "pods"},
 		{Name: "peak_replicas", Value: strconv.FormatInt(int64(peakReplicas), 10), Unit: "pods"},
+		{Name: "starting_desired_replicas", Value: strconv.FormatInt(int64(startDesiredReplicas), 10), Unit: "pods"},
+		{Name: "peak_desired_replicas", Value: strconv.FormatInt(int64(peakDesiredReplicas), 10), Unit: "pods"},
 		{Name: "minimum_replicas", Value: strconv.FormatInt(int64(current.hpaMinReplicas), 10), Unit: "pods"},
 		{Name: "maximum_replicas", Value: strconv.FormatInt(int64(current.hpaMaxReplicas), 10), Unit: "pods"},
 		{Name: "scale_up_duration_ms", Value: strconv.FormatInt(scaleDuration, 10), Unit: "ms"},
@@ -185,7 +200,7 @@ func skippedAutoscaling(reason string) recoveryOutcome {
 }
 func skippedAutoscalingWithDiagnostic(reason string) recoveryOutcome {
 	result := skippedAutoscaling("CPU metrics were unavailable, so CloudForge skipped the HPA scale assertion.")
-	result.Diagnostic = &model.Diagnostic{Code: "hpa_metrics_unavailable", Status: model.StatusWarn, Message: result.Evidence.Summary, Guidance: reason}
+	result.Diagnostic = &model.Diagnostic{Code: "hpa_metrics_unavailable", Status: model.StatusWarn, Message: result.Evidence.Summary, Guidance: "Observed cause: " + reason + " Check that metrics-server is healthy and that the Deployment declares CPU requests."}
 	return result
 }
 func loadEndpoint(value string) (string, error) {
