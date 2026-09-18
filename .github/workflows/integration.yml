@@ -43,6 +43,16 @@ jobs:
           echo "$expected  $archive" | sha256sum --check
           tar --extract --gzip --file "$archive" trivy
           sudo install -m 0755 trivy /usr/local/bin/trivy
+      - name: Install k6
+        run: |
+          archive=k6-v2.2.0-linux-amd64.tar.gz
+          curl --fail --silent --show-error --location --output "$archive" https://github.com/grafana/k6/releases/download/v2.2.0/$archive
+          curl --fail --silent --show-error --location --output k6-checksums.txt https://github.com/grafana/k6/releases/download/v2.2.0/k6-v2.2.0-checksums.txt
+          expected="$(awk '$2 == "k6-v2.2.0-linux-amd64.tar.gz" {print $1}' k6-checksums.txt)"
+          test -n "$expected"
+          echo "$expected  $archive" | sha256sum --check
+          tar --extract --gzip --file "$archive"
+          sudo install -m 0755 k6-v2.2.0-linux-amd64/k6 /usr/local/bin/k6
       - name: Build CloudForge
         run: go build -o bin/cloudforge ./cmd/cloudforge
       - name: Verify healthy Node fixture
@@ -63,7 +73,9 @@ jobs:
             any(.evidence[]; .experiment_id == "deployment-readiness" and .status == "pass" and any(.measurements[]; .name == "readiness_http_status" and ((.value | tonumber) >= 200 and (.value | tonumber) < 300))) and
             any(.evidence[]; .experiment_id == "graceful-shutdown" and .status == "pass" and any(.measurements[]; .name == "in_flight_requests" and (.value | tonumber) > 0) and any(.measurements[]; .name == "dropped_requests" and .value == "0")) and
             any(.evidence[]; .experiment_id == "pod-recovery" and .status == "pass" and any(.measurements[]; .name == "failed_requests" and .value == "0") and any(.measurements[]; .name == "final_http_status" and ((.value | tonumber) >= 200 and (.value | tonumber) < 300))) and
-            any(.evidence[]; .experiment_id == "rolling-deployment" and .status == "pass" and any(.measurements[]; .name == "source_version" and .value == "a") and any(.measurements[]; .name == "target_version" and .value == "b") and any(.measurements[]; .name == "target_ready_pods" and .value == "2") and any(.measurements[]; .name == "failed_requests" and .value == "0"))
+            any(.evidence[]; .experiment_id == "rolling-deployment" and .status == "pass" and any(.measurements[]; .name == "source_version" and .value == "a") and any(.measurements[]; .name == "target_version" and .value == "b") and any(.measurements[]; .name == "target_ready_pods" and .value == "2") and any(.measurements[]; .name == "failed_requests" and .value == "0")) and
+            any(.evidence[]; .experiment_id == "load-profile" and .status == "pass" and any(.measurements[]; .name == "request_count" and (.value | tonumber) > 0) and any(.measurements[]; .name == "error_rate" and .value == "0.000") and any(.measurements[]; .name == "latency_p95_ms")) and
+            any(.evidence[]; .experiment_id == "horizontal-autoscaling" and .status == "pass" and any(.measurements[]; .name == "peak_replicas" and (.value | tonumber) > 2))
           ' /tmp/cloudforge-result.json
       - name: Verify broken shutdown detection
         run: |

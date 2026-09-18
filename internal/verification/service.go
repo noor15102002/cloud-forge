@@ -17,6 +17,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,6 +28,7 @@ import (
 	"github.com/noor15102002/cloud-forge/internal/command"
 	"github.com/noor15102002/cloud-forge/internal/executor/docker"
 	"github.com/noor15102002/cloud-forge/internal/executor/k3d"
+	k6executor "github.com/noor15102002/cloud-forge/internal/executor/k6"
 	"github.com/noor15102002/cloud-forge/internal/executor/kubernetes"
 	"github.com/noor15102002/cloud-forge/internal/executor/trivy"
 	"github.com/noor15102002/cloud-forge/pkg/model"
@@ -55,15 +57,18 @@ type Outcome struct {
 
 // Service runs verification through injected command execution.
 type Service struct {
-	runner           command.Runner
-	now              func() time.Time
-	newID            func() (string, error)
-	probe            probeFunc
-	poll             time.Duration
-	trafficPoll      time.Duration
-	readinessTimeout time.Duration
-	recoveryTimeout  time.Duration
-	rolloutTimeout   time.Duration
+	runner            command.Runner
+	now               func() time.Time
+	newID             func() (string, error)
+	probe             probeFunc
+	poll              time.Duration
+	trafficPoll       time.Duration
+	readinessTimeout  time.Duration
+	recoveryTimeout   time.Duration
+	rolloutTimeout    time.Duration
+	hpaMetricsTimeout time.Duration
+	hpaScaleTimeout   time.Duration
+	loadProfile       k6executor.Profile
 }
 
 // New creates a verification service.
@@ -73,6 +78,8 @@ func New(runner command.Runner) *Service {
 		probe: httpProbe(directHTTPClient()),
 		poll:  200 * time.Millisecond, trafficPoll: 20 * time.Millisecond, readinessTimeout: readinessWindow,
 		recoveryTimeout: recoveryWindow, rolloutTimeout: recoveryWindow,
+		hpaMetricsTimeout: time.Minute, hpaScaleTimeout: time.Minute,
+		loadProfile: k6executor.Profile{VirtualUsers: 16, Duration: 20 * time.Second},
 	}
 }
 
@@ -151,6 +158,14 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	if err := os.WriteFile(manifestPath, plan.manifest, 0o600); err != nil {
 		out.addError("manifest_write_failed", "CloudForge could not write the generated manifest.", err.Error())
 		return out
+	}
+	hpaManifestPath := ""
+	if len(plan.hpaManifest) > 0 {
+		hpaManifestPath = filepath.Join(temporary, "autoscaler.yaml")
+		if err := os.WriteFile(hpaManifestPath, plan.hpaManifest, 0o600); err != nil {
+			out.addError("manifest_write_failed", "CloudForge could not write the generated autoscaler manifest.", err.Error())
+			return out
+		}
 	}
 
 	dockerClient := docker.New(s.runner)
@@ -346,6 +361,8 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 			model.Evidence{ExperimentID: "graceful-shutdown", Title: "Graceful shutdown under traffic", Status: model.StatusSkipped, Summary: "Graceful shutdown traffic requires an explicit HTTP readiness endpoint."},
 			model.Evidence{ExperimentID: "pod-recovery", Title: "Pod recovery under traffic", Status: model.StatusSkipped, Summary: "Pod recovery traffic requires an explicit HTTP readiness endpoint."},
 			model.Evidence{ExperimentID: "rolling-deployment", Title: "Rolling deployment under traffic", Status: model.StatusSkipped, Summary: "Rolling deployment traffic requires an explicit HTTP readiness endpoint."},
+			model.Evidence{ExperimentID: "load-profile", Title: "Bounded HTTP load profile", Status: model.StatusSkipped, Summary: "Load testing requires an explicit HTTP readiness endpoint."},
+			model.Evidence{ExperimentID: "horizontal-autoscaling", Title: "Horizontal autoscaling under load", Status: model.StatusSkipped, Summary: "Autoscaling observation requires an explicit HTTP readiness endpoint."},
 		)
 	} else {
 		shutdown := s.runGracefulShutdown(ctx, kubernetesClient, plan)
@@ -365,6 +382,15 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		rollout := s.runRollingDeployment(ctx, k3dClient, kubernetesClient, plan, rolloutBuild)
 		applyExperimentOutcome(&out, rollout)
 		if rollout.ExitCode != 0 {
+			return out
+		}
+		load, autoscaling := s.runLoadAndAutoscaling(ctx, k6executor.New(s.runner), kubernetesClient, plan, temporary, hpaManifestPath)
+		applyExperimentOutcome(&out, load)
+		if load.ExitCode != 0 {
+			return out
+		}
+		applyExperimentOutcome(&out, autoscaling)
+		if autoscaling.ExitCode != 0 {
 			return out
 		}
 	}
@@ -407,6 +433,12 @@ type plan struct {
 	healthURL       string
 	httpSkipReason  string
 	manifest        []byte
+	hpaManifest     []byte
+	hpaName         string
+	hpaMinReplicas  int32
+	hpaMaxReplicas  int32
+	hpaTargetCPU    int32
+	hpaSkipReason   string
 }
 
 func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
@@ -509,11 +541,48 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 	if err != nil {
 		return plan{}, fmt.Errorf("encode generated Kubernetes resources: %w", err)
 	}
-	return plan{
+	result := plan{
 		clusterName: clusterName, workloadName: workloadName, image: image, rolloutImage: rolloutImage, desiredReplicas: replicas,
 		readinessScheme: readinessScheme, readinessPath: readinessPath, healthScheme: healthScheme, healthPath: healthPath,
 		httpSkipReason: httpSkipReason, manifest: manifest,
-	}, nil
+	}
+	result.hpaSkipReason = "No supported HPA targets the selected Deployment."
+	if len(application.Kubernetes.HorizontalPodScalers) == 1 && len(application.Kubernetes.Deployments) == 1 {
+		source := application.Kubernetes.HorizontalPodScalers[0]
+		deployment := application.Kubernetes.Deployments[0]
+		if source.TargetKind == "Deployment" && source.TargetName == deployment.Name && normalizedNamespace(source.Namespace) == normalizedNamespace(deployment.Namespace) && source.MaxReplicas > replicas && source.TargetCPU != nil && *source.TargetCPU > 0 {
+			minimum := replicas
+			if source.MinReplicas != nil && *source.MinReplicas > 0 {
+				minimum = *source.MinReplicas
+			}
+			maximum := minInt32(source.MaxReplicas, 5)
+			if minimum >= maximum {
+				result.hpaSkipReason = "The HPA minimum replica count is too high for CloudForge's five-replica local safety bound."
+				return result, nil
+			}
+			targetCPU := *source.TargetCPU
+			hpa := &autoscalingv2.HorizontalPodAutoscaler{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "autoscaling/v2", Kind: "HorizontalPodAutoscaler"},
+				ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: namespace, Labels: labels},
+				Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+					ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: workloadName},
+					MinReplicas:    &minimum, MaxReplicas: maximum,
+					Metrics: []autoscalingv2.MetricSpec{{Type: autoscalingv2.ResourceMetricSourceType, Resource: &autoscalingv2.ResourceMetricSource{Name: corev1.ResourceCPU, Target: autoscalingv2.MetricTarget{Type: autoscalingv2.UtilizationMetricType, AverageUtilization: &targetCPU}}}},
+				},
+			}
+			result.hpaManifest, err = marshalDocuments([]any{hpa})
+			if err != nil {
+				return plan{}, fmt.Errorf("encode generated HPA: %w", err)
+			}
+			result.hpaName, result.hpaMinReplicas, result.hpaMaxReplicas, result.hpaTargetCPU = workloadName, minimum, maximum, targetCPU
+			result.hpaSkipReason = ""
+		} else {
+			result.hpaSkipReason = "The discovered HPA must target the selected Deployment, define a positive CPU utilization target, and allow more replicas than the workload starts with."
+		}
+	} else if len(application.Kubernetes.HorizontalPodScalers) > 1 {
+		result.hpaSkipReason = "Multiple HPAs were discovered, so CloudForge did not choose one implicitly."
+	}
+	return result, nil
 }
 
 func selectPort(application model.Application) (int32, string, error) {
@@ -809,4 +878,18 @@ func outcomeForFindings(values []model.Finding) (model.Status, int) {
 		}
 	}
 	return model.StatusPass, 0
+}
+
+func minInt32(left, right int32) int32 {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func normalizedNamespace(value string) string {
+	if value == "" {
+		return "default"
+	}
+	return value
 }

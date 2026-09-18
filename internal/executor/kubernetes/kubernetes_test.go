@@ -39,3 +39,13 @@ func TestSetImageUsesExplicitContextAndContainer(t *testing.T) {
 		}
 	}
 }
+
+func TestObserveHPAReportsCPUAndReplicaState(t *testing.T) {
+	client := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		return model.CommandResult{Command: request.Name, Arguments: request.Args, Stdout: `{"status":{"currentReplicas":2,"desiredReplicas":4,"currentMetrics":[{"type":"Resource","resource":{"name":"cpu","current":{"averageUtilization":91,"averageValue":"91m"}}}],"conditions":[{"type":"ScalingActive","status":"True"}]}}`}
+	}))
+	state, _, err := client.ObserveHPA(context.Background(), "test", "cloudforge", "api")
+	if err != nil || !state.MetricsReady || state.CurrentCPU == nil || *state.CurrentCPU != 91 || state.CurrentReplicas != 2 || state.DesiredReplicas != 4 {
+		t.Fatalf("unexpected HPA state: state=%#v err=%v", state, err)
+	}
+}

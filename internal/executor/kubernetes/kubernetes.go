@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
@@ -23,6 +24,15 @@ type PodState struct {
 	Ready    bool
 	Restarts int32
 	Image    string
+}
+
+// HPAState contains safe autoscaler state needed by the load experiment.
+type HPAState struct {
+	CurrentReplicas int32
+	DesiredReplicas int32
+	CurrentCPU      *int32
+	MetricsReady    bool
+	Reason          string
 }
 
 // New creates a kubectl adapter.
@@ -87,6 +97,36 @@ func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector s
 	}
 	sort.Slice(states, func(i, j int) bool { return states[i].Name < states[j].Name })
 	return states, result, nil
+}
+
+// ObserveHPA returns the current autoscaler state without retaining events or pod data.
+func (c *Client) ObserveHPA(ctx context.Context, cluster, namespace, name string) (HPAState, model.CommandResult, error) {
+	result := c.runner.Run(ctx, command.Request{
+		Name: "kubectl", Args: []string{"--context", "k3d-" + cluster, "--namespace", namespace, "get", "horizontalpodautoscaler", name, "--output", "json"},
+		Timeout: 30 * time.Second, OutputLimit: 128 * 1024,
+	})
+	if result.FailureType != model.FailureNone || result.ExitCode != 0 {
+		return HPAState{}, result, nil
+	}
+	var hpa autoscalingv2.HorizontalPodAutoscaler
+	if err := json.Unmarshal([]byte(result.Stdout), &hpa); err != nil {
+		return HPAState{}, result, fmt.Errorf("decode HPA state: %w", err)
+	}
+	state := HPAState{CurrentReplicas: hpa.Status.CurrentReplicas, DesiredReplicas: hpa.Status.DesiredReplicas}
+	for _, metric := range hpa.Status.CurrentMetrics {
+		if metric.Type == autoscalingv2.ResourceMetricSourceType && metric.Resource != nil && metric.Resource.Name == corev1.ResourceCPU && metric.Resource.Current.AverageUtilization != nil {
+			value := *metric.Resource.Current.AverageUtilization
+			state.CurrentCPU = &value
+			state.MetricsReady = true
+			break
+		}
+	}
+	for _, condition := range hpa.Status.Conditions {
+		if condition.Type == autoscalingv2.ScalingActive && condition.Status != corev1.ConditionTrue {
+			state.Reason = condition.Reason
+		}
+	}
+	return state, result, nil
 }
 
 // SetImage starts a Deployment rollout to a locally imported image.

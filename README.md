@@ -8,8 +8,9 @@ regression reporting.
 > **Current status:** CloudForge implements environment diagnostics, read-only
 > repository analysis, and a first Docker-to-k3d readiness verification path.
 > Analysis includes normalized container and Kubernetes configuration findings;
-> verification adds normalized Trivy vulnerability findings. Broader experiments,
-> reports, baselines, and the distributable GitHub Action remain planned.
+> verification adds normalized Trivy findings, bounded k6 load measurements,
+> and HPA scaling evidence. Reports, baselines, and the distributable GitHub
+> Action remain planned.
 
 ## Why CloudForge
 
@@ -78,10 +79,16 @@ This slice reports detected vulnerabilities as warnings while preserving
 Trivy's lowercase severity. A configurable blocking policy belongs to the
 later regression and reporting work.
 
-## Planned verification experiments
+When an analyzed HPA safely targets the selected Deployment, verification
+applies a generated autoscaler after the lifecycle experiments. It waits for
+CPU metrics, runs a fixed 16-user, 20-second k6 profile, and records request
+count, throughput, error rate, P50/P95/P99 latency, starting and peak replicas,
+and scale-up duration. The generated HPA is capped at five replicas for local
+developer machines. Missing metrics produce explicit skipped evidence rather
+than an invented scaling result.
 
-- Deterministic k6 load profiles
-- HPA behavior when autoscaling is configured
+## Planned verification work
+
 - Baseline-to-pull-request regression comparison
 
 The planned GitHub Action will upload reports and update one stable pull request

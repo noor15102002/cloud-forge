@@ -10,7 +10,7 @@ The implemented slice contains:
 - `internal/analyzer`: bounded repository traversal and structured parsers
 - `internal/command`: the only subprocess execution boundary
 - `internal/doctor`: local prerequisite checks
-- `internal/executor`: Docker, k3d, kubectl, and Trivy command adapters
+- `internal/executor`: Docker, k3d, kubectl, k6, and Trivy command adapters
 - `internal/findings`: deterministic container and Kubernetes configuration checks
 - `internal/verification`: generated workload planning and lifecycle orchestration
 - `internal/render`: text and JSON serialization
@@ -28,7 +28,7 @@ flowchart LR
     CLI --> Verification
     Doctor --> Runner[Command runner]
     Verification --> Analyzer
-    Verification --> Executor[Docker / k3d / kubectl / Trivy]
+    Verification --> Executor[Docker / k3d / kubectl / k6 / Trivy]
     Analyzer --> Findings[Normalized findings]
     Executor --> Findings
     Executor --> Runner
@@ -53,3 +53,10 @@ argument. Kubernetes pod image metadata proves the transition to version `b`.
 Continuous loopback traffic spans controlled SIGTERM deletion and rollout so
 request failures, downtime, readiness-count changes, and final health remain
 part of the versioned evidence contract.
+
+The autoscaler is applied only after replica-sensitive lifecycle experiments.
+CloudForge waits for metrics-server to report CPU utilization, then runs a
+bounded k6 profile against the loopback endpoint. It normalizes request count,
+throughput, error rate, and P50/P95/P99 latency, while the Kubernetes adapter
+decodes official HPA status types to record starting and peak replicas. Missing
+metrics remain explicit skipped evidence with a diagnostic cause.

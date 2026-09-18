@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,7 +35,7 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 		if request.Name == "docker" && containsArgument(request.Args, "port") {
 			result.Stdout = "127.0.0.1:18080\n"
 		}
-		if request.Name == "kubectl" && containsArgument(request.Args, "apply") {
+		if request.Name == "kubectl" && containsArgument(request.Args, "apply") && strings.HasSuffix(request.Args[len(request.Args)-1], "workload.yaml") {
 			data, err := os.ReadFile(request.Args[len(request.Args)-1])
 			if err != nil {
 				t.Fatal(err)
@@ -51,7 +53,7 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	if outcome.ExitCode != 0 || outcome.Run.Status != model.StatusPass {
 		t.Fatalf("unexpected outcome: %#v", outcome)
 	}
-	if len(outcome.Run.Evidence) != 6 || outcome.Run.Evidence[2].Measurements[0].Value != "2" {
+	if len(outcome.Run.Evidence) != 8 || outcome.Run.Evidence[2].Measurements[0].Value != "2" {
 		t.Fatalf("missing readiness evidence: %#v", outcome.Run.Evidence)
 	}
 	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
@@ -62,7 +64,15 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	if shutdown == nil || measurementValue(shutdown.Measurements, "in_flight_requests") == "0" {
 		t.Fatalf("shutdown did not synchronize with an in-flight request: %#v", shutdown)
 	}
-	if len(calls) != 22 || !containsArgument(calls[len(calls)-3].Args, "delete") || !containsArgument(calls[len(calls)-2].Args, "rm") || !containsArgument(calls[len(calls)-1].Args, "rm") {
+	load := evidenceByID(outcome.Run.Evidence, "load-profile")
+	if load == nil || load.Status != model.StatusPass || measurementValue(load.Measurements, "latency_p99_ms") != "12.600" {
+		t.Fatalf("missing normalized load evidence: %#v", load)
+	}
+	autoscaling := evidenceByID(outcome.Run.Evidence, "horizontal-autoscaling")
+	if autoscaling == nil || autoscaling.Status != model.StatusPass || measurementValue(autoscaling.Measurements, "starting_replicas") != "2" || measurementValue(autoscaling.Measurements, "peak_replicas") != "3" {
+		t.Fatalf("missing autoscaling evidence: %#v", autoscaling)
+	}
+	if !containsArgument(calls[len(calls)-3].Args, "delete") || !containsArgument(calls[len(calls)-2].Args, "rm") || !containsArgument(calls[len(calls)-1].Args, "rm") {
 		t.Fatalf("unexpected command lifecycle: %#v", calls)
 	}
 	for _, expected := range []string{"kind: Namespace", "kind: Deployment", "kind: Service", "imagePullPolicy: Never", "path: /ready", "cpu: 100m", "replicas: 2"} {
@@ -500,6 +510,44 @@ func TestBuildPlanRejectsHealthProbeOnDifferentPort(t *testing.T) {
 	}
 }
 
+func TestBuildPlanGeneratesBoundedHPAFromAnalyzedTarget(t *testing.T) {
+	analysis := verificationAnalysis([]model.Endpoint{{Purpose: "readiness", Path: "/ready", Port: "http", Protocol: "HTTP"}})
+	replicas, minimum, targetCPU := int32(2), int32(2), int32(70)
+	analysis.Application.Kubernetes.Deployments[0].Replicas = &replicas
+	analysis.Application.Kubernetes.HorizontalPodScalers = []model.HorizontalPodAutoscaler{{
+		Name: "api", TargetKind: "Deployment", TargetName: "api", MinReplicas: &minimum, MaxReplicas: 100, TargetCPU: &targetCPU,
+	}}
+	planned, err := buildPlan(analysis, "0123abcd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planned.hpaName == "" || planned.hpaMaxReplicas != 5 || planned.hpaSkipReason != "" {
+		t.Fatalf("unexpected HPA plan: %#v", planned)
+	}
+	manifest := string(planned.hpaManifest)
+	for _, expected := range []string{"kind: HorizontalPodAutoscaler", "maxReplicas: 5", "averageUtilization: 70", "name: cf-api-0123abcd"} {
+		if !strings.Contains(manifest, expected) {
+			t.Fatalf("generated HPA is missing %q:\n%s", expected, manifest)
+		}
+	}
+}
+
+func TestBuildPlanDoesNotMatchHPAFromAnotherNamespace(t *testing.T) {
+	analysis := verificationAnalysis([]model.Endpoint{{Purpose: "readiness", Path: "/ready", Port: "http", Protocol: "HTTP"}})
+	targetCPU := int32(70)
+	analysis.Application.Kubernetes.Deployments[0].Namespace = "application"
+	analysis.Application.Kubernetes.HorizontalPodScalers = []model.HorizontalPodAutoscaler{{
+		Name: "api", Namespace: "other", TargetKind: "Deployment", TargetName: "api", MaxReplicas: 5, TargetCPU: &targetCPU,
+	}}
+	planned, err := buildPlan(analysis, "0123abcd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planned.hpaManifest) != 0 || planned.hpaSkipReason == "" {
+		t.Fatalf("cross-namespace HPA must be skipped: %#v", planned)
+	}
+}
+
 func TestDirectHTTPClientDoesNotUseProxyEnvironment(t *testing.T) {
 	client := directHTTPClient()
 	transport, ok := client.Transport.(*http.Transport)
@@ -526,7 +574,35 @@ func verificationAnalysis(endpoints []model.Endpoint) model.AnalysisResult {
 }
 
 func fixedService(runner command.Runner) *Service {
-	service := New(runner)
+	loadRan := false
+	var runnerLock sync.Mutex
+	wrapped := runnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {
+		runnerLock.Lock()
+		defer runnerLock.Unlock()
+		result := runner.Run(ctx, request)
+		if failed(result) {
+			return result
+		}
+		if request.Name == "k6" {
+			loadRan = true
+			for index, argument := range request.Args {
+				if argument == "--summary-export" && index+1 < len(request.Args) {
+					_ = os.WriteFile(request.Args[index+1], []byte(`{"metrics":{"http_reqs":{"values":{"count":120,"rate":12.5}},"http_req_failed":{"values":{"rate":0}},"http_req_duration":{"values":{"p(50)":4.2,"p(95)":8.4,"p(99)":12.6}}}}`), 0o600)
+				}
+			}
+		}
+		if request.Name == "kubectl" && containsArgument(request.Args, "horizontalpodautoscaler") && result.Stdout == "" {
+			desired := 2
+			current := 2
+			if loadRan {
+				desired = 3
+				current = 3
+			}
+			result.Stdout = `{"status":{"currentReplicas":` + strconv.Itoa(current) + `,"desiredReplicas":` + strconv.Itoa(desired) + `,"currentMetrics":[{"type":"Resource","resource":{"name":"cpu","current":{"averageUtilization":80,"averageValue":"80m"}}}],"conditions":[{"type":"ScalingActive","status":"True","reason":"ValidMetricFound"}]}}`
+		}
+		return result
+	})
+	service := New(wrapped)
 	service.newID = func() (string, error) { return "0123abcd", nil }
 	service.now = clock(time.Unix(100, 0), time.Unix(101, 0))
 	service.probe = func(context.Context, string) (int, error) { return 200, nil }
@@ -535,6 +611,9 @@ func fixedService(runner command.Runner) *Service {
 	service.readinessTimeout = 50 * time.Millisecond
 	service.recoveryTimeout = 50 * time.Millisecond
 	service.rolloutTimeout = 50 * time.Millisecond
+	service.hpaMetricsTimeout = 50 * time.Millisecond
+	service.hpaScaleTimeout = 50 * time.Millisecond
+	service.loadProfile.Duration = time.Second
 	return service
 }
 
