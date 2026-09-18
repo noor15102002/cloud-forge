@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
@@ -12,6 +13,23 @@ type runnerFunc func(context.Context, command.Request) model.CommandResult
 
 func (f runnerFunc) Run(ctx context.Context, request command.Request) model.CommandResult {
 	return f(ctx, request)
+}
+
+func TestStartupDiagnosticsOmitMessagesAndCustomReasons(t *testing.T) {
+	client := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		if strings.Contains(strings.Join(request.Args, " "), "get nodes") {
+			return model.CommandResult{Stdout: `{"items":[{"status":{"conditions":[{"type":"DiskPressure","status":"True","message":"secret"},{"type":"MemoryPressure","status":"False"},{"type":"Ready","status":"True"},{"type":"secret","status":"True"}]}}]}`}
+		}
+		return model.CommandResult{Stdout: `{"items":[{"metadata":{"name":"api"},"status":{"phase":"Pending","containerStatuses":[{"state":{"waiting":{"reason":"ErrImageNeverPull","message":"secret"}}}]}},{"metadata":{"name":"custom"},"status":{"containerStatuses":[{"state":{"waiting":{"reason":"secret","message":"secret"}}}]}}]}`}
+	}))
+	pods, _, err := client.ObservePods(context.Background(), "test", "cloudforge", "app=api")
+	if err != nil || len(pods) != 2 || pods[0].Reason != "image_unavailable" || pods[1].Reason != "unknown" {
+		t.Fatalf("unexpected safe pod reasons: %#v, %v", pods, err)
+	}
+	problems, _, err := client.NodeProblems(context.Background(), "test")
+	if err != nil || len(problems) != 1 || problems[0] != "node_disk_pressure" {
+		t.Fatalf("unexpected safe node reasons: %#v, %v", problems, err)
+	}
 }
 
 func TestObservePodsReturnsImageAndSortedIdentity(t *testing.T) {

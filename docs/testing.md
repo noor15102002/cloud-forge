@@ -62,3 +62,12 @@ Run `make external` to fetch the exact revisions listed in the
 without executing their code. This networked check is reproducible but is kept
 outside the required pull-request CI path so upstream availability cannot block
 local development.
+
+The pilot workflow adds five repeated trials each for runnable Node and FastAPI
+services, controlled readiness-gating and targeted in-flight shutdown evidence,
+and planted Python readiness/shutdown failures. The healthy Python launcher
+allows EndpointSlice removal to propagate before closing the Uvicorn listener.
+Real interruption tests preserve an existing kubeconfig/context and unrelated
+Docker container/network/volume while checking run-owned resource cleanup.
+`metadata-node` and `metadata-python` remain compact analyzer-only fixtures;
+`healthy-node` and `healthy-python` contain runnable reference applications.

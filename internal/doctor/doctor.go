@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
 	"github.com/noor15102002/cloud-forge/pkg/model"
@@ -79,7 +78,11 @@ func (d *Doctor) Run(ctx context.Context) model.DoctorReport {
 		daemonCheck.Detail = dockerDaemonDetail(daemon)
 		daemonCheck.Guidance = "Start Docker and ensure the current user can access its daemon, then run cloudforge doctor again."
 	} else {
-		daemonCheck.Version = safeFirstLine(daemon.Stdout)
+		daemonCheck.Version = ParsedVersion(daemon.Stdout)
+		if daemonCheck.Version == "" {
+			daemonCheck.Status = model.StatusFail
+			daemonCheck.Detail = "Docker daemon version output was unrecognized."
+		}
 	}
 	report.Checks = append(report.Checks, daemonCheck)
 
@@ -148,23 +151,6 @@ func failureDetail(value model.FailureType) string {
 	default:
 		return "Version check could not be executed."
 	}
-}
-
-func safeFirstLine(value string) string {
-	value = strings.TrimSpace(value)
-	if index := strings.IndexByte(value, '\n'); index >= 0 {
-		value = value[:index]
-	}
-	value = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, value)
-	if len(value) > 160 {
-		value = value[:160]
-	}
-	return value
 }
 
 func linuxMemoryBytes() (uint64, error) {

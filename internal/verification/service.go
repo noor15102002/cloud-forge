@@ -370,7 +370,8 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		httpResult = <-httpResultChannel
 		stopHTTP()
 	}
-	ready, total, restarts, podResult, podErr := kubernetesClient.ReadyPods(ctx, plan.clusterName, namespace, "app.kubernetes.io/name="+plan.workloadName)
+	pods, podResult, podErr := kubernetesClient.ObservePods(ctx, plan.clusterName, namespace, "app.kubernetes.io/name="+plan.workloadName)
+	ready, total, restarts := summarizePods(pods)
 	readinessStatus := model.StatusPass
 	readinessSummary := "Deployment became available."
 	if failed(waitResult) {
@@ -411,6 +412,29 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.Run.Evidence[len(out.Run.Evidence)-1].Summary = readinessSummary
 	}
 	if readinessStatus == model.StatusFail {
+		reasons := map[string]int{}
+		for _, pod := range pods {
+			if !pod.Ready {
+				reasons[pod.Reason]++
+			}
+		}
+		keys := make([]string, 0, len(reasons))
+		for reason := range reasons {
+			keys = append(keys, reason)
+		}
+		sort.Strings(keys)
+		for _, reason := range keys {
+			index := len(out.Run.Evidence) - 1
+			out.Run.Evidence[index].Measurements = append(out.Run.Evidence[index].Measurements, model.Measurement{Name: "pods_" + reason, Value: strconv.Itoa(reasons[reason]), Unit: "pods"})
+		}
+		problems, nodeResult, nodeErr := kubernetesClient.NodeProblems(ctx, plan.clusterName)
+		if nodeErr == nil && !failed(nodeResult) && len(problems) > 0 {
+			index := len(out.Run.Evidence) - 1
+			out.Run.Evidence[index].Status = model.StatusError
+			out.Run.Evidence[index].Summary = "The test node was unhealthy; application startup could not be assessed reliably."
+			out.addError("runtime_environment_unhealthy", out.Run.Evidence[index].Summary, strings.Join(problems, ", "))
+			return out
+		}
 		out.Run.Findings = append(out.Run.Findings, model.Finding{
 			ID: "container.startup", Category: "container", Status: model.StatusFail, Severity: model.SeverityHigh,
 			Summary: "The application did not start with all requested replicas ready.", Observed: readinessSummary,
@@ -652,6 +676,9 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 		}
 	}
 	if config.Endpoints.Readiness != "" {
+		if strings.EqualFold(readinessScheme, "https") {
+			return plan{}, errors.New("HTTPS readiness cannot be replaced with an HTTP experiment endpoint in this pilot")
+		}
 		readinessScheme, readinessPath = "http", config.Endpoints.Readiness
 	}
 	if config.Endpoints.Health != "" {
@@ -677,6 +704,9 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 		healthScheme, healthPath = readinessScheme, readinessPath
 	}
 
+	if config.Endpoints.Load != "" && readinessPath == "" {
+		return plan{}, errors.New("load testing requires an explicit HTTP readiness endpoint")
+	}
 	peakReplicas := replicas
 	for _, hpa := range application.Kubernetes.HorizontalPodScalers {
 		if hpa.MaxReplicas > 5 || hpa.MaxReplicas < 1 {

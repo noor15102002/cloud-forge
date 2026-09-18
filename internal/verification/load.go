@@ -13,6 +13,8 @@ import (
 )
 
 func (s *Service) runLoadAndAutoscaling(ctx context.Context, loadClient *k6executor.Client, client *kubernetes.Client, current plan, workspace, hpaManifestPath string) (recoveryOutcome, recoveryOutcome) {
+	ctx, cancelExperiment := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancelExperiment()
 	loadURL := current.loadURL
 	if loadURL == "" {
 		return skippedLoad("No explicit endpoints.load was configured."), skippedAutoscaling("A representative load endpoint is required to test autoscaling.")
@@ -100,7 +102,9 @@ metricsComplete:
 		state, result, observeErr := client.ObserveHPA(scaleCtx, current.clusterName, namespace, current.hpaName)
 		if observeErr != nil || failed(result) {
 			cancelLoad()
-			<-loadDone
+			if !loadFinished {
+				<-loadDone
+			}
 			return skippedLoad("The load profile was canceled because HPA state could not be inspected."), lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_observation_failed", "CloudForge could not inspect HPA behavior during load.", commandGuidance(result, observeErr), trafficObservation{})
 		}
 		if state.DesiredReplicas > startReplicas {

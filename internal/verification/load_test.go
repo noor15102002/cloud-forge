@@ -109,3 +109,35 @@ func writeLoadSummary(request command.Request, summary string) {
 		}
 	}
 }
+
+func TestHPAObservationFailureAfterLoadCompletionDoesNotHang(t *testing.T) {
+	observations := 0
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		if request.Name == "k6" {
+			writeLoadSummary(request, `{"metrics":{"http_reqs":{"values":{"count":20,"rate":10}},"http_req_failed":{"values":{"rate":0}},"http_req_duration":{"values":{"p(50)":1,"p(95)":2,"p(99)":3}}}}`)
+		}
+		if request.Name == "kubectl" && containsArgument(request.Args, "horizontalpodautoscaler") {
+			observations++
+			if observations >= 3 {
+				return model.CommandResult{ExitCode: 1, FailureType: model.FailureExit}
+			}
+			return model.CommandResult{Stdout: `{"status":{"currentReplicas":2,"desiredReplicas":2,"currentMetrics":[{"type":"Resource","resource":{"name":"cpu","current":{"averageUtilization":1}}}]}}`}
+		}
+		return model.CommandResult{}
+	})
+	service := New(runner)
+	service.poll = 50 * time.Millisecond
+	done := make(chan recoveryOutcome, 1)
+	go func() {
+		_, outcome := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), plan{loadURL: "http://127.0.0.1:8000/work", hpaTargetCPU: 70}, t.TempDir(), "hpa.yaml")
+		done <- outcome
+	}()
+	select {
+	case outcome := <-done:
+		if outcome.ExitCode != 2 {
+			t.Fatalf("unexpected outcome: %#v", outcome)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("joined an already-consumed load result")
+	}
+}

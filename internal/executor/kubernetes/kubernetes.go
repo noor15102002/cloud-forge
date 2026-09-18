@@ -25,6 +25,7 @@ type PodState struct {
 	Ready       bool
 	Restarts    int32
 	Image       string
+	Reason      string
 }
 
 // HPAState contains safe autoscaler state needed by the load experiment.
@@ -87,7 +88,7 @@ func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector s
 	}
 	states := make([]PodState, 0, len(pods.Items))
 	for _, pod := range pods.Items {
-		state := PodState{Name: pod.Name, Ready: podReady(pod), Terminating: pod.DeletionTimestamp != nil}
+		state := PodState{Name: pod.Name, Ready: podReady(pod), Terminating: pod.DeletionTimestamp != nil, Reason: podReason(pod)}
 		if len(pod.Spec.Containers) > 0 {
 			state.Image = pod.Spec.Containers[0].Image
 		}
@@ -144,8 +145,8 @@ func (c *Client) SetImage(ctx context.Context, cluster, namespace, deployment, c
 // DeletePod removes one application pod and waits until that object is gone.
 func (c *Client) DeletePod(ctx context.Context, cluster, namespace, name string) model.CommandResult {
 	return c.runner.Run(ctx, command.Request{
-		Name: "kubectl", Args: []string{"--context", "k3d-" + cluster, "--namespace", namespace, "delete", "pod", name, "--wait=true", "--timeout=30s"},
-		Timeout: 40 * time.Second, OutputLimit: 128 * 1024,
+		Name: "kubectl", Args: []string{"--context", "k3d-" + cluster, "--namespace", namespace, "delete", "pod", name, "--wait=true", "--timeout=120s"},
+		Timeout: 130 * time.Second, OutputLimit: 128 * 1024,
 	})
 }
 
