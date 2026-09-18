@@ -43,9 +43,11 @@ flowchart LR
 ```
 
 Verification generates one narrowly scoped Kubernetes workload from
-unambiguous analyzed metadata. A fresh k3d cluster isolates every run. Cleanup
-uses a separate bounded context so cancellation of the experiment does not
-cancel deletion.
+unambiguous analyzed metadata. Malformed or incomplete analysis stops before
+execution while retaining the analyzer's findings and diagnostics in the
+report. A fresh k3d cluster isolates every run. Every cluster and image cleanup
+operation uses an independent bounded context so cancellation or one failed
+deletion does not prevent later cleanup.
 
 The generated Service uses a fixed NodePort mapped to a dynamically selected
 loopback-only host port. This allows the Go HTTP probe to measure readiness and
@@ -74,7 +76,7 @@ strict decoder before verification starts. The regression engine compares only
 statuses and normalized metrics with declared quality directions; it does not
 change the current run's absolute findings or status. Terminal output summarizes
 experiments and actionable findings, while Markdown includes detailed
-collapsible measurements and findings for later PR comment integration.
+collapsible measurements and findings for pull-request comment integration.
 Repository-derived Markdown text is escaped before output; the canonical JSON
 retains the complete result when display limits apply.
 

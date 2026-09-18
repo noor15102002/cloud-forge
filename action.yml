@@ -54,51 +54,40 @@ runs:
   using: composite
   steps:
     - name: Validate action inputs
+      id: inputs
       shell: bash
       env:
+        CLOUDFORGE_APPLICATION_PATH: ${{ inputs.path }}
+        CLOUDFORGE_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        CLOUDFORGE_BASELINE_ARTIFACT_NAME: ${{ inputs.baseline-artifact-name }}
         CLOUDFORGE_BASELINE_PATH: ${{ inputs.baseline-path }}
         CLOUDFORGE_BASELINE_RUN_ID: ${{ inputs.baseline-run-id }}
-        CLOUDFORGE_GITHUB_TOKEN: ${{ inputs.github-token }}
-      run: |
-        set -euo pipefail
-        if [ "${RUNNER_OS:-}" != "Linux" ] || [ "${RUNNER_ARCH:-}" != "X64" ]; then
-          echo "CloudForge verification currently supports GitHub-hosted Ubuntu x64 runners." >&2
-          exit 2
-        fi
-        if [ -n "$CLOUDFORGE_BASELINE_PATH" ] && [ -n "$CLOUDFORGE_BASELINE_RUN_ID" ]; then
-          echo "Set either baseline-path or baseline-run-id, not both." >&2
-          exit 2
-        fi
-        if [[ "$CLOUDFORGE_BASELINE_PATH" == *$'\n'* || "$CLOUDFORGE_BASELINE_PATH" == *$'\r'* ]]; then
-          echo "baseline-path must not contain newline characters." >&2
-          exit 2
-        fi
-        if [ -n "$CLOUDFORGE_BASELINE_RUN_ID" ] && [[ ! "$CLOUDFORGE_BASELINE_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
-          echo "baseline-run-id must be a positive integer." >&2
-          exit 2
-        fi
-        if [ -n "$CLOUDFORGE_BASELINE_RUN_ID" ] && [ -z "$CLOUDFORGE_GITHUB_TOKEN" ]; then
-          echo "github-token is required when baseline-run-id is set." >&2
-          exit 2
-        fi
+        CLOUDFORGE_HAS_GITHUB_TOKEN: ${{ inputs.github-token != '' }}
+        CLOUDFORGE_RETENTION_DAYS: ${{ inputs.retention-days }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/validate-action-inputs.sh"
 
     - name: Set up Go
-      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: 1.27.1
-        cache: true
-        cache-dependency-path: ${{ github.action_path }}/go.sum
+        cache: false
 
     - name: Install pinned runtime tools
       shell: bash
       run: bash "$GITHUB_ACTION_PATH/scripts/install-tools.sh" "$RUNNER_TEMP/cloudforge-tools"
 
+    - name: Prepare isolated baseline directory
+      if: ${{ inputs.baseline-run-id != '' }}
+      id: baseline-directory
+      shell: bash
+      run: printf 'path=%s\n' "$(mktemp -d "$RUNNER_TEMP/cloudforge-baseline.XXXXXX")" >> "$GITHUB_OUTPUT"
+
     - name: Download configured baseline artifact
       if: ${{ inputs.baseline-run-id != '' }}
-      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
         name: ${{ inputs.baseline-artifact-name }}
-        path: ${{ runner.temp }}/cloudforge-baseline
+        path: ${{ steps.baseline-directory.outputs.path }}
         github-token: ${{ inputs.github-token }}
         run-id: ${{ inputs.baseline-run-id }}
 
@@ -108,11 +97,12 @@ runs:
       env:
         CLOUDFORGE_BASELINE_PATH: ${{ inputs.baseline-path }}
         CLOUDFORGE_BASELINE_RUN_ID: ${{ inputs.baseline-run-id }}
+        CLOUDFORGE_BASELINE_DIRECTORY: ${{ steps.baseline-directory.outputs.path }}
       run: |
         set -euo pipefail
         baseline="$CLOUDFORGE_BASELINE_PATH"
         if [ -n "$CLOUDFORGE_BASELINE_RUN_ID" ]; then
-          baseline="$RUNNER_TEMP/cloudforge-baseline/verification.json"
+          baseline="$CLOUDFORGE_BASELINE_DIRECTORY/verification.json"
         fi
         if [ -n "$baseline" ] && [ ! -f "$baseline" ]; then
           echo "Configured CloudForge baseline does not exist: $baseline" >&2
@@ -126,8 +116,7 @@ runs:
       working-directory: ${{ github.action_path }}
       run: |
         set -euo pipefail
-        install_dir="$RUNNER_TEMP/cloudforge-action"
-        mkdir -p "$install_dir"
+        install_dir="$(mktemp -d "$RUNNER_TEMP/cloudforge-action.XXXXXX")"
         binary="$install_dir/cloudforge"
         go build -trimpath -o "$binary" ./cmd/cloudforge
         echo "binary=$binary" >> "$GITHUB_OUTPUT"
@@ -137,7 +126,7 @@ runs:
       shell: bash
       working-directory: ${{ github.workspace }}
       env:
-        CLOUDFORGE_APPLICATION_PATH: ${{ inputs.path }}
+        CLOUDFORGE_APPLICATION_PATH: ${{ steps.inputs.outputs.application-path }}
         CLOUDFORGE_BASELINE_PATH: ${{ steps.baseline.outputs.path }}
         CLOUDFORGE_BINARY: ${{ steps.build.outputs.binary }}
       run: |
@@ -169,7 +158,7 @@ runs:
 
     - name: Upload verification reports
       if: ${{ always() && steps.verify.outputs.report-json != '' }}
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ inputs.artifact-name }}
         path: |

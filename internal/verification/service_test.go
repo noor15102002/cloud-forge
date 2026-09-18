@@ -100,12 +100,62 @@ func TestBuildFailureDoesNotCreateCluster(t *testing.T) {
 	var calls []command.Request
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		calls = append(calls, request)
+		if request.Name == "docker" && containsArgument(request.Args, "rm") {
+			return model.CommandResult{Command: request.Name, Arguments: request.Args, ExitCode: 1, FailureType: model.FailureExit, Stderr: "No such image"}
+		}
 		return model.CommandResult{Command: request.Name, Arguments: request.Args, ExitCode: 1, FailureType: model.FailureExit}
 	})
 	service := fixedService(runner)
 	outcome := service.Run(context.Background(), fixturePath(t), Options{})
-	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || len(calls) != 1 || calls[0].Name != "docker" {
+	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || hasCommand(calls, "k3d", "create") || !hasCommand(calls, "docker", "rm") {
 		t.Fatalf("unexpected build failure behavior: outcome=%#v calls=%#v", outcome, calls)
+	}
+}
+
+func TestInterruptedBuildIsExecutionErrorAndUsesFreshCleanupContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var calls []command.Request
+	var cleanupContextError error
+	runner := runnerFunc(func(callCtx context.Context, request command.Request) model.CommandResult {
+		calls = append(calls, request)
+		if request.Name == "docker" && containsArgument(request.Args, "build") {
+			cancel()
+			return model.CommandResult{Command: request.Name, Arguments: request.Args, ExitCode: -1, FailureType: model.FailureCanceled}
+		}
+		if request.Name == "docker" && containsArgument(request.Args, "rm") {
+			cleanupContextError = callCtx.Err()
+			return model.CommandResult{Command: request.Name, Arguments: request.Args, ExitCode: 1, FailureType: model.FailureExit, Stderr: "No such image"}
+		}
+		return successfulCommand(request)
+	})
+	outcome := fixedService(runner).Run(ctx, fixturePath(t), Options{})
+	build := evidenceByID(outcome.Run.Evidence, "container-build")
+	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError || build == nil || build.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "container_build_failed") {
+		t.Fatalf("interrupted build was not an execution error: %#v", outcome)
+	}
+	if cleanupContextError != nil || !hasCommand(calls, "docker", "rm") || hasCommand(calls, "k3d", "create") {
+		t.Fatalf("interrupted build cleanup was not isolated: calls=%#v context=%v", calls, cleanupContextError)
+	}
+}
+
+func TestBuildFailureClassificationDistinguishesDaemonErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		result      model.CommandResult
+		application bool
+	}{
+		{name: "dockerfile command", result: model.CommandResult{ExitCode: 1, FailureType: model.FailureExit, Stderr: "/bin/sh: ./start.sh: Permission denied"}, application: true},
+		{name: "dependency endpoint", result: model.CommandResult{ExitCode: 1, FailureType: model.FailureExit, Stderr: "dial tcp 127.0.0.1:8080: connect: connection refused"}, application: true},
+		{name: "daemon denied", result: model.CommandResult{ExitCode: 1, FailureType: model.FailureExit, Stderr: "permission denied while trying to connect to the Docker daemon socket"}, application: false},
+		{name: "daemon unavailable", result: model.CommandResult{ExitCode: 1, FailureType: model.FailureExit, Stderr: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"}, application: false},
+		{name: "canceled", result: model.CommandResult{ExitCode: -1, FailureType: model.FailureCanceled}, application: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if actual := isApplicationBuildFailure(test.result); actual != test.application {
+				t.Fatalf("isApplicationBuildFailure()=%v, want %v", actual, test.application)
+			}
+		})
 	}
 }
 
@@ -349,7 +399,7 @@ func TestRollingDeploymentCommandFailureIsExecutionError(t *testing.T) {
 	}
 }
 
-func TestRollingImageBuildFailureIsExecutionError(t *testing.T) {
+func TestRollingImageBuildFailureIsApplicationFailure(t *testing.T) {
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := successfulCommand(request)
 		if request.Name == "docker" && containsArgument(request.Args, "CLOUDFORGE_VERSION=b") {
@@ -361,8 +411,24 @@ func TestRollingImageBuildFailureIsExecutionError(t *testing.T) {
 	})
 	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
 	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
-	if outcome.ExitCode != 2 || rollout == nil || rollout.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "rollout_image_build_failed") {
-		t.Fatalf("version B build failure should remain an execution error: %#v", outcome)
+	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || rollout == nil || rollout.Status != model.StatusFail || !hasDiagnosticCode(outcome.Run.Diagnostics, "rollout_image_build_failed") || findingByID(outcome.Run.Findings, "container.rollout-build") == nil {
+		t.Fatalf("version B application build failure was misclassified: %#v", outcome)
+	}
+}
+
+func TestInterruptedRollingImageBuildIsExecutionError(t *testing.T) {
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		result := successfulCommand(request)
+		if request.Name == "docker" && containsArgument(request.Args, "CLOUDFORGE_VERSION=b") {
+			result.ExitCode = -1
+			result.FailureType = model.FailureCanceled
+		}
+		return result
+	})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
+	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError || rollout == nil || rollout.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "rollout_image_build_failed") {
+		t.Fatalf("interrupted version B build was not an execution error: %#v", outcome)
 	}
 }
 
@@ -415,8 +481,10 @@ func TestOverlappingRequestsCountsOnlyTerminationWindow(t *testing.T) {
 
 func TestClusterCreateFailureUsesFreshCleanupContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	var calls []command.Request
 	var cleanupContextError error
 	runner := runnerFunc(func(callCtx context.Context, request command.Request) model.CommandResult {
+		calls = append(calls, request)
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
 		if request.Name == "trivy" {
 			result.Stdout = `{"Results":[]}`
@@ -434,12 +502,49 @@ func TestClusterCreateFailureUsesFreshCleanupContext(t *testing.T) {
 		}
 		return result
 	})
-	outcome := fixedService(runner).Run(ctx, fixturePath(t), Options{})
+	outcome := fixedService(runner).Run(ctx, fixturePath(t), Options{KeepEnvironment: true})
 	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError {
 		t.Fatalf("unexpected cluster failure outcome: %#v", outcome)
 	}
-	if cleanupContextError != nil {
-		t.Fatalf("cleanup inherited canceled context: %v", cleanupContextError)
+	if cleanupContextError != nil || outcome.Run.Environment.Kept || !hasCommand(calls, "k3d", "delete") {
+		t.Fatalf("partial cluster cleanup was not guaranteed: outcome=%#v context=%v", outcome, cleanupContextError)
+	}
+}
+
+func TestCleanupFailuresUseIndependentContextsAndContinue(t *testing.T) {
+	imageRemovals := 0
+	var imageContextErrors []error
+	runner := runnerFunc(func(callCtx context.Context, request command.Request) model.CommandResult {
+		result := successfulCommand(request)
+		if request.Name == "k3d" && containsArgument(request.Args, "delete") {
+			<-callCtx.Done()
+			result.ExitCode = -1
+			result.FailureType = model.FailureTimeout
+		}
+		if request.Name == "docker" && containsArgument(request.Args, "rm") {
+			imageRemovals++
+			imageContextErrors = append(imageContextErrors, callCtx.Err())
+			if imageRemovals == 1 {
+				result.ExitCode = -1
+				result.FailureType = model.FailureExecution
+				result.Stderr = "daemon cleanup failed"
+			}
+		}
+		return result
+	})
+	service := fixedService(runner)
+	service.cleanupTimeout = 5 * time.Millisecond
+	outcome := service.Run(context.Background(), fixturePath(t), Options{})
+	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "cluster_cleanup_failed") || !hasDiagnosticCode(outcome.Run.Diagnostics, "image_cleanup_failed") {
+		t.Fatalf("cleanup failures were not reported as execution errors: %#v", outcome)
+	}
+	if imageRemovals != 2 {
+		t.Fatalf("cleanup stopped after a failure; image removals=%d", imageRemovals)
+	}
+	for _, err := range imageContextErrors {
+		if err != nil {
+			t.Fatalf("cleanup reused an expired context: %v", err)
+		}
 	}
 }
 
@@ -483,6 +588,44 @@ func TestAmbiguousPortStopsBeforeExecution(t *testing.T) {
 	outcome := service.Run(context.Background(), directory, Options{})
 	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || called {
 		t.Fatalf("ambiguous plan should fail before execution: %#v called=%v", outcome, called)
+	}
+}
+
+func TestMalformedRepositoryDiagnosticsStopVerificationBeforeExecution(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "package.json"), []byte(`{"name":"malformed"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "Dockerfile"), []byte("FROM node:22-alpine\nEXPOSE 8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "deployment.yaml"), []byte("apiVersion: apps/v1\nkind: Deployment\nmetadata: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	service := fixedService(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		called = true
+		return successfulCommand(request)
+	}))
+	outcome := service.Run(context.Background(), directory, Options{})
+	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || called || !hasDiagnosticCode(outcome.Run.Diagnostics, "kubernetes_invalid") || !hasDiagnosticCode(outcome.Run.Diagnostics, "verification_analysis_incomplete") {
+		t.Fatalf("malformed repository was not rejected safely: outcome=%#v called=%v", outcome, called)
+	}
+}
+
+func TestUnsupportedRepositoryPreservesAnalysisAndDoesNotExecute(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "README.md"), []byte("unsupported"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	service := fixedService(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		called = true
+		return successfulCommand(request)
+	}))
+	outcome := service.Run(context.Background(), directory, Options{})
+	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || called || !hasDiagnosticCode(outcome.Run.Diagnostics, "unsupported_application") || findingByID(outcome.Run.Findings, "container.dockerfile") == nil {
+		t.Fatalf("unsupported repository result was incomplete: outcome=%#v called=%v", outcome, called)
 	}
 }
 

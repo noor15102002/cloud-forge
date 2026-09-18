@@ -160,6 +160,9 @@ shutdownComplete:
 func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Client, client *kubernetes.Client, current plan, buildResult model.CommandResult) recoveryOutcome {
 	title := "Rolling deployment under traffic"
 	if failed(buildResult) {
+		if isApplicationBuildFailure(buildResult) {
+			return rolloutImageBuildFailure(title, buildResult)
+		}
 		return lifecycleExecutionError("rolling-deployment", title, "rollout_image_build_failed", "CloudForge could not build the version B image.", commandGuidance(buildResult, nil), trafficObservation{}, model.Measurement{Name: "version_b_build_duration_ms", Value: strconv.FormatInt(buildResult.DurationMS, 10), Unit: "ms"})
 	}
 	if result := k3dClient.ImportImage(ctx, current.clusterName, current.rolloutImage); failed(result) {
@@ -531,6 +534,23 @@ func lifecycleExecutionError(experimentID, title, code, summary, guidance string
 	}
 	diagnostic := model.Diagnostic{Code: code, Status: model.StatusError, Message: summary, Guidance: guidance}
 	return recoveryOutcome{Evidence: evidence, Diagnostic: &diagnostic, ExitCode: 2}
+}
+
+func rolloutImageBuildFailure(title string, result model.CommandResult) recoveryOutcome {
+	summary := "The application version B image did not build."
+	guidance := "Run the Docker build with CLOUDFORGE_VERSION=b, correct the failing instruction, and retry verification."
+	evidence := model.Evidence{
+		ExperimentID: "rolling-deployment", Title: title, Status: model.StatusFail, Summary: summary,
+		DurationMS:   result.DurationMS,
+		Measurements: []model.Measurement{{Name: "version_b_build_duration_ms", Value: strconv.FormatInt(result.DurationMS, 10), Unit: "ms"}},
+	}
+	finding := model.Finding{
+		ID: "container.rollout-build", Category: "container", Status: model.StatusFail, Severity: model.SeverityHigh,
+		Summary: summary, Observed: "fail", Expected: "version B image builds successfully", Remediation: guidance,
+		DurationMS: result.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
+	}
+	diagnostic := model.Diagnostic{Code: "rollout_image_build_failed", Status: model.StatusFail, Message: summary, Guidance: guidance}
+	return recoveryOutcome{Evidence: evidence, Finding: &finding, Diagnostic: &diagnostic, ExitCode: 1}
 }
 
 func summarizePods(pods []kubernetes.PodState) (int, int, int32) {

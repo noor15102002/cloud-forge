@@ -6,7 +6,7 @@ repository understanding with measured runtime experiments and evidence-based
 regression reporting.
 
 > **Current status:** CloudForge implements environment diagnostics, read-only
-> repository analysis, and a first Docker-to-k3d readiness verification path.
+> repository analysis, and Docker-to-k3d runtime verification.
 > Analysis includes normalized container and Kubernetes configuration findings;
 > verification adds normalized Trivy findings, bounded k6 load measurements,
 > HPA scaling evidence, stable terminal, JSON, and Markdown reports, explicit
@@ -17,8 +17,8 @@ regression reporting.
 
 Builds and static checks cannot show whether readiness gates traffic, SIGTERM
 drops requests, a replacement pod recovers promptly, or a rollout introduces
-downtime. CloudForge is being built to run these scenarios in disposable k3d
-clusters and report the observed evidence.
+downtime. CloudForge runs these scenarios in disposable k3d clusters and
+reports the observed evidence.
 
 ```mermaid
 flowchart LR
@@ -92,8 +92,8 @@ Verification executes Dockerfile instructions and application code, and scans
 the initial image with Trivy. Use it only with repositories you trust.
 
 This slice reports detected vulnerabilities as warnings while preserving
-Trivy's lowercase severity. A configurable blocking policy belongs to the
-later regression and reporting work.
+Trivy's lowercase severity. Configurable vulnerability enforcement remains
+planned.
 
 When an analyzed HPA safely targets the selected Deployment, verification
 applies a generated autoscaler after the lifecycle experiments. It waits for
@@ -108,6 +108,11 @@ Markdown reports, supports explicitly selected baseline artifacts, and updates
 one stable pull-request comment through a separate trusted workflow. See the
 [GitHub Action guide](docs/github-action.md) for pinned usage and the fork
 security model.
+
+Analysis compatibility is also checked against pinned revisions of public Node,
+TypeScript, and Python applications without executing their code. See the
+[external validation guide](docs/external-validation.md) for the reproducible
+matrix and its limits.
 
 ## Security and limitations
 

@@ -68,6 +68,7 @@ type Service struct {
 	rolloutTimeout    time.Duration
 	hpaMetricsTimeout time.Duration
 	hpaScaleTimeout   time.Duration
+	cleanupTimeout    time.Duration
 	loadProfile       k6executor.Profile
 }
 
@@ -79,7 +80,8 @@ func New(runner command.Runner) *Service {
 		poll:  200 * time.Millisecond, trafficPoll: 20 * time.Millisecond, readinessTimeout: readinessWindow,
 		recoveryTimeout: recoveryWindow, rolloutTimeout: recoveryWindow,
 		hpaMetricsTimeout: time.Minute, hpaScaleTimeout: time.Minute,
-		loadProfile: k6executor.Profile{VirtualUsers: 16, Duration: 20 * time.Second},
+		cleanupTimeout: 2 * time.Minute,
+		loadProfile:    k6executor.Profile{VirtualUsers: 16, Duration: 20 * time.Second},
 	}
 }
 
@@ -117,13 +119,21 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addError("analysis_failed", "CloudForge could not analyze the application.", err.Error())
 		return out
 	}
+	out.Run.Application = analysis.Application.Name
+	out.Run.Findings = append(out.Run.Findings, analysis.Findings...)
+	out.Run.Diagnostics = append(out.Run.Diagnostics, analysis.Diagnostics...)
 	if !analysis.Supported {
 		out.Run.Status = model.StatusFail
 		out.ExitCode = 1
+		return out
+	}
+	if diagnostic := blockingAnalysisDiagnostic(analysis.Diagnostics); diagnostic != nil {
+		out.Run.Status = model.StatusFail
+		out.ExitCode = 1
 		out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
-			Code: "unsupported_application", Status: model.StatusFail,
-			Message:  "The application is not supported for verification.",
-			Guidance: "Use a Node.js, TypeScript, or Python application with a root Dockerfile.",
+			Code: "verification_analysis_incomplete", Status: model.StatusFail,
+			Message:  "CloudForge stopped before execution because repository metadata could not be analyzed safely.",
+			Guidance: fmt.Sprintf("Resolve %s in %s and retry verification.", diagnostic.Code, diagnosticPath(diagnostic.Source)),
 		})
 		return out
 	}
@@ -138,8 +148,6 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		})
 		return out
 	}
-	out.Run.Application = analysis.Application.Name
-	out.Run.Findings = append(out.Run.Findings, analysis.Findings...)
 	out.Run.Environment.ClusterName = plan.clusterName
 	if plan.httpSkipReason != "" {
 		out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
@@ -171,13 +179,45 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	dockerClient := docker.New(s.runner)
 	k3dClient := k3d.New(s.runner)
 	kubernetesClient := kubernetes.New(s.runner)
+	clusterAttempted := false
+	clusterCreated := false
+	imagesToCleanup := []string{plan.image}
+	defer func() {
+		if options.KeepEnvironment && clusterCreated {
+			out.Run.Environment.Kept = true
+		} else if clusterAttempted {
+			result := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult {
+				return k3dClient.Delete(cleanupCtx, plan.clusterName)
+			})
+			if failed(result) {
+				out.Run.Status = model.StatusError
+				out.ExitCode = 2
+				out.addCommandDiagnostic("cluster_cleanup_failed", "CloudForge could not remove its k3d cluster.", result)
+			}
+		}
+		for _, image := range imagesToCleanup {
+			imageResult := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult {
+				return dockerClient.RemoveImage(cleanupCtx, image)
+			})
+			if failed(imageResult) {
+				out.Run.Status = model.StatusError
+				out.ExitCode = 2
+				out.addCommandDiagnostic("image_cleanup_failed", "CloudForge could not remove a temporary Docker image.", imageResult)
+			}
+		}
+	}()
 
 	buildResult := dockerClient.BuildVersion(ctx, root, plan.image, "a")
 	buildStatus := model.StatusPass
 	buildSummary := "Container image built successfully."
 	if failed(buildResult) {
-		buildStatus = model.StatusFail
-		buildSummary = "Container image build failed."
+		if isApplicationBuildFailure(buildResult) {
+			buildStatus = model.StatusFail
+			buildSummary = "Container image build failed."
+		} else {
+			buildStatus = model.StatusError
+			buildSummary = "Container image build could not be completed."
+		}
 	}
 	out.Run.Evidence = append(out.Run.Evidence, model.Evidence{
 		ExperimentID: "container-build", Title: "Container build", Status: buildStatus,
@@ -188,41 +228,23 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		Summary: buildSummary, Observed: strings.ToLower(string(buildStatus)), Expected: "image builds successfully",
 		DurationMS: buildResult.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
 	}
-	if buildStatus == model.StatusFail {
+	switch buildStatus {
+	case model.StatusFail:
 		buildFinding.Remediation = "Run the Docker build locally, correct the failing instruction, and retry verification."
+	case model.StatusError:
+		buildFinding.Remediation = "Resolve the Docker execution error and retry verification."
 	}
 	out.Run.Findings = append(out.Run.Findings, buildFinding)
 	if failed(buildResult) {
-		out.Run.Status = model.StatusFail
-		out.ExitCode = 1
+		out.Run.Status = buildStatus
+		if buildStatus == model.StatusFail {
+			out.ExitCode = 1
+		} else {
+			out.ExitCode = 2
+		}
 		out.addCommandDiagnostic("container_build_failed", "Docker could not build the application image.", buildResult)
 		return out
 	}
-
-	clusterAttempted := false
-	imagesToCleanup := []string{plan.image}
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		if options.KeepEnvironment && clusterAttempted {
-			out.Run.Environment.Kept = true
-		} else if clusterAttempted {
-			result := k3dClient.Delete(cleanupCtx, plan.clusterName)
-			if failed(result) {
-				out.Run.Status = model.StatusError
-				out.ExitCode = 2
-				out.addCommandDiagnostic("cluster_cleanup_failed", "CloudForge could not remove its k3d cluster.", result)
-			}
-		}
-		for _, image := range imagesToCleanup {
-			imageResult := dockerClient.RemoveImage(cleanupCtx, image)
-			if failed(imageResult) {
-				out.Run.Status = model.StatusError
-				out.ExitCode = 2
-				out.addCommandDiagnostic("image_cleanup_failed", "CloudForge could not remove a temporary Docker image.", imageResult)
-			}
-		}
-	}()
 
 	trivyClient := trivy.New(s.runner)
 	scan, scanErr := trivyClient.ScanImage(ctx, plan.image)
@@ -250,6 +272,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addCommandDiagnostic("cluster_create_failed", "k3d could not create the verification cluster.", result)
 		return out
 	}
+	clusterCreated = true
 	if plan.readinessPath != "" {
 		hostPort, portResult, portErr := dockerClient.PublishedPort(ctx, plan.clusterName, nodePort)
 		if portErr != nil || failed(portResult) {
@@ -375,10 +398,8 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		if recovery.ExitCode != 0 {
 			return out
 		}
+		imagesToCleanup = append(imagesToCleanup, plan.rolloutImage)
 		rolloutBuild := dockerClient.BuildVersion(ctx, root, plan.rolloutImage, "b")
-		if !failed(rolloutBuild) {
-			imagesToCleanup = append(imagesToCleanup, plan.rolloutImage)
-		}
 		rollout := s.runRollingDeployment(ctx, k3dClient, kubernetesClient, plan, rolloutBuild)
 		applyExperimentOutcome(&out, rollout)
 		if rollout.ExitCode != 0 {
@@ -786,6 +807,59 @@ func safePortName(value string) string {
 	return name
 }
 
+func blockingAnalysisDiagnostic(values []model.Diagnostic) *model.Diagnostic {
+	for index := range values {
+		switch values[index].Code {
+		case "dockerfile_invalid", "dockerfile_unreadable", "file_limit", "kubernetes_invalid", "manifest_invalid", "manifest_unreadable", "path_unreadable":
+			return &values[index]
+		}
+	}
+	return nil
+}
+
+func diagnosticPath(source *model.SourceReference) string {
+	if source == nil || source.Path == "" {
+		return "the selected application root"
+	}
+	return source.Path
+}
+
+func isApplicationBuildFailure(result model.CommandResult) bool {
+	if result.FailureType != model.FailureNone && result.FailureType != model.FailureExit {
+		return false
+	}
+	output := strings.ToLower(result.Stdout + " " + result.Stderr)
+	return !isDockerDaemonFailure(output)
+}
+
+func isDockerDaemonFailure(output string) bool {
+	for _, fragment := range []string{
+		"cannot connect to the docker daemon",
+		"is the docker daemon running",
+		"permission denied while trying to connect to the docker daemon",
+		"permission denied while trying to connect to the docker socket",
+		"docker daemon access",
+		"failed to connect to the docker api",
+		"error during connect",
+	} {
+		if strings.Contains(output, fragment) {
+			return true
+		}
+	}
+	return strings.Contains(output, "dial unix") && strings.Contains(output, "docker.sock") &&
+		(strings.Contains(output, "permission denied") || strings.Contains(output, "connection refused"))
+}
+
+func (s *Service) cleanupCommand(run func(context.Context) model.CommandResult) model.CommandResult {
+	timeout := s.cleanupTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return run(cleanupCtx)
+}
+
 func failed(result model.CommandResult) bool {
 	return result.FailureType != model.FailureNone || result.ExitCode != 0
 }
@@ -818,10 +892,10 @@ func commandGuidance(result model.CommandResult, err error) string {
 		return err.Error()
 	}
 	output := strings.ToLower(result.Stdout + " " + result.Stderr)
-	if result.Command == "docker" && strings.Contains(output, "permission denied") {
+	if result.Command == "docker" && isDockerDaemonFailure(output) && strings.Contains(output, "permission denied") {
 		return "Docker daemon access was denied; grant the current user daemon access and run cloudforge doctor again."
 	}
-	if result.Command == "docker" && (strings.Contains(output, "cannot connect") || strings.Contains(output, "connection refused")) {
+	if result.Command == "docker" && isDockerDaemonFailure(output) {
 		return "The Docker daemon is not reachable; start Docker and run cloudforge doctor again."
 	}
 	switch result.FailureType {

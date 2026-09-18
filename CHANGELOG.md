@@ -14,6 +14,9 @@ Versioning once releases begin.
 - Added a composite Ubuntu verification action with pinned runtime tools and JSON/Markdown artifacts.
 - Added a trust-separated workflow that validates untrusted report JSON before updating one bot-owned pull-request comment.
 - Added `cloudforge report` for safe rendering of saved verification JSON without repository execution.
+- Hardened verification preflight and cleanup so analyzer diagnostics survive, interrupted builds remain execution errors, partial clusters are removed, and cleanup failures do not starve later removals.
+- Hardened the public Action with canonical workspace paths, strict artifact and run input validation, Node 24 action runtimes, isolated temporary directories, and installation-token-compatible PR comment ownership.
+- Added a reproducible read-only compatibility matrix for pinned external Node.js, TypeScript, and Python repositories.
 
 ### Added
 

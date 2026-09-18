@@ -39,10 +39,16 @@ func (c *Client) BuildVersion(ctx context.Context, root, image, version string) 
 
 // RemoveImage removes the uniquely tagged image created for a verification run.
 func (c *Client) RemoveImage(ctx context.Context, image string) model.CommandResult {
-	return c.runner.Run(ctx, command.Request{
+	result := c.runner.Run(ctx, command.Request{
 		Name: "docker", Args: []string{"image", "rm", "--force", image},
 		Timeout: time.Minute, OutputLimit: 128 * 1024,
 	})
+	output := strings.ToLower(result.Stdout + " " + result.Stderr)
+	if strings.Contains(output, "no such image") || strings.Contains(output, "image does not exist") {
+		result.ExitCode = 0
+		result.FailureType = model.FailureNone
+	}
+	return result
 }
 
 // PublishedPort returns Docker's dynamically selected loopback port for a k3d load balancer.

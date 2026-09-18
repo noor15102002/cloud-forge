@@ -47,5 +47,18 @@ GitHub integration tests execute the packaged composite action against the real
 healthy fixture and continue to exercise the intentionally broken shutdown and
 rollout fixtures with its built binary. Node's built-in test runner covers
 marker validation, comment size limits, create-versus-update behavior, owner
-checks, and duplicate bot-comment cleanup. Workflow and action YAML is parsed
-during CI before runtime integration.
+checks, authentication fallback, and duplicate bot-comment cleanup. Shell tests
+exercise valid and rejected Action inputs, including workspace containment,
+artifact names, retention limits, run ID bounds, and token requirements.
+Workflow and action YAML is parsed during CI before runtime integration.
+
+Verification unit tests preserve analyzer findings and diagnostics through
+preflight failures, distinguish application build failures from interrupted
+CloudForge execution, and prove that each cleanup operation receives an
+independent timeout so one failed deletion cannot prevent later cleanup.
+
+Run `make external` to fetch the exact revisions listed in the
+[external compatibility matrix](external-validation.md) and analyze them
+without executing their code. This networked check is reproducible but is kept
+outside the required pull-request CI path so upstream availability cannot block
+local development.

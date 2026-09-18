@@ -21,7 +21,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: noor15102002/cloud-forge@FULL_40_CHARACTER_COMMIT_SHA
@@ -33,6 +33,14 @@ jobs:
 The verification action needs only `contents: read`. It does not receive a
 GitHub token by default. A failed experiment still uploads any completed
 reports and then preserves CloudForge's exit code.
+
+Inputs are validated before tools are installed. `path` must name an existing
+directory whose canonical location remains inside the GitHub workspace.
+`baseline-path` and `baseline-run-id` are mutually exclusive; a run ID must be
+a positive JavaScript-safe integer and requires an explicit token and valid
+artifact name. Report artifact names must be nonempty and use GitHub-supported
+characters, and retention must be an integer from 1 through 90 days. Token
+validation exposes only a presence flag to shell code, never the token value.
 
 ## Baseline artifacts
 
@@ -62,7 +70,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: noor15102002/cloud-forge@FULL_40_CHARACTER_COMMIT_SHA
