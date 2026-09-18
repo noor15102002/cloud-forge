@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/noor15102002/cloud-forge/internal/command"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -23,6 +24,38 @@ func TestAnalyzeJSONContract(t *testing.T) {
 	if result.SchemaVersion != model.SchemaVersion || !result.Supported {
 		t.Fatalf("unexpected contract: %#v", result)
 	}
+}
+
+func TestVerifyJSONContractAndExitCode(t *testing.T) {
+	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		for _, argument := range request.Args {
+			if argument == "pods" {
+				result.Stdout = `{"apiVersion":"v1","kind":"PodList","items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}},{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
+			}
+		}
+		return result
+	})
+	var stdout, stderr bytes.Buffer
+	root := newRootCommand(&stdout, &stderr, runner)
+	root.SetArgs([]string{"verify", filepath.Join("..", "..", "testdata", "healthy-node"), "--format", "json"})
+	err := root.ExecuteContext(context.Background())
+	if err != nil {
+		t.Fatalf("verify failed: %v stderr=%q", err, stderr.String())
+	}
+	var result model.VerificationRun
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.SchemaVersion != model.SchemaVersion || result.Status != model.StatusPass || len(result.Evidence) != 2 {
+		t.Fatalf("unexpected verification contract: %#v", result)
+	}
+}
+
+type cliRunnerFunc func(context.Context, command.Request) model.CommandResult
+
+func (f cliRunnerFunc) Run(ctx context.Context, request command.Request) model.CommandResult {
+	return f(ctx, request)
 }
 
 func TestUnsupportedApplicationExitCode(t *testing.T) {

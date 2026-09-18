@@ -10,6 +10,8 @@ The implemented slice contains:
 - `internal/analyzer`: bounded repository traversal and structured parsers
 - `internal/command`: the only subprocess execution boundary
 - `internal/doctor`: local prerequisite checks
+- `internal/executor`: Docker, k3d, and kubectl command adapters
+- `internal/verification`: generated workload planning and lifecycle orchestration
 - `internal/render`: text and JSON serialization
 - `pkg/model`: versioned output contracts
 
@@ -22,10 +24,17 @@ provenance metadata.
 flowchart LR
     CLI --> Analyzer
     CLI --> Doctor
+    CLI --> Verification
     Doctor --> Runner[Command runner]
+    Verification --> Analyzer
+    Verification --> Executor[Docker / k3d / kubectl]
+    Executor --> Runner
     Analyzer --> Model[Versioned models]
     Doctor --> Model
     Model --> Render[Text / JSON renderer]
 ```
 
-Future executor adapters will depend on the same bounded command interface.
+Verification generates one narrowly scoped Kubernetes workload from
+unambiguous analyzed metadata. A fresh k3d cluster isolates every run. Cleanup
+uses a separate bounded context so cancellation of the experiment does not
+cancel deletion.

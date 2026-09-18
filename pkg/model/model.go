@@ -200,3 +200,41 @@ type DoctorReport struct {
 	Status        Status        `json:"status"`
 	Checks        []DoctorCheck `json:"checks"`
 }
+
+// Measurement is one normalized observation produced by an experiment.
+type Measurement struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Unit  string `json:"unit,omitempty"`
+}
+
+// Evidence records measured behavior for one verification experiment.
+type Evidence struct {
+	ExperimentID string        `json:"experiment_id"`
+	Title        string        `json:"title"`
+	Status       Status        `json:"status"`
+	Summary      string        `json:"summary"`
+	DurationMS   int64         `json:"duration_ms"`
+	Measurements []Measurement `json:"measurements,omitempty"`
+}
+
+// VerificationEnvironment identifies disposable resources created for a run.
+type VerificationEnvironment struct {
+	Backend     string `json:"backend"`
+	ClusterName string `json:"cluster_name,omitempty"`
+	Namespace   string `json:"namespace,omitempty"`
+	Kept        bool   `json:"kept"`
+}
+
+// VerificationRun is the versioned result of a CloudForge verification.
+type VerificationRun struct {
+	SchemaVersion string                  `json:"schema_version"`
+	RunID         string                  `json:"run_id"`
+	Status        Status                  `json:"status"`
+	Application   string                  `json:"application,omitempty"`
+	StartedAt     string                  `json:"started_at"`
+	DurationMS    int64                   `json:"duration_ms"`
+	Environment   VerificationEnvironment `json:"environment"`
+	Evidence      []Evidence              `json:"evidence"`
+	Diagnostics   []Diagnostic            `json:"diagnostics,omitempty"`
+}

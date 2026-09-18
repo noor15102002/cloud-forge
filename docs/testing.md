@@ -5,9 +5,11 @@ serialization, command failure classification, output limits, timeouts,
 doctor status, CLI streams, and exit codes.
 
 Fixtures under `testdata` represent supported Node/TypeScript and Python
-applications. They contain only metadata needed by the analyzer; they are not
-runtime demonstration services yet.
+applications. The Node fixture is also a runnable, dependency-free HTTP service
+used by the readiness integration test.
 
-Runtime integration tests will be introduced with k3d execution. They will run
-separately from fast unit CI and must verify cluster cleanup after success,
-failure, timeout, and cancellation.
+The separate runtime integration workflow builds CloudForge, provisions a real
+k3d cluster, verifies the Node fixture, validates structured readiness
+evidence, and fails if a CloudForge cluster remains. Unit tests inject the
+command runner to cover build, readiness, cluster creation, cancellation, and
+retained-environment paths without requiring local runtime tools.

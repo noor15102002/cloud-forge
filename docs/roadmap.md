@@ -9,7 +9,7 @@ issues rather than an exhaustive task list.
 - [x] Establish repository, CI, documentation, shared models, and safe command execution.
 - [x] Implement `version`, `doctor`, and deterministic Node/Python analysis.
 - [x] Analyze root Dockerfiles and plain Deployment, Service, and HPA resources.
-- [ ] Build the Docker-to-k3d readiness vertical slice with cleanup guarantees.
+- [x] Build the Docker-to-k3d readiness vertical slice with cleanup guarantees.
 - [ ] Add static container and Kubernetes findings with Trivy integration.
 
 ## v0.2 — Runtime Experiments

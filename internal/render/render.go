@@ -76,6 +76,41 @@ func AnalysisText(w io.Writer, result model.AnalysisResult) error {
 	return nil
 }
 
+// VerificationText writes the compact human-readable runtime evidence report.
+func VerificationText(w io.Writer, run model.VerificationRun) error {
+	if _, err := fmt.Fprintln(w, "CloudForge Verification"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Status: %s\nRun: %s\nApplication: %s\n", strings.ToUpper(string(run.Status)), run.RunID, displayValue(run.Application)); err != nil {
+		return err
+	}
+	for _, evidence := range run.Evidence {
+		if _, err := fmt.Fprintf(w, "%-24s %-7s %s (%d ms)\n", evidence.Title, strings.ToUpper(string(evidence.Status)), evidence.Summary, evidence.DurationMS); err != nil {
+			return err
+		}
+		for _, measurement := range evidence.Measurements {
+			if _, err := fmt.Fprintf(w, "  %s: %s %s\n", measurement.Name, measurement.Value, measurement.Unit); err != nil {
+				return err
+			}
+		}
+	}
+	for _, item := range run.Diagnostics {
+		if _, err := fmt.Fprintf(w, "%s: %s\n", strings.ToUpper(string(item.Status)), item.Message); err != nil {
+			return err
+		}
+		if item.Guidance != "" {
+			if _, err := fmt.Fprintf(w, "  %s\n", item.Guidance); err != nil {
+				return err
+			}
+		}
+	}
+	if run.Environment.Kept {
+		_, err := fmt.Fprintf(w, "Environment: kept k3d cluster %s\n", run.Environment.ClusterName)
+		return err
+	}
+	return nil
+}
+
 func displayValue(value string) string {
 	if value == "" {
 		return "unknown"
