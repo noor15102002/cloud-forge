@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: 1.27.1
+          cache: true
+      - name: Verify formatting
+        run: test -z "$(gofmt -l cmd internal pkg)"
+      - name: Test
+        run: go test -race ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Install analysis tools
+        run: |
+          # Pinned post-v2.9 commit includes Go 1.27 export-data support.
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@5573d88ff78251eba05ca31a1d5f530f3b02eb89
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      - name: Lint
+        run: golangci-lint run
+      - name: Check known Go vulnerabilities
+        run: govulncheck ./...
+      - name: Build
+        run: go build ./cmd/cloudforge
