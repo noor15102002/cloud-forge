@@ -67,10 +67,6 @@
     }
   },
   "required": [
-    "schema_version",
-    "runtime",
-    "endpoints",
-    "load",
-    "experiments"
+    "schema_version"
   ]
 }

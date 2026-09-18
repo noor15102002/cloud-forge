@@ -132,7 +132,7 @@ func TestPilotPrivateConfigurationAndBuildBounds(t *testing.T) {
 			}
 		}
 		if call.Name == "k3d" && containsArgument(call.Args, "create") {
-			for _, flag := range []string{"--kubeconfig-update-default=false", "--kubeconfig-switch-context=false", "--servers-memory"} {
+			for _, flag := range []string{"--kubeconfig-update-default=false", "--kubeconfig-switch-context=false", "--servers-memory", "--runtime-label"} {
 				if !containsArgument(call.Args, flag) {
 					t.Fatalf("missing cluster isolation flag %s", flag)
 				}

@@ -1,6 +1,7 @@
 package verification
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -36,6 +37,20 @@ func loadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 	config.SchemaVersion = ""
 	if err := yaml.UnmarshalStrict(data, &config); err != nil {
 		return config, errors.New("invalid verification configuration: use the documented fields and types without duplicate keys")
+	}
+	var supplied map[string]json.RawMessage
+	if yaml.UnmarshalStrict(data, &supplied) != nil {
+		return config, errors.New("invalid configuration object")
+	}
+	for _, key := range []string{"runtime", "load", "endpoints", "experiments"} {
+		if string(supplied[key]) == "null" {
+			return config, errors.New("configuration sections cannot be null")
+		}
+	}
+	var runtimeFields map[string]json.RawMessage
+	_ = json.Unmarshal(supplied["runtime"], &runtimeFields)
+	if _, present := runtimeFields["port"]; present && config.Runtime.Port == 0 {
+		return config, errors.New("explicit runtime.port must be between 1 and 65535")
 	}
 	if err := validateConfiguration(config); err != nil {
 		return config, err

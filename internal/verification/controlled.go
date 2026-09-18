@@ -187,9 +187,14 @@ func (s *Service) runInFlightShutdown(ctx context.Context, client *kubernetes.Cl
 		return controlError(id, title, "No ready pod was available for the targeted request.")
 	}
 	requestID := strings.TrimPrefix(current.clusterName, "cloudforge-") + "-shutdown"
-	done := make(chan model.CommandResult, 1)
+	type completedRequest struct {
+		result    model.CommandResult
+		completed time.Time
+	}
+	done := make(chan completedRequest, 1)
 	go func() {
-		done <- client.PodProxy(ctx, current.clusterName, namespace, target, current.config.Runtime.Port, base+"/slow?id="+url.QueryEscape(requestID))
+		result := client.PodProxy(ctx, current.clusterName, namespace, target, current.config.Runtime.Port, base+"/slow?id="+url.QueryEscape(requestID))
+		done <- completedRequest{result: result, completed: time.Now()}
 	}()
 	// Always join the request before cleanup, including observation failures.
 	joined := false
@@ -229,6 +234,7 @@ func (s *Service) runInFlightShutdown(ctx context.Context, client *kubernetes.Cl
 		return controlError(id, title, "Could not request graceful termination of the selected pod.")
 	}
 	terminating := false
+	var terminationObserved time.Time
 	for ctx.Err() == nil {
 		pods, result, err = client.ObservePods(ctx, current.clusterName, namespace, "app.kubernetes.io/name="+current.workloadName)
 		if err != nil || failed(result) {
@@ -242,6 +248,9 @@ func (s *Service) runInFlightShutdown(ctx context.Context, client *kubernetes.Cl
 			}
 		}
 		if terminating || !present {
+			if terminating {
+				terminationObserved = time.Now()
+			}
 			break
 		}
 		if !pause(ctx, s.poll) {
@@ -253,12 +262,12 @@ func (s *Service) runInFlightShutdown(ctx context.Context, client *kubernetes.Cl
 	if ctx.Err() != nil {
 		return controlError(id, title, "The targeted shutdown experiment was interrupted or timed out.")
 	}
-	state, err := controlResult(response)
+	state, err := controlResult(response.result)
 	measurements := []model.Measurement{{Name: "target_pod", Value: target}, {Name: "request_id", Value: requestID}, {Name: "active_before_delete", Value: "true"}, {Name: "termination_observed", Value: strconv.FormatBool(terminating)}}
 	if err != nil || state.Pod != target || state.Completed != requestID {
 		return lifecycleFailure(id, title, "runtime."+id, "The specific request active on the terminated pod did not complete.", "Drain active requests during SIGTERM within terminationGracePeriodSeconds.", 0, trafficObservation{}, measurements)
 	}
-	if !terminating {
+	if !terminating || response.completed.Before(terminationObserved) {
 		return controlError(id, title, "Request completed, but termination overlap could not be established.")
 	}
 	// Restore the requested replica count before the next experiment.
