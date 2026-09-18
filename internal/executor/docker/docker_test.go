@@ -35,3 +35,19 @@ func TestPublishedPortRejectsNonLoopbackMapping(t *testing.T) {
 		t.Fatalf("expected a rejected non-loopback mapping, got port=%d err=%v", port, err)
 	}
 }
+
+func TestBuildVersionPassesOnlyPublicVersionArgument(t *testing.T) {
+	client := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		return model.CommandResult{Command: request.Name, Arguments: request.Args}
+	}))
+	result := client.BuildVersion(context.Background(), "/tmp/application", "cloudforge/api:test-b", "b")
+	want := []string{"build", "--build-arg", "CLOUDFORGE_VERSION=b", "--tag", "cloudforge/api:test-b", "."}
+	if len(result.Arguments) != len(want) {
+		t.Fatalf("unexpected build arguments: %#v", result.Arguments)
+	}
+	for index := range want {
+		if result.Arguments[index] != want[index] {
+			t.Fatalf("unexpected build arguments: %#v", result.Arguments)
+		}
+	}
+}

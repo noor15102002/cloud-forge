@@ -15,7 +15,7 @@ issues rather than an exhaustive task list.
 ## v0.2 — Runtime Experiments
 
 - [x] Add health/readiness and pod recovery experiments.
-- [ ] Measure graceful shutdown and rolling deployment behavior under traffic.
+- [x] Measure graceful shutdown and rolling deployment behavior under traffic.
 - [ ] Integrate deterministic k6 load testing and HPA observation.
 
 ## v0.3 — Regression Engine

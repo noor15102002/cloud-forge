@@ -5,6 +5,8 @@ Versioning once releases begin.
 
 ## Unreleased
 
+- Added graceful shutdown and synthetic version A-to-B rolling deployment experiments under continuous HTTP traffic.
+
 ### Added
 
 - Initial Go CLI with version, environment doctor, and repository analysis.

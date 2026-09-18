@@ -24,7 +24,12 @@ operator explicitly passes `--keep-environment`.
 
 Runtime HTTP experiments publish the generated Service only on a dynamically
 selected `127.0.0.1` port. CloudForge reads at most 1 KiB of each response body
-and does not include response content in evidence or diagnostics.
+and does not include response content in evidence or diagnostics. The HTTP
+transport ignores proxy environment variables for these loopback requests.
+
+Rolling-deployment verification rebuilds the trusted repository with the
+non-secret `CLOUDFORGE_VERSION` build argument set to `a` and `b`. CloudForge
+does not pass environment variables or credentials into either Docker build.
 
 Trivy runs against the locally built image. CloudForge parses bounded JSON and
 retains vulnerability identifier, package, installed version, fixed version,

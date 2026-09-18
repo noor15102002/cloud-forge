@@ -46,3 +46,10 @@ The generated Service uses a fixed NodePort mapped to a dynamically selected
 loopback-only host port. This allows the Go HTTP probe to measure readiness and
 send traffic during controlled pod deletion without exposing the application
 on a non-loopback interface.
+
+Verification rebuilds the same working tree as synthetic versions `a` and `b`,
+using distinct immutable image tags and the public `CLOUDFORGE_VERSION` build
+argument. Kubernetes pod image metadata proves the transition to version `b`.
+Continuous loopback traffic spans controlled SIGTERM deletion and rollout so
+request failures, downtime, readiness-count changes, and final health remain
+part of the versioned evidence contract.

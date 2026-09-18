@@ -6,13 +6,9 @@ const server = http.createServer((request, response) => {
     response.end("ok\n");
     return;
   }
-  response.writeHead(404, { "content-type": "text/plain" });
-  response.end("not found\n");
+  response.writeHead(404).end();
 });
 
 server.listen(8080, "0.0.0.0");
 
-process.on("SIGTERM", () => {
-  // Allow Kubernetes endpoint removal to propagate before closing listeners.
-  setTimeout(() => server.close(() => process.exit(0)), 2000);
-});
+process.on("SIGTERM", () => process.exit(1));

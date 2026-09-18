@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broken-shutdown-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: broken-shutdown-api
+  template:
+    metadata:
+      labels:
+        app: broken-shutdown-api
+    spec:
+      containers:
+        - name: api
+          image: broken-shutdown-api:test
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 96Mi
