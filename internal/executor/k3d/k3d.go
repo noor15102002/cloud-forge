@@ -20,7 +20,7 @@ func New(runner command.Runner) *Client { return &Client{runner: runner} }
 func (c *Client) Create(ctx context.Context, name string, hostPort, nodePort int) model.CommandResult {
 	portMapping := "127.0.0.1:" + strconv.Itoa(hostPort) + ":" + strconv.Itoa(nodePort) + "@server:0"
 	return c.runner.Run(ctx, command.Request{
-		Name: "k3d", Args: []string{"cluster", "create", name, "--servers", "1", "--agents", "0", "--no-lb", "--port", portMapping, "--wait", "--timeout", "90s"},
+		Name: "k3d", Args: []string{"cluster", "create", name, "--servers", "1", "--agents", "0", "--port", portMapping, "--wait", "--timeout", "90s"},
 		Timeout: 2 * time.Minute, OutputLimit: 128 * 1024,
 	})
 }
