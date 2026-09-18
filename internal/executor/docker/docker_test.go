@@ -51,3 +51,16 @@ func TestBuildVersionPassesOnlyPublicVersionArgument(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoveImageTreatsMissingImageAsAlreadyClean(t *testing.T) {
+	client := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		return model.CommandResult{
+			Command: request.Name, Arguments: request.Args, ExitCode: 1,
+			FailureType: model.FailureExit, Stderr: "Error response from daemon: No such image: cloudforge/api:test",
+		}
+	}))
+	result := client.RemoveImage(context.Background(), "cloudforge/api:test")
+	if result.ExitCode != 0 || result.FailureType != model.FailureNone {
+		t.Fatalf("missing image cleanup was not idempotent: %#v", result)
+	}
+}
