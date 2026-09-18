@@ -1,0 +1,58 @@
+name: Runtime integration
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: 1.27.1
+          cache: true
+      - name: Install k3d
+        run: |
+          curl --fail --silent --show-error --location --output k3d-linux-amd64 https://github.com/k3d-io/k3d/releases/download/v5.9.0/k3d-linux-amd64
+          curl --fail --silent --show-error --location --output checksums.txt https://github.com/k3d-io/k3d/releases/download/v5.9.0/checksums.txt
+          expected="$(awk '$2 == "_dist/k3d-linux-amd64" {print $1}' checksums.txt)"
+          test -n "$expected"
+          echo "$expected  k3d-linux-amd64" | sha256sum --check
+          sudo install -m 0755 k3d-linux-amd64 /usr/local/bin/k3d
+      - name: Install kubectl
+        run: |
+          curl --fail --silent --show-error --location --output kubectl https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl
+          curl --fail --silent --show-error --location --output kubectl.sha256 https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl.sha256
+          echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+          sudo install -m 0755 kubectl /usr/local/bin/kubectl
+      - name: Build CloudForge
+        run: go build -o bin/cloudforge ./cmd/cloudforge
+      - name: Verify healthy Node fixture
+        run: bin/cloudforge verify testdata/healthy-node --format json > /tmp/cloudforge-result.json
+      - name: Validate readiness evidence
+        run: |
+          jq --exit-status '
+            .schema_version == "v1alpha1" and
+            .status == "pass" and
+            any(.evidence[]; .experiment_id == "container-build" and .status == "pass") and
+            any(.evidence[]; .experiment_id == "deployment-readiness" and .status == "pass")
+          ' /tmp/cloudforge-result.json
+      - name: Confirm cluster cleanup
+        if: always()
+        run: |
+          leaked="$(k3d cluster list --no-headers | awk '$1 ~ /^cloudforge-/ {print $1}')"
+          if [ -n "$leaked" ]; then
+            for cluster in $leaked; do
+              k3d cluster delete "$cluster" || true
+            done
+            echo "CloudForge left one or more disposable clusters behind: $leaked" >&2
+            exit 1
+          fi

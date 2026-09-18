@@ -5,10 +5,10 @@ behave under production-like Kubernetes conditions. It combines deterministic
 repository understanding with measured runtime experiments and evidence-based
 regression reporting.
 
-> **Current status:** the first development slice implements environment
-> diagnostics and read-only repository analysis. Kubernetes execution,
-> experiments, reports, baselines, and the GitHub Action are planned and are
-> not yet available.
+> **Current status:** CloudForge implements environment diagnostics, read-only
+> repository analysis, and a first Docker-to-k3d readiness verification path.
+> Broader experiments, reports, baselines, and the distributable GitHub Action
+> remain planned.
 
 ## Why CloudForge
 
@@ -46,6 +46,8 @@ cloudforge doctor
 cloudforge doctor --format json
 cloudforge analyze .
 cloudforge analyze ./services/api --format json
+cloudforge verify .
+cloudforge verify ./services/api --format json
 ```
 
 `analyze` supports application roots containing Node.js, TypeScript, or Python
@@ -56,10 +58,17 @@ yet. It does not execute repository code.
 JSON output uses the versioned `v1alpha1` schema. Collections are sorted for
 repeatable output; consumers must not depend on JSON object key ordering.
 
+`verify` builds the root Dockerfile, creates a uniquely named k3d cluster,
+imports the image, deploys a generated Namespace, Deployment, and Service, and
+records build and readiness evidence. It deletes the cluster after success,
+failure, timeout, or cancellation. Use `--keep-environment` only when you need
+to inspect the cluster manually. Verification executes Dockerfile instructions
+and application code; use it only with repositories you trust.
+
 ## Planned verification experiments
 
-- Container build, startup, metadata, and Trivy findings
-- Health and readiness behavior
+- Container metadata and Trivy findings
+- Deeper health and readiness behavior
 - Pod recovery and graceful shutdown
 - Rolling deployments under continuous traffic
 - Deterministic k6 load profiles

@@ -15,6 +15,7 @@ import (
 	"github.com/noor15102002/cloud-forge/internal/command"
 	"github.com/noor15102002/cloud-forge/internal/doctor"
 	"github.com/noor15102002/cloud-forge/internal/render"
+	"github.com/noor15102002/cloud-forge/internal/verification"
 )
 
 var (
@@ -54,6 +55,10 @@ func Execute(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 // NewRootCommand constructs a CloudForge command tree for the supplied streams.
 func NewRootCommand(stdout, stderr io.Writer) *cobra.Command {
+	return newRootCommand(stdout, stderr, command.ExecRunner{})
+}
+
+func newRootCommand(stdout, stderr io.Writer, runner command.Runner) *cobra.Command {
 	var verbose, debug bool
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	root := &cobra.Command{
@@ -75,7 +80,7 @@ func NewRootCommand(stdout, stderr io.Writer) *cobra.Command {
 	root.PersistentFlags().BoolVar(&verbose, "verbose", false, "show additional operational detail")
 	root.PersistentFlags().BoolVar(&debug, "debug", false, "show debug diagnostics")
 	getLogger := func() *slog.Logger { return logger }
-	root.AddCommand(newVersionCommand(stdout), newDoctorCommand(stdout, getLogger), newAnalyzeCommand(stdout, getLogger))
+	root.AddCommand(newVersionCommand(stdout), newDoctorCommand(stdout, getLogger, runner), newAnalyzeCommand(stdout, getLogger), newVerifyCommand(stdout, getLogger, runner))
 	return root
 }
 
@@ -101,14 +106,14 @@ func newVersionCommand(stdout io.Writer) *cobra.Command {
 	return cmd
 }
 
-func newDoctorCommand(stdout io.Writer, logger func() *slog.Logger) *cobra.Command {
+func newDoctorCommand(stdout io.Writer, logger func() *slog.Logger, runner command.Runner) *cobra.Command {
 	var format string
 	cmd := &cobra.Command{Use: "doctor", Short: "Check dependencies required for verification", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if err := validateFormat(format); err != nil {
 			return &exitError{code: 2, err: err}
 		}
 		logger().Info("checking CloudForge runtime dependencies")
-		report := doctor.New(command.ExecRunner{}).Run(cmd.Context())
+		report := doctor.New(runner).Run(cmd.Context())
 		logger().Debug("environment checks completed", "checks", len(report.Checks), "status", report.Status)
 		var err error
 		if format == "json" {
@@ -128,6 +133,39 @@ func newDoctorCommand(stdout io.Writer, logger func() *slog.Logger) *cobra.Comma
 		return nil
 	}}
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	return cmd
+}
+
+func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner command.Runner) *cobra.Command {
+	var format string
+	var keepEnvironment bool
+	cmd := &cobra.Command{Use: "verify [path]", Short: "Build and verify an application in a disposable k3d cluster", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateFormat(format); err != nil {
+			return &exitError{code: 2, err: err}
+		}
+		path := "."
+		if len(args) == 1 {
+			path = args[0]
+		}
+		logger().Info("starting application verification", "path", path, "keep_environment", keepEnvironment)
+		outcome := verification.New(runner).Run(cmd.Context(), path, verification.Options{KeepEnvironment: keepEnvironment})
+		logger().Debug("verification completed", "status", outcome.Run.Status, "evidence", len(outcome.Run.Evidence))
+		var err error
+		if format == "json" {
+			err = render.JSON(stdout, outcome.Run)
+		} else {
+			err = render.VerificationText(stdout, outcome.Run)
+		}
+		if err != nil {
+			return &exitError{code: 2, err: err}
+		}
+		if outcome.ExitCode != 0 {
+			return &exitError{code: outcome.ExitCode, err: fmt.Errorf("verification finished with status %s", outcome.Run.Status)}
+		}
+		return nil
+	}}
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	cmd.Flags().BoolVar(&keepEnvironment, "keep-environment", false, "keep the k3d cluster after verification")
 	return cmd
 }
 
