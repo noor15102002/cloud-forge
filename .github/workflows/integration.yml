@@ -47,6 +47,12 @@ jobs:
         run: go build -o bin/cloudforge ./cmd/cloudforge
       - name: Verify healthy Node fixture
         run: bin/cloudforge verify testdata/healthy-node --format json > /tmp/cloudforge-result.json
+      - name: Show safe verification result
+        if: always()
+        run: |
+          if [ -f /tmp/cloudforge-result.json ]; then
+            jq . /tmp/cloudforge-result.json
+          fi
       - name: Validate readiness evidence
         run: |
           jq --exit-status '
