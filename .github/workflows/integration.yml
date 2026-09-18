@@ -60,8 +60,8 @@ jobs:
             (.status == "pass" or .status == "warn") and
             any(.evidence[]; .experiment_id == "container-build" and .status == "pass") and
             any(.evidence[]; .experiment_id == "container-scan" and (.status == "pass" or .status == "warn")) and
-            any(.evidence[]; .experiment_id == "deployment-readiness" and .status == "pass" and any(.measurements[]; .name == "readiness_http_status" and .value == "200")) and
-            any(.evidence[]; .experiment_id == "pod-recovery" and .status == "pass" and any(.measurements[]; .name == "failed_requests" and .value == "0") and any(.measurements[]; .name == "final_http_status" and .value == "200"))
+            any(.evidence[]; .experiment_id == "deployment-readiness" and .status == "pass" and any(.measurements[]; .name == "readiness_http_status" and ((.value | tonumber) >= 200 and (.value | tonumber) < 300))) and
+            any(.evidence[]; .experiment_id == "pod-recovery" and .status == "pass" and any(.measurements[]; .name == "failed_requests" and .value == "0") and any(.measurements[]; .name == "final_http_status" and ((.value | tonumber) >= 200 and (.value | tonumber) < 300)))
           ' /tmp/cloudforge-result.json
       - name: Confirm cluster cleanup
         if: always()

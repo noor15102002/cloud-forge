@@ -25,6 +25,10 @@ type trafficObservation struct {
 	LastHTTPStatus int
 }
 
+type trafficSample struct {
+	StartedAt time.Time
+}
+
 type recoveryOutcome struct {
 	Evidence   model.Evidence
 	Finding    *model.Finding
@@ -74,32 +78,39 @@ func (s *Service) runPodRecovery(ctx context.Context, client *kubernetes.Client,
 	}
 
 	trafficCtx, stopTraffic := context.WithCancel(ctx)
-	sampled := make(chan struct{}, 1)
+	sampled := make(chan trafficSample, 1)
 	trafficDone := make(chan trafficObservation, 1)
 	go func() { trafficDone <- s.collectTraffic(trafficCtx, current.readinessURL, sampled) }()
 	select {
 	case <-sampled:
 	case <-ctx.Done():
 		stopTraffic()
-		<-trafficDone
-		return recoveryExecutionError("pod_recovery_canceled", "Pod recovery was canceled before traffic started.", ctx.Err().Error())
+		traffic := <-trafficDone
+		return recoveryExecutionError("pod_recovery_canceled", "Pod recovery was canceled before traffic started.", ctx.Err().Error(), traffic)
 	}
 
 	recoveryStarted := time.Now()
 	deleteResult := client.DeletePod(ctx, current.clusterName, namespace, podName)
 	if failed(deleteResult) {
 		stopTraffic()
-		<-trafficDone
-		return recoveryExecutionError("pod_delete_failed", "kubectl could not delete the selected application pod.", commandGuidance(deleteResult, nil))
+		traffic := <-trafficDone
+		return recoveryExecutionError("pod_delete_failed", "kubectl could not delete the selected application pod.", commandGuidance(deleteResult, nil), traffic)
 	}
-	select {
-	case <-sampled:
-	case <-ctx.Done():
-		stopTraffic()
-		<-trafficDone
-		return recoveryExecutionError("pod_recovery_canceled", "Pod recovery was canceled while traffic was running.", ctx.Err().Error())
+	deletedAt := time.Now()
+	for {
+		select {
+		case sample := <-sampled:
+			if !sample.StartedAt.Before(deletedAt) {
+				goto trafficContinued
+			}
+		case <-ctx.Done():
+			stopTraffic()
+			traffic := <-trafficDone
+			return recoveryExecutionError("pod_recovery_canceled", "Pod recovery was canceled while traffic was running.", ctx.Err().Error(), traffic)
+		}
 	}
 
+trafficContinued:
 	recoveryCtx, cancelRecovery := context.WithTimeout(ctx, s.recoveryTimeout)
 	defer cancelRecovery()
 	ready, total := 0, 0
@@ -173,14 +184,21 @@ complete:
 	return outcome
 }
 
-func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<- struct{}) trafficObservation {
+func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<- trafficSample) trafficObservation {
 	result := trafficObservation{}
 	ticker := time.NewTicker(s.poll)
 	defer ticker.Stop()
 	var failureStarted time.Time
 	for {
+		requestStarted := time.Now()
 		status, err := s.probe(ctx, url)
 		now := time.Now()
+		if ctx.Err() != nil {
+			if !failureStarted.IsZero() {
+				result.MaxDowntimeMS = maxInt64(result.MaxDowntimeMS, elapsedMilliseconds(now.Sub(failureStarted)))
+			}
+			return result
+		}
 		result.Requests++
 		result.LastHTTPStatus = status
 		if err != nil || status < 200 || status >= 300 {
@@ -193,7 +211,7 @@ func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<-
 			failureStarted = time.Time{}
 		}
 		select {
-		case sampled <- struct{}{}:
+		case sampled <- trafficSample{StartedAt: requestStarted}:
 		default:
 		}
 		select {

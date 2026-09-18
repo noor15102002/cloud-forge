@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -59,7 +58,6 @@ type Service struct {
 	runner           command.Runner
 	now              func() time.Time
 	newID            func() (string, error)
-	port             func() (int, error)
 	probe            probeFunc
 	poll             time.Duration
 	readinessTimeout time.Duration
@@ -69,8 +67,8 @@ type Service struct {
 // New creates a verification service.
 func New(runner command.Runner) *Service {
 	return &Service{
-		runner: runner, now: time.Now, newID: randomID, port: availablePort,
-		probe: httpProbe(&http.Client{Timeout: httpTimeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}),
+		runner: runner, now: time.Now, newID: randomID,
+		probe: httpProbe(directHTTPClient()),
 		poll:  200 * time.Millisecond, readinessTimeout: readinessWindow, recoveryTimeout: recoveryWindow,
 	}
 }
@@ -120,12 +118,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 
-	hostPort, err := s.port()
-	if err != nil {
-		out.addError("local_port_failed", "CloudForge could not reserve a local port for the verification endpoint.", err.Error())
-		return out
-	}
-	plan, err := buildPlan(analysis, id, hostPort)
+	plan, err := buildPlan(analysis, id)
 	if err != nil {
 		out.Run.Status = model.StatusFail
 		out.ExitCode = 1
@@ -138,8 +131,11 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	out.Run.Application = analysis.Application.Name
 	out.Run.Findings = append(out.Run.Findings, analysis.Findings...)
 	out.Run.Environment.ClusterName = plan.clusterName
-	if plan.readinessURL != "" {
-		out.Run.Environment.Endpoint = plan.readinessURL
+	if plan.httpSkipReason != "" {
+		out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
+			Code: "http_experiment_skipped", Status: model.StatusWarn,
+			Message: "One or more HTTP probe measurements were limited.", Guidance: plan.httpSkipReason,
+		})
 	}
 
 	temporary, err := os.MkdirTemp("", "cloudforge-verify-")
@@ -229,9 +225,19 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	})
 
 	clusterAttempted = true
-	if result := k3dClient.Create(ctx, plan.clusterName, plan.hostPort, nodePort); failed(result) {
+	if result := k3dClient.Create(ctx, plan.clusterName, nodePort); failed(result) {
 		out.addCommandDiagnostic("cluster_create_failed", "k3d could not create the verification cluster.", result)
 		return out
+	}
+	if plan.readinessPath != "" {
+		hostPort, portResult, portErr := dockerClient.PublishedPort(ctx, plan.clusterName, nodePort)
+		if portErr != nil || failed(portResult) {
+			out.addError("published_port_failed", "CloudForge could not resolve the loopback verification port.", commandGuidance(portResult, portErr))
+			return out
+		}
+		plan.readinessURL = localEndpointURL(plan.readinessScheme, plan.readinessPath, hostPort)
+		plan.healthURL = localEndpointURL(plan.healthScheme, plan.healthPath, hostPort)
+		out.Run.Environment.Endpoint = plan.readinessURL
 	}
 	if result := k3dClient.ImportImage(ctx, plan.clusterName, plan.image); failed(result) {
 		out.addCommandDiagnostic("image_import_failed", "k3d could not import the application image.", result)
@@ -364,13 +370,17 @@ type plan struct {
 	workloadName    string
 	image           string
 	desiredReplicas int32
-	hostPort        int
+	readinessScheme string
+	readinessPath   string
+	healthScheme    string
+	healthPath      string
 	readinessURL    string
 	healthURL       string
+	httpSkipReason  string
 	manifest        []byte
 }
 
-func buildPlan(analysis model.AnalysisResult, id string, hostPort int) (plan, error) {
+func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 	application := analysis.Application
 	if len(application.Containers) != 1 || application.Containers[0].Source.Path != "Dockerfile" {
 		return plan{}, errors.New("verification requires exactly one root Dockerfile")
@@ -393,8 +403,9 @@ func buildPlan(analysis model.AnalysisResult, id string, hostPort int) (plan, er
 	replicas := int32(1)
 	resources := corev1.ResourceRequirements{}
 	var readinessProbe, livenessProbe *corev1.Probe
-	readinessURL := ""
-	healthURL := ""
+	readinessScheme, readinessPath := "", ""
+	healthScheme, healthPath := "", ""
+	httpSkipReason := ""
 	if len(application.Kubernetes.Deployments) == 1 {
 		deployment := application.Kubernetes.Deployments[0]
 		if deployment.Replicas != nil && *deployment.Replicas > 0 {
@@ -411,17 +422,36 @@ func buildPlan(analysis model.AnalysisResult, id string, hostPort int) (plan, er
 		}
 		readinessProbe = probeFor(deployment.Endpoints, "readiness", port, portName)
 		livenessProbe = probeFor(deployment.Endpoints, "liveness", port, portName)
-		readinessURL = endpointURL(deployment.Endpoints, "readiness", hostPort)
-		healthURL = endpointURL(deployment.Endpoints, "liveness", hostPort)
-		if healthURL == "" {
-			healthURL = endpointURL(deployment.Endpoints, "startup", hostPort)
+		readinessScheme, readinessPath, err = endpointRoute(deployment.Endpoints, "readiness", port, portName)
+		if err != nil {
+			return plan{}, err
+		}
+		healthScheme, healthPath, err = endpointRoute(deployment.Endpoints, "liveness", port, portName)
+		if err != nil {
+			return plan{}, err
+		}
+		if healthPath == "" {
+			healthScheme, healthPath, err = endpointRoute(deployment.Endpoints, "startup", port, portName)
+			if err != nil {
+				return plan{}, err
+			}
 		}
 	}
 	if readinessProbe == nil {
 		readinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}}
 	}
-	if healthURL == "" {
-		healthURL = readinessURL
+	if strings.EqualFold(readinessScheme, "https") {
+		httpSkipReason = "HTTPS application probes are not measured in this release because CloudForge does not bypass certificate validation."
+		readinessScheme, readinessPath = "", ""
+	}
+	if strings.EqualFold(healthScheme, "https") {
+		healthScheme, healthPath = readinessScheme, readinessPath
+		if httpSkipReason == "" {
+			httpSkipReason = "The HTTPS health probe was not used; final health falls back to the HTTP readiness endpoint."
+		}
+	}
+	if healthPath == "" {
+		healthScheme, healthPath = readinessScheme, readinessPath
 	}
 
 	labels := map[string]string{"app.kubernetes.io/name": workloadName, "app.kubernetes.io/managed-by": "cloudforge"}
@@ -449,7 +479,11 @@ func buildPlan(analysis model.AnalysisResult, id string, hostPort int) (plan, er
 	if err != nil {
 		return plan{}, fmt.Errorf("encode generated Kubernetes resources: %w", err)
 	}
-	return plan{clusterName: clusterName, workloadName: workloadName, image: image, desiredReplicas: replicas, hostPort: hostPort, readinessURL: readinessURL, healthURL: healthURL, manifest: manifest}, nil
+	return plan{
+		clusterName: clusterName, workloadName: workloadName, image: image, desiredReplicas: replicas,
+		readinessScheme: readinessScheme, readinessPath: readinessPath, healthScheme: healthScheme, healthPath: healthPath,
+		httpSkipReason: httpSkipReason, manifest: manifest,
+	}, nil
 }
 
 func selectPort(application model.Application) (int32, string, error) {
@@ -506,10 +540,19 @@ func probeFor(endpoints []model.Endpoint, purpose string, port int32, portName s
 	return nil
 }
 
-func endpointURL(endpoints []model.Endpoint, purpose string, hostPort int) string {
+func endpointRoute(endpoints []model.Endpoint, purpose string, selectedPort int32, portName string) (string, string, error) {
 	for _, endpoint := range endpoints {
 		if endpoint.Purpose != purpose || endpoint.Path == "" {
 			continue
+		}
+		if endpoint.Port != "" {
+			if numeric, err := strconv.ParseInt(endpoint.Port, 10, 32); err == nil {
+				if int32(numeric) != selectedPort {
+					return "", "", fmt.Errorf("%s probe uses port %s, but verification selected port %d", purpose, endpoint.Port, selectedPort)
+				}
+			} else if endpoint.Port != portName {
+				return "", "", fmt.Errorf("%s probe uses named port %q, but verification selected %q", purpose, endpoint.Port, portName)
+			}
 		}
 		scheme := "http"
 		if strings.EqualFold(endpoint.Protocol, "https") {
@@ -519,9 +562,9 @@ func endpointURL(endpoints []model.Endpoint, purpose string, hostPort int) strin
 		if !strings.HasPrefix(path, "/") {
 			path = "/" + path
 		}
-		return fmt.Sprintf("%s://127.0.0.1:%d%s", scheme, hostPort, path)
+		return scheme, path, nil
 	}
-	return ""
+	return "", "", nil
 }
 
 func kubernetesResources(value model.ResourceRequirements) (corev1.ResourceRequirements, error) {
@@ -582,21 +625,20 @@ func randomID() (string, error) {
 	return hex.EncodeToString(value), nil
 }
 
-func availablePort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
+func localEndpointURL(scheme, path string, hostPort int) string {
+	if scheme == "" || path == "" || hostPort == 0 {
+		return ""
 	}
-	address, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		_ = listener.Close()
-		return 0, errors.New("local listener did not return a TCP address")
+	return fmt.Sprintf("%s://127.0.0.1:%d%s", scheme, hostPort, path)
+}
+
+func directHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	return &http.Client{
+		Transport: transport, Timeout: httpTimeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	port := address.Port
-	if err := listener.Close(); err != nil {
-		return 0, err
-	}
-	return port, nil
 }
 
 func httpProbe(client *http.Client) probeFunc {

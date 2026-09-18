@@ -79,7 +79,6 @@ later regression and reporting work.
 ## Planned verification experiments
 
 - Graceful shutdown and rolling deployment behavior
-- Pod recovery and graceful shutdown
 - Rolling deployments under continuous traffic
 - Deterministic k6 load profiles
 - HPA behavior when autoscaling is configured
@@ -92,7 +91,7 @@ comment. It is not included in the current slice.
 
 Analysis reads bounded metadata files, skips generated directories and
 symbolic links, and does not load environment files or return Secret values.
-Future verification will build and run repository code, which must be treated
+Verification builds and runs repository code, which must be treated
 as untrusted outside an isolated environment. See [SECURITY.md](SECURITY.md)
 and [docs/security.md](docs/security.md).
 
