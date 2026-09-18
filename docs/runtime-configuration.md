@@ -73,7 +73,7 @@ not be exposed on a production service. CloudForge never guesses their presence.
 | `/identity`, `/state` | JSON `{"pod":"<hostname>","ready":true,"active":[]}` |
 | `/unready` | Set application readiness false and return its identity/state |
 | `/ready` | Restore application readiness and return its identity/state |
-| `/slow?id=<generated-id>` | Register the ID in `active`, hold the request for five seconds, then return `{"pod":"<hostname>","completed":"<generated-id>"}` |
+| `/slow?id=<generated-id>` | Register the ID in `active`, hold the request for five seconds, then return `{"pod":"<hostname>","completed":"<generated-id>","sigterm_received":true}` |
 
 Readiness gating requires two replicas. CloudForge first observes Service
 traffic to the selected pod, makes that pod unready through the private API
@@ -84,6 +84,9 @@ proof of readiness gating.
 Targeted shutdown starts a request on a specific pod through the private API
 proxy, observes that exact request ID in the pod's active set, requests ordinary
 graceful deletion, observes termination and checks the response identity/ID.
+The handler must record which request IDs were active when SIGTERM arrived;
+`sigterm_received` confirms that the specific request overlapped the signal.
+A Kubernetes deletion timestamp alone cannot establish this proof.
 The existing Service-traffic shutdown experiment remains a separate measurement.
 Applications without this protocol receive explicit skipped evidence for the
 controlled experiments. Missing/incomplete control evidence is never a pass.
@@ -94,7 +97,8 @@ Reports record source commit/dirty state, image ID (registry digest when
 available), CloudForge identity, runtime tool versions, platform/CPU count,
 effective configuration/resources and a normalized workload hash. Baselines
 require a complete matching compatibility key; source commits and image IDs
-may differ. Legacy reports remain readable but cannot establish compatible
+may differ. Dirty or unidentified CloudForge builds and missing image identity
+do not establish a compatible baseline. Legacy reports remain readable but cannot establish compatible
 runtime baselines. Timing tolerance remains 10%; repeated trials measure noise
 and do not themselves prove statistical significance.
 

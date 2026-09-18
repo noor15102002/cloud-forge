@@ -7,7 +7,7 @@ limits traversal to 2,000 files, and limits each parsed file to 2 MiB.
 It does not parse `.env` files, expose dependency versions, or return the data
 portion of Kubernetes resources. Unknown resources are represented only by API
 version, kind, name, namespace, and source location. Command output used by
-`doctor` is bounded and reduced to a short sanitized version line.
+`doctor` is bounded and reduced to a parsed version number.
 
 Verification executes Docker builds and application code in a disposable local
 k3d cluster. Operators must assume that a verified repository can execute
@@ -47,9 +47,18 @@ gets its own bounded context, so one failed removal cannot consume the timeout
 for later resources. A partially created cluster is always deleted; the keep
 flag applies only after cluster creation succeeds.
 
+Each run uses private kubeconfig and Docker builder configuration. The default
+kubectl context and builder remain unchanged. Workload limits include rollout
+surge and HPA maxima; a private BuildKit builder bounds build CPU and memory.
+See [runtime configuration](runtime-configuration.md) for exact budgets and
+unsupported deployment settings. A failed node reports only fixed condition
+codes; raw Kubernetes messages, pod logs and environment values are omitted.
+
 Runtime HTTP experiments publish the generated Service only on a dynamically
-selected `127.0.0.1` port. CloudForge reads at most 1 KiB of each response body
-and does not include response content in evidence or diagnostics. The HTTP
+selected `127.0.0.1` port. Ordinary health checks
+read at most 1 KiB of each response body. Optional controlled experiments parse
+at most 16 KiB of identity/request-state JSON and retain only the matched pod
+identity and generated request ID. Other response content is omitted. The HTTP
 transport ignores proxy environment variables for these loopback requests.
 
 Rolling-deployment verification rebuilds the trusted repository with the
@@ -57,10 +66,11 @@ non-secret `CLOUDFORGE_VERSION` build argument set to `a` and `b`. CloudForge
 does not pass environment variables or credentials into either Docker build.
 
 Load verification writes a generated k6 script containing only the loopback
-endpoint into the run's temporary directory. Profiles are capped at 64 virtual
-users and one minute; the default is 16 users for 20 seconds. Generated HPAs
-are capped at five replicas to bound local resource use. Neither raw response
-bodies nor source environment values enter the load report.
+endpoint into the run's temporary directory. Profiles are capped at 32 virtual
+users and one minute; the default is five users for 20 seconds. The load route
+must be explicitly configured. HTTP redirects are not followed. Source HPAs
+above five replicas are rejected before execution. Neither raw response bodies
+nor source environment values enter the load report.
 
 Trivy runs against the locally built image. CloudForge parses bounded JSON and
 retains vulnerability identifier, package, installed version, fixed version,

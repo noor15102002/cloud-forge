@@ -24,6 +24,7 @@ for number in range(1, 6):
     evidence = {item["experiment_id"]: item for item in report["evidence"]}
     for experiment in ["container-build", "deployment-readiness", "readiness-gating", "inflight-shutdown", "pod-recovery", "rolling-deployment", "load-profile"]:
         assert evidence[experiment]["status"] == "pass", evidence[experiment]
+    assert any(item["name"] == "sigterm_received" and item["value"] == "true" for item in evidence["inflight-shutdown"]["measurements"]), "Missing explicit SIGTERM overlap"
     key = report["fingerprint"].get("compatibility_key")
     assert key, "Missing complete fingerprint"
     fingerprints.add(key)

@@ -10,6 +10,7 @@ POD = os.environ.get("HOSTNAME", "local")
 FAILURE = "shutdown"
 ready = True
 active = set()
+sigterm_active = set()
 
 
 app = FastAPI()
@@ -57,6 +58,6 @@ async def slow(id: str):
     active.add(id)
     try:
         await asyncio.sleep(5)
-        return {"pod": POD, "ready": ready, "completed": id}
+        return {"pod": POD, "ready": ready, "completed": id, "sigterm_received": id in sigterm_active}
     finally:
         active.discard(id)

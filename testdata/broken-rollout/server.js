@@ -5,6 +5,7 @@ const failure = "rollout";
 const version = process.env.CLOUDFORGE_VERSION || "a";
 let ready = true;
 const active = new Set();
+const sigtermActive = new Set();
 const server = http.createServer((request, response) => {
   const url = new URL(request.url, "http://127.0.0.1");
   const send = (value, status = 200) => {
@@ -18,7 +19,7 @@ const server = http.createServer((request, response) => {
   if (url.pathname === "/_test/slow") {
     const id = url.searchParams.get("id");
     active.add(id);
-    return setTimeout(() => { active.delete(id); send({ pod, ready, completed: id }); }, 5000);
+    return setTimeout(() => { active.delete(id); send({ pod, ready, completed: id, sigterm_received: sigtermActive.has(id) }); }, 5000);
   }
   if (url.pathname === "/ready") return send(state(), ready && !(failure === "rollout" && version === "b") ? 200 : 503);
   if (url.pathname === "/health") return send({ ok: true });
@@ -31,6 +32,7 @@ const server = http.createServer((request, response) => {
 });
 server.listen(8080, "0.0.0.0");
 process.on("SIGTERM", () => {
+  for (const id of active) sigtermActive.add(id);
   if (failure === "shutdown") process.exit(1);
   setTimeout(() => server.close(() => process.exit(0)), 2000);
 });

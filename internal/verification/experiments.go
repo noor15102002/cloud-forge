@@ -485,7 +485,7 @@ func waitForSample(ctx context.Context, sampled <-chan trafficSample, notBefore 
 
 func firstReadyPod(pods []kubernetes.PodState) string {
 	for _, pod := range pods {
-		if pod.Ready {
+		if pod.Ready && !pod.Terminating {
 			return pod.Name
 		}
 	}

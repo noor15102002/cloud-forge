@@ -111,4 +111,6 @@ with existing_state() as (sentinel_name, baseline_kubeconfig, sentinel_ids):
             for kind, expected in sentinel_ids.items():
                 actual = subprocess.check_output(["docker", kind, "inspect", "--format", "{{.Id}}" if kind != "volume" else "{{.Name}}", sentinel_name], text=True).strip()
                 assert actual == expected, f"Unrelated {kind} changed"
+            running = subprocess.check_output(["docker", "container", "inspect", "--format", "{{.State.Running}}", sentinel_name], text=True).strip()
+            assert running == "true", "Unrelated container was stopped"
             print(f"{stage}: interrupted real subprocess; owned resources removed; kubeconfig unchanged", flush=True)

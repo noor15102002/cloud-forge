@@ -75,7 +75,8 @@ compares experiment statuses and normalized numeric measurements with an
 explicit quality direction, while keeping absolute findings separate from
 relative regressions. A detected regression exits with status `1`; missing,
 skipped, nonnumeric, or unit-incompatible evidence is reported as unavailable
-instead of being treated as a regression. Baselines are read before repository
+instead of being treated as a regression. Environment and effective workload
+fingerprints must also be complete and compatible. Baselines are read before repository
 code executes and must be strict, bounded `v1alpha1` JSON files.
 
 `verify` builds the root Dockerfile, creates a uniquely named k3d cluster,
@@ -95,7 +96,11 @@ This slice reports detected vulnerabilities as warnings while preserving
 Trivy's lowercase severity. Configurable vulnerability enforcement remains
 planned.
 
-See [pilot runtime configuration](docs/runtime-configuration.md) for explicit endpoints, supported deployment settings, safety budgets and controlled experiment requirements.
+See [pilot runtime configuration](docs/runtime-configuration.md) for explicit
+endpoints, supported deployment settings, safety budgets and controlled
+experiment requirements. Readiness-removal and targeted in-flight shutdown
+proofs require the documented optional control protocol; they are explicitly
+skipped when the application does not implement it.
 
 When an analyzed HPA safely targets the selected Deployment, verification
 applies a generated autoscaler after the lifecycle experiments. It waits for

@@ -41,4 +41,5 @@ exhaustive task list.
 - [x] Validate representative healthy and intentionally broken fixtures.
 - [x] Test several external repositories without repository-specific behavior.
 - [x] Harden cleanup, diagnostics, interruption, and unsupported-stack behavior.
+- [ ] Calibrate performance-regression thresholds across repeated compatible runner environments; the current 10% timing heuristic is not statistical significance.
 - [ ] Produce reproducible release binaries and checksums.

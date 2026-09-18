@@ -1,14 +1,17 @@
 """Allow EndpointSlice removal to propagate before Uvicorn closes listeners."""
 import asyncio
 import os
+import signal
 
 import uvicorn
-from app import FAILURE
+import app as application
 
 
 class DrainingServer(uvicorn.Server):
     def handle_exit(self, sig, frame):
-        if FAILURE == "shutdown":
+        if sig == signal.SIGTERM:
+            application.sigterm_active.update(application.active)
+        if application.FAILURE == "shutdown":
             os._exit(1)
         asyncio.get_running_loop().call_later(2, super().handle_exit, sig, frame)
 

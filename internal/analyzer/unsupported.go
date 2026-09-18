@@ -29,6 +29,14 @@ func unsupportedDeploymentFields(raw []byte, deployment *model.Deployment) {
 	_ = json.Unmarshal(pod["containers"], &containers)
 	for _, container := range containers {
 		checkFields(container, "spec.template.spec.containers[]", []string{"name", "image", "imagePullPolicy", "ports", "resources", "readinessProbe", "livenessProbe", "startupProbe"}, &deployment.Unsupported)
+		var ports []map[string]json.RawMessage
+		_ = json.Unmarshal(container["ports"], &ports)
+		for _, port := range ports {
+			checkFields(port, "spec.template.spec.containers[].ports[]", []string{"name", "containerPort", "protocol"}, &deployment.Unsupported)
+		}
+		var resources map[string]json.RawMessage
+		_ = json.Unmarshal(container["resources"], &resources)
+		checkFields(resources, "spec.template.spec.containers[].resources", []string{"requests", "limits"}, &deployment.Unsupported)
 	}
 	sort.Strings(deployment.Unsupported)
 	unique := deployment.Unsupported[:0]

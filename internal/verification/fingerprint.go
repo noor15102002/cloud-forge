@@ -76,7 +76,8 @@ func fingerprintTools(ctx context.Context, runner command.Runner, current plan, 
 		{"k3d", "k3d", []string{"version"}}, {"k6", "k6", []string{"version"}}, {"trivy", "trivy", []string{"--version"}},
 		{"kubernetes", "kubectl", []string{"--context", "k3d-" + current.clusterName, "version", "--output=json"}},
 	}
-	complete := true
+	complete := commitPattern.MatchString(fingerprint.CloudForgeCommit) &&
+		imagePattern.MatchString(fingerprint.ImageID) && fingerprint.WorkloadHash != ""
 	for _, spec := range specs {
 		result := runner.Run(ctx, command.Request{Name: spec.command, Args: spec.args, Timeout: 10 * time.Second})
 		version := ""

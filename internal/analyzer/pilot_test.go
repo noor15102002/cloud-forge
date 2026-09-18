@@ -80,6 +80,36 @@ func TestUnresolvedDockerPortHasDiagnostic(t *testing.T) {
 	}
 }
 
+func TestMalformedMetadataDiagnosticsOmitSourceValues(t *testing.T) {
+	for name, content := range map[string]string{
+		"deployment.yaml": `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"api"},"spec":{"template":{"spec":{"containers":[{"name":"api","resources":{"limits":{"cpu":"sensitive-value-placeholder"}}}]}}}}`,
+		"Dockerfile":      "FROM node:22\nENV [\"sensitive-value-placeholder\"]\n",
+		"pyproject.toml":  "[project]\nname = sensitive-value-placeholder\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := New().Analyze(pilotRepository(t, map[string]string{"package.json": `{}`, name: content}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, _ := json.Marshal(result)
+			if strings.Contains(string(encoded), "sensitive-value-placeholder") {
+				t.Fatal("parser error exposed source content")
+			}
+		})
+	}
+}
+
+func TestUnsupportedHostPortIsNotSilentlyDropped(t *testing.T) {
+	result, err := New().Analyze(pilotRepository(t, map[string]string{"package.json": `{}`, "deployment.yaml": `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"api"},"spec":{"template":{"spec":{"containers":[{"name":"api","ports":[{"containerPort":8080,"hostPort":8080}]}]}}}}`}))
+	if err != nil || len(result.Application.Kubernetes.Deployments) != 1 {
+		t.Fatalf("could not analyze deployment: %v", err)
+	}
+	unsupported := result.Application.Kubernetes.Deployments[0].Unsupported
+	if len(unsupported) != 1 || !strings.HasSuffix(unsupported[0], ".hostPort") {
+		t.Fatalf("hostPort silently discarded: %v", unsupported)
+	}
+}
+
 func TestFIFOMetadataDoesNotBlock(t *testing.T) {
 	root := t.TempDir()
 	if err := syscall.Mkfifo(filepath.Join(root, "package.json"), 0o600); err != nil {

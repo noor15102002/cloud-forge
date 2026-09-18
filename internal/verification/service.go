@@ -619,7 +619,7 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 		if deployment.Replicas != nil && *deployment.Replicas > 0 {
 			replicas = *deployment.Replicas
 		}
-		if len(deployment.Containers) > 1 {
+		if len(deployment.Containers) != 1 {
 			return plan{}, errors.New("verification currently requires a Deployment with one container")
 		}
 		if len(deployment.Containers) == 1 {

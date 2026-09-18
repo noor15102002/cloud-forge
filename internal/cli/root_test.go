@@ -95,6 +95,9 @@ func TestVerifyMarkdownReport(t *testing.T) {
 }
 
 func TestVerifyBaselineRegressionProducesReportAndExitOne(t *testing.T) {
+	previousCommit := Commit
+	Commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	t.Cleanup(func() { Commit = previousCommit })
 	directory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(directory, "package.json"), []byte(`{"name":"cli-test"}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -173,6 +176,9 @@ func cliTestRunner(vulnerable bool) cliRunnerFunc {
 		}
 		if request.Name == "kubectl" && slices.Contains(request.Args, "--output=json") {
 			result.Stdout = `{"serverVersion":{"gitVersion":"v1.34.0"}}`
+		}
+		if request.Name == "docker" && slices.Contains(request.Args, "inspect") {
+			result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" []`
 		}
 
 		if request.Name == "trivy" && len(request.Args) > 1 {

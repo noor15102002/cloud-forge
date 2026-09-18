@@ -9,6 +9,7 @@ The implemented slice contains:
 - `internal/cli`: command definitions and exit semantics
 - `internal/analyzer`: bounded repository traversal and structured parsers
 - `internal/command`: the only subprocess execution boundary
+- `internal/safefile`: bounded regular-file reads without symlink traversal
 - `internal/doctor`: local prerequisite checks
 - `internal/executor`: Docker, k3d, kubectl, k6, and Trivy command adapters
 - `internal/findings`: deterministic container and Kubernetes configuration checks
@@ -73,7 +74,8 @@ evidence, measurements, findings, diagnostics, and comparison collections use
 complete deterministic sort keys. The checked-in `v1alpha1` JSON Schema defines
 required fields and enums. Explicit baselines are loaded through a bounded,
 strict decoder before verification starts. The regression engine compares only
-statuses and normalized metrics with declared quality directions; it does not
+compatible environment/workload fingerprints, then statuses and normalized
+metrics with declared quality directions; it does not
 change the current run's absolute findings or status. Terminal output summarizes
 experiments and actionable findings, while Markdown includes detailed
 collapsible measurements and findings for pull-request comment integration.

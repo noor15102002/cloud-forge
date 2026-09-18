@@ -17,10 +17,11 @@ import (
 )
 
 type controlState struct {
-	Pod       string   `json:"pod"`
-	Ready     bool     `json:"ready"`
-	Active    []string `json:"active"`
-	Completed string   `json:"completed"`
+	Pod             string   `json:"pod"`
+	Ready           bool     `json:"ready"`
+	Active          []string `json:"active"`
+	Completed       string   `json:"completed"`
+	SIGTERMReceived bool     `json:"sigterm_received"`
 }
 
 func controlResult(result model.CommandResult) (controlState, error) {
@@ -278,11 +279,15 @@ func (s *Service) runInFlightShutdown(ctx context.Context, client *kubernetes.Cl
 	if !terminating || response.completed.Before(terminationObserved) {
 		return controlError(id, title, "Request completed, but termination overlap could not be established.")
 	}
+	if !state.SIGTERMReceived {
+		return controlError(id, title, "Request completed, but the application did not acknowledge SIGTERM while that request was active.")
+	}
+	measurements = append(measurements, model.Measurement{Name: "sigterm_received", Value: "true"})
 	// Restore the requested replica count before the next experiment.
 	for ctx.Err() == nil {
 		ready, total, _, res, e := client.ReadyPods(ctx, current.clusterName, namespace, "app.kubernetes.io/name="+current.workloadName)
 		if e == nil && !failed(res) && ready == int(current.desiredReplicas) && total == ready {
-			return lifecycleSuccess(id, title, "runtime."+id, "The identified request completed on the pod observed terminating, and replicas recovered.", 0, "targeted request completed", measurements)
+			return lifecycleSuccess(id, title, "runtime."+id, "The identified request remained active at SIGTERM, completed on the targeted pod, and replicas recovered.", 0, "targeted request completed", measurements)
 		}
 		if !pause(ctx, s.poll) {
 			break
