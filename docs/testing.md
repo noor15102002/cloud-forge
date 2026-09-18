@@ -36,3 +36,9 @@ test compares decoded values rather than raw bytes, so object key order is not
 part of the contract; a separate repeatability test shuffles every collection
 and expects identical canonical serialization. The versioned verification JSON
 Schema is also parsed during tests.
+
+Regression tests cover strict and bounded baseline loading, schema mismatch,
+duplicate evidence, status ordering, metric direction, missing measurements,
+and separation of current findings from relative changes. CLI tests confirm an
+invalid baseline prevents execution and a detected regression produces a full
+report with exit status `1`.

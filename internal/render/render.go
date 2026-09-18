@@ -16,6 +16,8 @@ import (
 const (
 	terminalFindingLimit = 10
 	markdownFindingLimit = 25
+	terminalChangeLimit  = 10
+	markdownChangeLimit  = 25
 	displayRuneLimit     = 300
 )
 
@@ -108,6 +110,11 @@ func VerificationText(w io.Writer, run model.VerificationRun) error {
 	}
 	for _, evidence := range run.Evidence {
 		if _, err := fmt.Fprintf(w, "%-7s %-28s %s (%d ms)\n", strings.ToUpper(string(evidence.Status)), terminalText(evidence.Title), terminalText(evidence.Summary), evidence.DurationMS); err != nil {
+			return err
+		}
+	}
+	if run.Comparison != nil {
+		if err := comparisonText(w, *run.Comparison); err != nil {
 			return err
 		}
 	}
@@ -206,6 +213,11 @@ func VerificationMarkdown(w io.Writer, run model.VerificationRun) error {
 			return err
 		}
 	}
+	if run.Comparison != nil {
+		if err := comparisonMarkdown(w, *run.Comparison); err != nil {
+			return err
+		}
+	}
 	if len(run.Findings) > 0 {
 		visible := run.Findings
 		if len(visible) > markdownFindingLimit {
@@ -285,7 +297,131 @@ func canonicalVerification(run model.VerificationRun) model.VerificationRun {
 	sort.SliceStable(result.Diagnostics, func(i, j int) bool {
 		return canonicalSortKey(result.Diagnostics[i]) < canonicalSortKey(result.Diagnostics[j])
 	})
+	if run.Comparison != nil {
+		comparison := *run.Comparison
+		comparison.Regressions = append([]model.ComparisonChange(nil), run.Comparison.Regressions...)
+		comparison.Improvements = append([]model.ComparisonChange(nil), run.Comparison.Improvements...)
+		comparison.Unavailable = append([]model.ComparisonUnavailable(nil), run.Comparison.Unavailable...)
+		sort.SliceStable(comparison.Regressions, func(i, j int) bool {
+			return canonicalSortKey(comparison.Regressions[i]) < canonicalSortKey(comparison.Regressions[j])
+		})
+		sort.SliceStable(comparison.Improvements, func(i, j int) bool {
+			return canonicalSortKey(comparison.Improvements[i]) < canonicalSortKey(comparison.Improvements[j])
+		})
+		sort.SliceStable(comparison.Unavailable, func(i, j int) bool {
+			return canonicalSortKey(comparison.Unavailable[i]) < canonicalSortKey(comparison.Unavailable[j])
+		})
+		result.Comparison = &comparison
+	}
 	return result
+}
+
+func comparisonText(w io.Writer, comparison model.BaselineComparison) error {
+	if _, err := fmt.Fprintf(w, "Baseline: %s against run %s; %d regressions, %d improvements, %d unavailable\n", strings.ToUpper(string(comparison.Status)), terminalText(comparison.BaselineRunID), len(comparison.Regressions), len(comparison.Improvements), len(comparison.Unavailable)); err != nil {
+		return err
+	}
+	changes := append([]model.ComparisonChange(nil), comparison.Regressions...)
+	changes = append(changes, comparison.Improvements...)
+	visible := changes
+	if len(visible) > terminalChangeLimit {
+		visible = visible[:terminalChangeLimit]
+	}
+	for _, change := range visible {
+		label := "IMPROVEMENT"
+		if containsChange(comparison.Regressions, change) {
+			label = "REGRESSION"
+		}
+		if _, err := fmt.Fprintf(w, "%s %s: %s\n", label, terminalText(comparisonSubject(change.ExperimentID, change.Measurement)), terminalText(change.Summary)); err != nil {
+			return err
+		}
+	}
+	if omitted := len(changes) - len(visible); omitted > 0 {
+		if _, err := fmt.Fprintf(w, "... %d more baseline changes; use --format json or markdown.\n", omitted); err != nil {
+			return err
+		}
+	}
+	for index, item := range comparison.Unavailable {
+		if index == terminalChangeLimit {
+			if _, err := fmt.Fprintf(w, "... %d more unavailable comparisons; use --format json or markdown.\n", len(comparison.Unavailable)-index); err != nil {
+				return err
+			}
+			break
+		}
+		if _, err := fmt.Fprintf(w, "UNAVAILABLE %s: %s\n", terminalText(comparisonSubject(item.ExperimentID, item.Measurement)), terminalText(item.Reason)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func comparisonMarkdown(w io.Writer, comparison model.BaselineComparison) error {
+	if _, err := fmt.Fprintf(w, "\n### Baseline comparison\n\n**Status:** %s · **Baseline run:** %s · **Regressions:** %d · **Improvements:** %d · **Unavailable:** %d\n", strings.ToUpper(string(comparison.Status)), markdownText(comparison.BaselineRunID), len(comparison.Regressions), len(comparison.Improvements), len(comparison.Unavailable)); err != nil {
+		return err
+	}
+	if err := comparisonChangesMarkdown(w, "Regressions", comparison.Regressions); err != nil {
+		return err
+	}
+	if err := comparisonChangesMarkdown(w, "Improvements", comparison.Improvements); err != nil {
+		return err
+	}
+	if len(comparison.Unavailable) > 0 {
+		visible := comparison.Unavailable
+		if len(visible) > markdownChangeLimit {
+			visible = visible[:markdownChangeLimit]
+		}
+		if _, err := fmt.Fprintf(w, "\n<details>\n<summary>Unavailable comparisons (showing %d of %d)</summary>\n\n| Evidence | Reason |\n|---|---|\n", len(visible), len(comparison.Unavailable)); err != nil {
+			return err
+		}
+		for _, item := range visible {
+			if _, err := fmt.Fprintf(w, "| %s | %s |\n", markdownText(comparisonSubject(item.ExperimentID, item.Measurement)), markdownText(item.Reason)); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(w, "\n</details>"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func comparisonChangesMarkdown(w io.Writer, title string, changes []model.ComparisonChange) error {
+	if len(changes) == 0 {
+		return nil
+	}
+	visible := changes
+	if len(visible) > markdownChangeLimit {
+		visible = visible[:markdownChangeLimit]
+	}
+	if _, err := fmt.Fprintf(w, "\n#### %s\n\n| Evidence | Baseline | Current | Change |\n|---|---:|---:|---|\n", title); err != nil {
+		return err
+	}
+	for _, change := range visible {
+		if _, err := fmt.Fprintf(w, "| %s | %s | %s | %s |\n", markdownText(comparisonSubject(change.ExperimentID, change.Measurement)), markdownText(strings.TrimSpace(change.Baseline+" "+change.Unit)), markdownText(strings.TrimSpace(change.Current+" "+change.Unit)), markdownText(change.Summary)); err != nil {
+			return err
+		}
+	}
+	if len(visible) < len(changes) {
+		_, err := fmt.Fprintf(w, "\n%d additional changes are available in the JSON report.\n", len(changes)-len(visible))
+		return err
+	}
+	return nil
+}
+
+func comparisonSubject(experimentID, measurement string) string {
+	if measurement == "" {
+		return experimentID + " status"
+	}
+	return experimentID + "/" + measurement
+}
+
+func containsChange(changes []model.ComparisonChange, wanted model.ComparisonChange) bool {
+	key := canonicalSortKey(wanted)
+	for _, change := range changes {
+		if canonicalSortKey(change) == key {
+			return true
+		}
+	}
+	return false
 }
 
 func actionableFindings(findings []model.Finding) []model.Finding {

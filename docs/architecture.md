@@ -13,6 +13,7 @@ The implemented slice contains:
 - `internal/executor`: Docker, k3d, kubectl, k6, and Trivy command adapters
 - `internal/findings`: deterministic container and Kubernetes configuration checks
 - `internal/verification`: generated workload planning and lifecycle orchestration
+- `internal/regression`: bounded baseline loading and deterministic comparison
 - `internal/render`: canonical JSON plus terminal and Markdown reports
 - `pkg/model`: versioned output contracts
 
@@ -29,12 +30,14 @@ flowchart LR
     Doctor --> Runner[Command runner]
     Verification --> Analyzer
     Verification --> Executor[Docker / k3d / kubectl / k6 / Trivy]
+    CLI --> Regression[Baseline comparison]
     Analyzer --> Findings[Normalized findings]
     Executor --> Findings
     Executor --> Runner
     Analyzer --> Model[Versioned models]
     Doctor --> Model
     Model --> Render[Text / JSON / Markdown renderer]
+    Regression --> Model
 ```
 
 Verification generates one narrowly scoped Kubernetes workload from
@@ -62,9 +65,13 @@ decodes official HPA status types to record starting and peak replicas. Missing
 metrics remain explicit skipped evidence with a diagnostic cause.
 
 Verification JSON is canonicalized on a copy of the result before encoding:
-evidence, measurements, findings, and diagnostics use complete deterministic
-sort keys. The checked-in `v1alpha1` JSON Schema defines required fields and
-enums. Terminal output summarizes experiments and actionable findings, while
-Markdown includes detailed collapsible measurements and findings for later PR
-comment integration. Repository-derived Markdown text is escaped before output;
-the canonical JSON retains the complete result when display limits apply.
+evidence, measurements, findings, diagnostics, and comparison collections use
+complete deterministic sort keys. The checked-in `v1alpha1` JSON Schema defines
+required fields and enums. Explicit baselines are loaded through a bounded,
+strict decoder before verification starts. The regression engine compares only
+statuses and normalized metrics with declared quality directions; it does not
+change the current run's absolute findings or status. Terminal output summarizes
+experiments and actionable findings, while Markdown includes detailed
+collapsible measurements and findings for later PR comment integration.
+Repository-derived Markdown text is escaped before output; the canonical JSON
+retains the complete result when display limits apply.

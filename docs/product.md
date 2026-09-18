@@ -15,7 +15,9 @@ and version-to-version rolling deployment behavior under continuous traffic.
 It also runs a bounded deterministic k6 profile and observes CPU-based HPA
 scale-up when the repository declares one. Results are available as concise
 terminal output, canonical versioned JSON, or pull-request-ready Markdown.
-Baseline comparison remains on the roadmap.
+An explicit previous report can be supplied to classify status and measurement
+regressions, improvements, and unavailable comparisons without coupling the
+core engine to an artifact provider.
 
 CloudForge is not a deployment platform, CI system, static Kubernetes linter,
 generic security scanner, hosted dashboard, or AI decision engine.
