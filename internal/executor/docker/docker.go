@@ -14,7 +14,10 @@ import (
 )
 
 // Client builds application images through the Docker CLI.
-type Client struct{ runner command.Runner }
+type Client struct {
+	runner  command.Runner
+	builder string
+}
 
 // New creates a Docker CLI adapter.
 func New(runner command.Runner) *Client { return &Client{runner: runner} }
@@ -27,6 +30,9 @@ func (c *Client) Build(ctx context.Context, root, image string) model.CommandRes
 // BuildVersion builds and tags a Dockerfile with an optional public experiment version.
 func (c *Client) BuildVersion(ctx context.Context, root, image, version string) model.CommandResult {
 	args := []string{"build"}
+	if c.builder != "" {
+		args = []string{"buildx", "build", "--builder", c.builder, "--load", "--provenance=false", "--label", "cloudforge.dev/run-id=" + c.builder}
+	}
 	if version != "" {
 		args = append(args, "--build-arg", "CLOUDFORGE_VERSION="+version)
 	}

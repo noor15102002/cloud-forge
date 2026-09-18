@@ -32,9 +32,14 @@ exhaustive task list.
 - [x] Update one marker-identified PR comment with minimum permissions.
 - [x] Document the fork and untrusted-code security model.
 
+## Pilot readiness
+
+- [x] Complete the [pilot-readiness gate](pilot-readiness.md) and publish real runtime evidence before testing Peaxis or Avylo.
+
 ## v1.0 — Public V1
 
 - [x] Validate representative healthy and intentionally broken fixtures.
 - [x] Test several external repositories without repository-specific behavior.
 - [x] Harden cleanup, diagnostics, interruption, and unsupported-stack behavior.
+- [ ] [Calibrate performance-regression thresholds](https://github.com/noor15102002/cloud-forge/issues/31) across repeated compatible runner environments; the current 10% timing heuristic is not statistical significance.
 - [ ] Produce reproducible release binaries and checksums.

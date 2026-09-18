@@ -20,6 +20,7 @@ type Request struct {
 	Dir         string
 	Timeout     time.Duration
 	OutputLimit int
+	Env         []string
 }
 
 // Runner executes commands and returns normalized results.
@@ -47,6 +48,8 @@ func (ExecRunner) Run(ctx context.Context, req Request) model.CommandResult {
 	// #nosec G204 -- callers provide executable and argument arrays; no shell is involved.
 	cmd := exec.CommandContext(commandCtx, req.Name, req.Args...)
 	cmd.Dir = req.Dir
+	cmd.Env = append(cmd.Environ(), req.Env...)
+	configureCancellation(cmd)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	started := time.Now()

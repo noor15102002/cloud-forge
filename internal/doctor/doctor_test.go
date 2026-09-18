@@ -51,3 +51,14 @@ func TestDoctorDistinguishesExecutionError(t *testing.T) {
 		t.Fatalf("unexpected report: %#v", report)
 	}
 }
+
+func TestMalformedVersionIsNotAPass(t *testing.T) {
+	results := make([]model.CommandResult, 6)
+	for i := range results {
+		results[i] = model.CommandResult{Stdout: "unexpected arbitrary output"}
+	}
+	report := NewWithMemory(&fakeRunner{results: results}, func() (uint64, error) { return 16 << 30, nil }).Run(context.Background())
+	if report.Status != model.StatusFail || report.Checks[0].Version != "" || report.Checks[0].Status != model.StatusFail {
+		t.Fatalf("malformed version passed: %#v", report)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/noor15102002/cloud-forge/internal/findings"
+	"github.com/noor15102002/cloud-forge/internal/safefile"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -146,19 +147,7 @@ func discoverFiles(root string) ([]string, []model.Diagnostic, error) {
 }
 
 func readBounded(root, relative string) ([]byte, error) {
-	path := filepath.Join(root, filepath.FromSlash(relative))
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("symbolic links are not read")
-	}
-	if info.Size() > maxFileSize {
-		return nil, fmt.Errorf("file exceeds %d byte analysis limit", maxFileSize)
-	}
-	// #nosec G304 -- path is rooted under an evaluated repository root and symlinks are rejected.
-	return os.ReadFile(path)
+	return safefile.Read(root, filepath.FromSlash(relative), maxFileSize)
 }
 
 func diagnostic(code, message, path, guidance string) model.Diagnostic {

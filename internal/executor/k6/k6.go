@@ -46,7 +46,7 @@ func (c *Client) Run(ctx context.Context, workspace, url string, profile Profile
 	}
 	scriptPath := filepath.Join(workspace, "load.js")
 	summaryPath := filepath.Join(workspace, "k6-summary.json")
-	script := "import http from 'k6/http';\nimport { check } from 'k6';\n\nexport default function () {\n  const response = http.get(" + strconv.Quote(url) + ");\n  check(response, { 'status is successful': (value) => value.status >= 200 && value.status < 300 });\n}\n"
+	script := "import http from 'k6/http';\nimport { check } from 'k6';\nhttp.setResponseCallback(http.expectedStatuses({ min: 200, max: 299 }));\n\nexport default function () {\n  const response = http.get(" + strconv.Quote(url) + ", { redirects: 0, timeout: '2s' });\n  check(response, { 'status is successful': (value) => value.status >= 200 && value.status < 300 });\n}\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
 		return Summary{}, model.CommandResult{}, fmt.Errorf("write k6 script: %w", err)
 	}

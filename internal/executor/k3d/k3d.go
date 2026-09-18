@@ -20,7 +20,7 @@ func New(runner command.Runner) *Client { return &Client{runner: runner} }
 func (c *Client) Create(ctx context.Context, name string, nodePort int) model.CommandResult {
 	portMapping := "127.0.0.1:0:" + strconv.Itoa(nodePort) + "@server:0"
 	return c.runner.Run(ctx, command.Request{
-		Name: "k3d", Args: []string{"cluster", "create", name, "--servers", "1", "--agents", "0", "--port", portMapping, "--wait", "--timeout", "90s"},
+		Name: "k3d", Args: []string{"cluster", "create", name, "--servers-memory", "4g", "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false", "--runtime-label", "cloudforge.dev/owned=true@all", "--servers", "1", "--agents", "0", "--port", portMapping, "--wait", "--timeout", "90s"},
 		Timeout: 2 * time.Minute, OutputLimit: 128 * 1024,
 	})
 }
@@ -39,4 +39,9 @@ func (c *Client) Delete(ctx context.Context, name string) model.CommandResult {
 		Name: "k3d", Args: []string{"cluster", "delete", name},
 		Timeout: 2 * time.Minute, OutputLimit: 128 * 1024,
 	})
+}
+
+// Kubeconfig returns credentials for this run only; callers must not publish output.
+func (c *Client) Kubeconfig(ctx context.Context, name string) model.CommandResult {
+	return c.runner.Run(ctx, command.Request{Name: "k3d", Args: []string{"kubeconfig", "get", name}, Timeout: 15 * time.Second, OutputLimit: 128 * 1024})
 }

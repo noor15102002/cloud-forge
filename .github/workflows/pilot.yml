@@ -1,0 +1,97 @@
+name: Pilot readiness
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - 'README.md'
+      - 'CHANGELOG.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [healthy-node, healthy-python]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.1
+      - name: Install pinned tools
+        run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
+      - name: Build and run five healthy trials plus planted failures
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+        run: |
+          go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
+          python3 scripts/pilot-fixtures.py /tmp/cloudforge "$FIXTURE" "$RUNNER_TEMP/pilot"
+      - name: Preserve evidence and variance
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pilot-${{ matrix.fixture }}
+          path: ${{ runner.temp }}/pilot
+      - name: Check owned resources
+        if: always()
+        run: bash scripts/pilot-cleanup-check.sh
+
+  external:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.1
+      - name: Install pinned tools
+        run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
+      - name: Verify pinned public stateless routes
+        run: |
+          go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
+          python3 scripts/pilot-external.py /tmp/cloudforge "$RUNNER_TEMP/pilot"
+      - name: Preserve external evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pilot-external
+          path: ${{ runner.temp }}/pilot
+      - name: Check owned resources
+        if: always()
+        run: bash scripts/pilot-cleanup-check.sh
+
+  cancellation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.1
+      - name: Install pinned tools
+        run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
+      - name: Exercise real interruption and cleanup
+        run: |
+          go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
+          python3 scripts/pilot-cancellation.py /tmp/cloudforge "$RUNNER_TEMP/pilot"
+      - name: Preserve interruption evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pilot-cancellation
+          path: ${{ runner.temp }}/pilot
+      - name: Check owned resources
+        if: always()
+        run: bash scripts/pilot-cleanup-check.sh

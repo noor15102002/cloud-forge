@@ -12,11 +12,11 @@ import (
 )
 
 func TestAnalyzeNodeFixture(t *testing.T) {
-	result, err := New().Analyze(filepath.Join("..", "..", "testdata", "healthy-node"))
+	result, err := New().Analyze(filepath.Join("..", "..", "testdata", "metadata-node"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Supported || result.Status != "pass" {
+	if !result.Supported || result.Status != "warn" {
 		t.Fatalf("unexpected support/status: %#v", result)
 	}
 	if result.Application.Name != "healthy-node-api" || len(result.Application.Runtimes) != 1 {
@@ -46,7 +46,7 @@ func TestAnalyzeNodeFixture(t *testing.T) {
 }
 
 func TestAnalyzePythonFixtureIsDeterministic(t *testing.T) {
-	path := filepath.Join("..", "..", "testdata", "healthy-python")
+	path := filepath.Join("..", "..", "testdata", "metadata-python")
 	first, err := New().Analyze(path)
 	if err != nil {
 		t.Fatal(err)
@@ -84,11 +84,11 @@ func TestConflictingCandidatesArePreserved(t *testing.T) {
 }
 
 func TestStaticFindingsCoverHealthyAndBrokenConfiguration(t *testing.T) {
-	healthy, err := New().Analyze(filepath.Join("..", "..", "testdata", "healthy-node"))
+	healthy, err := New().Analyze(filepath.Join("..", "..", "testdata", "metadata-node"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if healthy.Status != model.StatusPass {
+	if healthy.Status != model.StatusWarn {
 		t.Fatalf("healthy fixture has unexpected findings: %#v", healthy.Findings)
 	}
 	for _, id := range []string{

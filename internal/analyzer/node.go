@@ -25,7 +25,7 @@ var nodeFrameworks = map[string]string{
 
 var nodeArchitectureDependencies = map[string]struct{ name, kind string }{
 	"pg": {"postgresql", "database"}, "postgres": {"postgresql", "database"},
-	"sequelize": {"postgresql", "database"}, "typeorm": {"postgresql", "database"},
+	"sequelize": {"unknown", "database"}, "typeorm": {"unknown", "database"},
 	"redis": {"redis", "cache"}, "ioredis": {"redis", "cache"},
 }
 
@@ -72,6 +72,9 @@ func (a *Analyzer) analyzeNode(root string, files []string, result *model.Analys
 	for packageName, architecture := range nodeArchitectureDependencies {
 		if _, ok := dependencies[packageName]; ok {
 			addDependency(result, architecture.name, architecture.kind, "package.json")
+			if architecture.name == "unknown" {
+				result.Diagnostics = append(result.Diagnostics, diagnostic("database_backend_unknown", "A database ORM does not identify a specific backend.", "package.json", "Configure and validate test dependencies explicitly; no database is provisioned automatically."))
+			}
 		}
 	}
 }

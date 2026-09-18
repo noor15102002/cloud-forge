@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
@@ -37,8 +38,8 @@ func TestVerifyJSONContractAndExitCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
-		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
-		if request.Name == "trivy" {
+		result := successfulCLIRunner()(context.Background(), request)
+		if request.Name == "trivy" && len(request.Args) > 1 {
 			result.Stdout = `{"Results":[]}`
 		}
 		for _, argument := range request.Args {
@@ -73,8 +74,8 @@ func TestVerifyMarkdownReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
-		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
-		if request.Name == "trivy" {
+		result := successfulCLIRunner()(context.Background(), request)
+		if request.Name == "trivy" && len(request.Args) > 1 {
 			result.Stdout = `{"Results":[]}`
 		}
 		if containsCLIArgument(request.Args, "pods") {
@@ -94,6 +95,9 @@ func TestVerifyMarkdownReport(t *testing.T) {
 }
 
 func TestVerifyBaselineRegressionProducesReportAndExitOne(t *testing.T) {
+	previousCommit := Commit
+	Commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	t.Cleanup(func() { Commit = previousCommit })
 	directory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(directory, "package.json"), []byte(`{"name":"cli-test"}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -127,7 +131,7 @@ func TestVerifyBaselineRegressionProducesReportAndExitOne(t *testing.T) {
 	err = root.ExecuteContext(context.Background())
 	var coded *exitError
 	if !errors.As(err, &coded) || coded.code != 1 {
-		t.Fatalf("expected regression exit code 1, got %v", err)
+		t.Fatalf("expected regression exit code 1, got %v; baseline=%s current=%s", err, baselineData, stdout.String())
 	}
 	var current model.VerificationRun
 	if err := json.Unmarshal(stdout.Bytes(), &current); err != nil {
@@ -167,14 +171,30 @@ func successfulCLIRunner() cliRunnerFunc {
 func cliTestRunner(vulnerable bool) cliRunnerFunc {
 	return func(_ context.Context, request command.Request) model.CommandResult {
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
-		if request.Name == "trivy" {
+		if request.Name == "kubectl" && slices.Contains(request.Args, "/readyz") {
+			result.Stdout = "ok"
+		}
+		if request.Name == "kubectl" && slices.Contains(request.Args, "nodes") {
+			result.Stdout = `{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
+		}
+		if request.Name == "k3d" || request.Name == "k6" || (request.Name == "trivy" && len(request.Args) == 1) || (request.Name == "docker" && len(request.Args) > 0 && request.Args[0] == "info") {
+			result.Stdout = "version 1.2.3"
+		}
+		if request.Name == "kubectl" && slices.Contains(request.Args, "--output=json") {
+			result.Stdout = `{"serverVersion":{"gitVersion":"v1.34.0"}}`
+		}
+		if request.Name == "docker" && slices.Contains(request.Args, "inspect") {
+			result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" []`
+		}
+
+		if request.Name == "trivy" && len(request.Args) > 1 {
 			if vulnerable {
 				result.Stdout = `{"Results":[{"Target":"image","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libc","InstalledVersion":"1","Severity":"HIGH"}]}]}`
 			} else {
 				result.Stdout = `{"Results":[]}`
 			}
 		}
-		if request.Name == "k6" {
+		if request.Name == "k6" && slices.Contains(request.Args, "run") {
 			result.Stdout = `{"metrics":{"http_reqs":{"values":{"count":200,"rate":10}},"http_req_failed":{"values":{"rate":0}},"http_req_duration":{"values":{"med":10,"p(95)":20,"p(99)":30}}}}`
 		}
 		if containsCLIArgument(request.Args, "pods") {

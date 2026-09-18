@@ -1,0 +1,12 @@
+schema_version: v1alpha1
+runtime:
+  port: 8000
+endpoints:
+  health: /health
+  readiness: /ready
+  load: /work
+load:
+  vus: 5
+  duration: 20s
+experiments:
+  control_path: /_test

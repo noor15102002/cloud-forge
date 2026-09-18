@@ -1,0 +1,4 @@
+[project]
+name = "broken-python-readiness"
+version = "0.0.0"
+dependencies = ["fastapi==0.141.1", "uvicorn==0.53.0"]
