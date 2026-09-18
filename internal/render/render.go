@@ -278,6 +278,12 @@ func VerificationMarkdown(w io.Writer, run model.VerificationRun) error {
 
 func canonicalVerification(run model.VerificationRun) model.VerificationRun {
 	result := run
+	if run.Fingerprint != nil {
+		fingerprint := *run.Fingerprint
+		fingerprint.Tools = append([]model.ToolVersion{}, run.Fingerprint.Tools...)
+		sort.Slice(fingerprint.Tools, func(i, j int) bool { return fingerprint.Tools[i].Name < fingerprint.Tools[j].Name })
+		result.Fingerprint = &fingerprint
+	}
 	result.Evidence = append([]model.Evidence{}, run.Evidence...)
 	result.Findings = append([]model.Finding(nil), run.Findings...)
 	result.Diagnostics = append([]model.Diagnostic(nil), run.Diagnostics...)

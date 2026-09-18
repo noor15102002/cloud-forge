@@ -20,10 +20,11 @@ type Client struct{ runner command.Runner }
 
 // PodState contains the safe pod identity and readiness data needed by experiments.
 type PodState struct {
-	Name     string
-	Ready    bool
-	Restarts int32
-	Image    string
+	Name        string
+	Terminating bool
+	Ready       bool
+	Restarts    int32
+	Image       string
 }
 
 // HPAState contains safe autoscaler state needed by the load experiment.
@@ -86,7 +87,7 @@ func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector s
 	}
 	states := make([]PodState, 0, len(pods.Items))
 	for _, pod := range pods.Items {
-		state := PodState{Name: pod.Name, Ready: podReady(pod)}
+		state := PodState{Name: pod.Name, Ready: podReady(pod), Terminating: pod.DeletionTimestamp != nil}
 		if len(pod.Spec.Containers) > 0 {
 			state.Image = pod.Spec.Containers[0].Image
 		}

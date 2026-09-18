@@ -37,12 +37,18 @@ func containerFindings(containers []model.Container) []model.Finding {
 		source := container.Source
 		identifier := "container." + identifier(source.Path)
 		user := strings.TrimSpace(strings.ToLower(container.User))
+		uid, _, _ := strings.Cut(user, ":")
+		numericUID, numericErr := strconv.ParseUint(uid, 10, 32)
 		if strings.ContainsAny(user, "${}") {
 			values = append(values, finding(identifier+".non-root", "container", model.StatusWarn, model.SeverityMedium, "Container runtime user cannot be resolved statically.", container.User, "a known non-root USER in the final stage", "Resolve the final USER to a concrete non-root name or numeric identifier.", &source))
-		} else if user == "" || user == "root" || user == "0" || user == "0:0" {
+		} else if uid == "" || uid == "root" || (numericErr == nil && numericUID == 0) {
 			values = append(values, finding(identifier+".non-root", "container", model.StatusFail, model.SeverityHigh, "Container does not declare a non-root runtime user.", display(container.User, "root or unspecified"), "a non-root USER in the final stage", "Create an unprivileged user and select it with USER in the final Dockerfile stage.", &source))
 		} else {
 			values = append(values, finding(identifier+".non-root", "container", model.StatusPass, model.SeverityInfo, "Container declares a non-root runtime user.", container.User, "a non-root USER in the final stage", "", &source))
+		}
+		if container.UnresolvedPorts {
+			values = append(values, finding(identifier+".port", "container", model.StatusWarn, model.SeverityMedium, "Container runtime port is unknown.", "unresolved", "one resolved TCP port", "Set runtime.port in the explicit verification configuration.", &source))
+			continue
 		}
 		switch len(container.Ports) {
 		case 0:
@@ -65,6 +71,10 @@ func deploymentFindings(deployments []model.Deployment) []model.Finding {
 		source := deployment.Source
 		prefix := "kubernetes.deployment." + identifier(namespacedName(deployment.Namespace, deployment.Name))
 		readiness, health := false, false
+		for _, probe := range deployment.Probes {
+			readiness = readiness || probe.Purpose == "readiness"
+			health = health || probe.Purpose == "liveness" || probe.Purpose == "startup"
+		}
 		for _, endpoint := range deployment.Endpoints {
 			readiness = readiness || endpoint.Purpose == "readiness"
 			health = health || endpoint.Purpose == "liveness" || endpoint.Purpose == "startup"

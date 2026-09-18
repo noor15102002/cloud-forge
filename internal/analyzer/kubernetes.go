@@ -86,7 +86,12 @@ func decodeKubernetesResource(raw []byte, identity resourceIdentity, source mode
 		if err := json.Unmarshal(raw, &value); err != nil {
 			return err
 		}
-		result.Application.Kubernetes.Deployments = append(result.Application.Kubernetes.Deployments, convertDeployment(value, source))
+		deployment := convertDeployment(value, source)
+		unsupportedDeploymentFields(raw, &deployment)
+		if len(deployment.Unsupported) > 0 {
+			result.Diagnostics = append(result.Diagnostics, diagnostic("kubernetes_unsupported_settings", "Deployment contains settings that cannot be reproduced by the pilot runtime.", source.Path, "Select a supported test deployment; verification rejects unsupported settings before execution."))
+		}
+		result.Application.Kubernetes.Deployments = append(result.Application.Kubernetes.Deployments, deployment)
 	case "v1/Service":
 		var value corev1.Service
 		if err := json.Unmarshal(raw, &value); err != nil {
@@ -110,6 +115,7 @@ func decodeKubernetesResource(raw []byte, identity resourceIdentity, source mode
 		}
 		result.Application.Kubernetes.HorizontalPodScalers = append(result.Application.Kubernetes.HorizontalPodScalers, convertHPAv2(value, source))
 	default:
+		result.Diagnostics = append(result.Diagnostics, diagnostic("kubernetes_unsupported_resource", "Kubernetes resource is preserved as identity metadata only.", source.Path, "This resource is not applied during verification."))
 		result.Application.Kubernetes.OtherResources = append(result.Application.Kubernetes.OtherResources, model.KubernetesResource{
 			APIVersion: identity.APIVersion, Kind: identity.Kind, Name: identity.Metadata.Name,
 			Namespace: identity.Metadata.Namespace, Source: source,
@@ -119,7 +125,10 @@ func decodeKubernetesResource(raw []byte, identity resourceIdentity, source mode
 }
 
 func convertDeployment(value appsv1.Deployment, source model.SourceReference) model.Deployment {
-	deployment := model.Deployment{Name: value.Name, Namespace: value.Namespace, Replicas: value.Spec.Replicas, Source: source}
+	deployment := model.Deployment{Name: value.Name, Namespace: value.Namespace, Replicas: value.Spec.Replicas, Source: source,
+		TerminationGracePeriodSeconds: value.Spec.Template.Spec.TerminationGracePeriodSeconds,
+		Strategy:                      value.Spec.Strategy.DeepCopy(), MinReadySeconds: value.Spec.MinReadySeconds,
+		ProgressDeadlineSeconds: value.Spec.ProgressDeadlineSeconds, Unsupported: unsupportedPodFields(value.Spec.Template.Spec)}
 	for _, item := range value.Spec.Template.Spec.Containers {
 		container := model.Container{Name: item.Name, Image: item.Image, Source: source}
 		for _, port := range item.Ports {
@@ -127,6 +136,14 @@ func convertDeployment(value appsv1.Deployment, source model.SourceReference) mo
 		}
 		container.Resources = convertResources(item.Resources)
 		deployment.Containers = append(deployment.Containers, container)
+		for _, entry := range []struct {
+			purpose string
+			probe   *corev1.Probe
+		}{{"readiness", item.ReadinessProbe}, {"liveness", item.LivenessProbe}, {"startup", item.StartupProbe}} {
+			if entry.probe != nil {
+				deployment.Probes = append(deployment.Probes, safeProbe(entry.probe, entry.purpose))
+			}
+		}
 		deployment.Endpoints = appendProbeEndpoints(deployment.Endpoints, item.ReadinessProbe, "readiness", source)
 		deployment.Endpoints = appendProbeEndpoints(deployment.Endpoints, item.LivenessProbe, "liveness", source)
 		deployment.Endpoints = appendProbeEndpoints(deployment.Endpoints, item.StartupProbe, "startup", source)
@@ -168,11 +185,18 @@ func convertService(value corev1.Service, source model.SourceReference) model.Se
 
 func convertHPAv2(value autoscalingv2.HorizontalPodAutoscaler, source model.SourceReference) model.HorizontalPodAutoscaler {
 	hpa := model.HorizontalPodAutoscaler{Name: value.Name, Namespace: value.Namespace, TargetKind: value.Spec.ScaleTargetRef.Kind, TargetName: value.Spec.ScaleTargetRef.Name, MinReplicas: value.Spec.MinReplicas, MaxReplicas: value.Spec.MaxReplicas, Source: source}
+	hpa.Behavior = value.Spec.Behavior.DeepCopy()
+	if len(value.Spec.Metrics) != 1 {
+		hpa.Unsupported = append(hpa.Unsupported, "spec.metrics: requires exactly one CPU utilization metric")
+	}
 	for _, metric := range value.Spec.Metrics {
-		if metric.Type == autoscalingv2.ResourceMetricSourceType && metric.Resource != nil && metric.Resource.Name == corev1.ResourceCPU && metric.Resource.Target.AverageUtilization != nil {
+		if metric.Type == autoscalingv2.ResourceMetricSourceType && metric.Resource != nil && metric.Resource.Name == corev1.ResourceCPU && metric.Resource.Target.Type == autoscalingv2.UtilizationMetricType && metric.Resource.Target.AverageUtilization != nil {
 			hpa.TargetCPU = metric.Resource.Target.AverageUtilization
 			break
 		}
+	}
+	if hpa.TargetCPU == nil {
+		hpa.Unsupported = append(hpa.Unsupported, "spec.metrics: unsupported metric")
 	}
 	return hpa
 }

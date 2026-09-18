@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -142,6 +143,7 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 	var format string
 	var keepEnvironment bool
 	var baselinePath string
+	var configPath string
 	cmd := &cobra.Command{Use: "verify [path]", Short: "Build and verify an application in a disposable k3d cluster", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateVerificationFormat(format); err != nil {
 			return &exitError{code: 2, err: err}
@@ -161,7 +163,8 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 			path = args[0]
 		}
 		logger().Info("starting application verification", "path", path, "keep_environment", keepEnvironment)
-		outcome := verification.New(runner).Run(cmd.Context(), path, verification.Options{KeepEnvironment: keepEnvironment})
+		buildVersion, buildCommit := buildIdentity()
+		outcome := verification.New(runner).Run(cmd.Context(), path, verification.Options{KeepEnvironment: keepEnvironment, ConfigPath: configPath, Version: buildVersion, Commit: buildCommit})
 		if baselineLoaded {
 			comparison := regression.Compare(outcome.Run, baseline)
 			outcome.Run.Comparison = &comparison
@@ -188,6 +191,7 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 		return nil
 	}}
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, or markdown")
+	cmd.Flags().StringVar(&configPath, "config", "", "strict verification configuration (default: application/cloudforge.yaml)")
 	cmd.Flags().BoolVar(&keepEnvironment, "keep-environment", false, "keep the k3d cluster after verification")
 	cmd.Flags().StringVar(&baselinePath, "baseline", "", "compare with an explicit v1alpha1 verification JSON file")
 	return cmd
@@ -266,4 +270,23 @@ func validateVerificationFormat(value string) error {
 		return fmt.Errorf("unsupported format %q; use text, json, or markdown", strings.TrimSpace(value))
 	}
 	return nil
+}
+
+func buildIdentity() (string, string) {
+	version, commit := Version, Commit
+	if commit == "unknown" {
+		if info, ok := debug.ReadBuildInfo(); ok {
+			for _, setting := range info.Settings {
+				if setting.Key == "vcs.revision" {
+					commit = setting.Value
+				}
+			}
+			for _, setting := range info.Settings {
+				if setting.Key == "vcs.modified" && setting.Value == "true" {
+					commit += "+dirty"
+				}
+			}
+		}
+	}
+	return version, commit
 }

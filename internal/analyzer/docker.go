@@ -35,6 +35,7 @@ func (a *Analyzer) analyzeDocker(root string, files []string, result *model.Anal
 				container.Image = firstNodeArgument(node)
 				container.User = ""
 				container.Ports = nil
+				container.UnresolvedPorts = false
 			case "user":
 				container.User = firstNodeArgument(node)
 			case "expose":
@@ -42,6 +43,9 @@ func (a *Analyzer) analyzeDocker(root string, files []string, result *model.Anal
 					portValue, protocol, ok := parseExposedPort(value)
 					if ok {
 						container.Ports = append(container.Ports, model.ContainerPort{Port: portValue, Protocol: protocol, Source: model.SourceReference{Path: path}})
+					} else {
+						container.UnresolvedPorts = true
+						result.Diagnostics = append(result.Diagnostics, diagnostic("docker_port_unknown", "Docker EXPOSE contains an unresolved or invalid port.", path, "Specify runtime.port in the verification configuration; environment variables are not evaluated."))
 					}
 				}
 			}

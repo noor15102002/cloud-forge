@@ -45,7 +45,7 @@ jobs:
             any(.evidence[]; .experiment_id == "container-build" and .status == "pass") and
             any(.evidence[]; .experiment_id == "container-scan" and (.status == "pass" or .status == "warn")) and
             any(.evidence[]; .experiment_id == "deployment-readiness" and .status == "pass" and any(.measurements[]; .name == "readiness_http_status" and ((.value | tonumber) >= 200 and (.value | tonumber) < 300))) and
-            any(.evidence[]; .experiment_id == "graceful-shutdown" and .status == "pass" and any(.measurements[]; .name == "in_flight_requests" and (.value | tonumber) > 0) and any(.measurements[]; .name == "dropped_requests" and .value == "0")) and
+            any(.evidence[]; .experiment_id == "graceful-shutdown" and .status == "pass" and any(.measurements[]; .name == "requests_overlapping_deletion" and (.value | tonumber) > 0) and any(.measurements[]; .name == "dropped_requests" and .value == "0")) and
             any(.evidence[]; .experiment_id == "pod-recovery" and .status == "pass" and any(.measurements[]; .name == "failed_requests" and .value == "0") and any(.measurements[]; .name == "final_http_status" and ((.value | tonumber) >= 200 and (.value | tonumber) < 300))) and
             any(.evidence[]; .experiment_id == "rolling-deployment" and .status == "pass" and any(.measurements[]; .name == "source_version" and .value == "a") and any(.measurements[]; .name == "target_version" and .value == "b") and any(.measurements[]; .name == "target_ready_pods" and .value == "2") and any(.measurements[]; .name == "failed_requests" and .value == "0")) and
             any(.evidence[]; .experiment_id == "load-profile" and .status == "pass" and any(.measurements[]; .name == "request_count" and (.value | tonumber) > 0) and any(.measurements[]; .name == "error_rate" and .value == "0.000") and any(.measurements[]; .name == "latency_p95_ms")) and
@@ -64,8 +64,8 @@ jobs:
           test "$status" -eq 1
           jq --exit-status '
             .status == "fail" and
-            any(.evidence[]; .experiment_id == "graceful-shutdown" and .status == "fail" and any(.measurements[]; .name == "dropped_requests" and (.value | tonumber) > 0)) and
-            any(.diagnostics[]; .code == "graceful_shutdown_failed" and .status == "fail")
+            any(.evidence[]; .experiment_id == "inflight-shutdown" and .status == "fail") and
+            any(.findings[]; .id == "runtime.inflight-shutdown" and .status == "fail")
           ' /tmp/cloudforge-broken-shutdown.json
 
       - name: Verify broken rollout detection

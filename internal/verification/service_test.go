@@ -53,7 +53,7 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	if outcome.ExitCode != 0 || outcome.Run.Status != model.StatusPass {
 		t.Fatalf("unexpected outcome: %#v", outcome)
 	}
-	if len(outcome.Run.Evidence) != 8 || outcome.Run.Evidence[2].Measurements[0].Value != "2" {
+	if len(outcome.Run.Evidence) != 10 || outcome.Run.Evidence[2].Measurements[0].Value != "2" {
 		t.Fatalf("missing readiness evidence: %#v", outcome.Run.Evidence)
 	}
 	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
@@ -61,7 +61,7 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 		t.Fatalf("missing rolling deployment evidence: %#v", rollout)
 	}
 	shutdown := evidenceByID(outcome.Run.Evidence, "graceful-shutdown")
-	if shutdown == nil || measurementValue(shutdown.Measurements, "in_flight_requests") == "0" {
+	if shutdown == nil || measurementValue(shutdown.Measurements, "requests_overlapping_deletion") == "0" {
 		t.Fatalf("shutdown did not synchronize with an in-flight request: %#v", shutdown)
 	}
 	load := evidenceByID(outcome.Run.Evidence, "load-profile")
@@ -100,10 +100,10 @@ func TestBuildFailureDoesNotCreateCluster(t *testing.T) {
 	var calls []command.Request
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		calls = append(calls, request)
-		if request.Name == "docker" && containsArgument(request.Args, "rm") {
-			return model.CommandResult{Command: request.Name, Arguments: request.Args, ExitCode: 1, FailureType: model.FailureExit, Stderr: "No such image"}
+		if request.Name == "docker" && containsArgument(request.Args, "build") {
+			return model.CommandResult{ExitCode: 1, FailureType: model.FailureExit}
 		}
-		return model.CommandResult{Command: request.Name, Arguments: request.Args, ExitCode: 1, FailureType: model.FailureExit}
+		return successfulCommand(request)
 	})
 	service := fixedService(runner)
 	outcome := service.Run(context.Background(), fixturePath(t), Options{})
@@ -262,7 +262,7 @@ func TestReadinessMeasuresHTTPGating(t *testing.T) {
 		t.Fatalf("unexpected outcome: %#v", outcome)
 	}
 	readiness := evidenceByID(outcome.Run.Evidence, "deployment-readiness")
-	if readiness == nil || measurementValue(readiness.Measurements, "readiness_http_status") != "200" || measurementValue(readiness.Measurements, "gated_attempts") != "1" {
+	if readiness == nil || measurementValue(readiness.Measurements, "readiness_http_status") != "200" || measurementValue(readiness.Measurements, "failed_startup_requests") != "1" {
 		t.Fatalf("readiness gating was not measured: %#v", readiness)
 	}
 	if len(urls) == 0 || !strings.HasSuffix(urls[len(urls)-1], "/health") {
@@ -522,6 +522,9 @@ func TestCleanupFailuresUseIndependentContextsAndContinue(t *testing.T) {
 			result.FailureType = model.FailureTimeout
 		}
 		if request.Name == "docker" && containsArgument(request.Args, "rm") {
+			if containsArgument(request.Args, "buildx") {
+				return result
+			}
 			imageRemovals++
 			imageContextErrors = append(imageContextErrors, callCtx.Err())
 			if imageRemovals == 1 {
@@ -658,7 +661,7 @@ func TestBuildPlanGeneratesBoundedHPAFromAnalyzedTarget(t *testing.T) {
 	replicas, minimum, targetCPU := int32(2), int32(2), int32(70)
 	analysis.Application.Kubernetes.Deployments[0].Replicas = &replicas
 	analysis.Application.Kubernetes.HorizontalPodScalers = []model.HorizontalPodAutoscaler{{
-		Name: "api", TargetKind: "Deployment", TargetName: "api", MinReplicas: &minimum, MaxReplicas: 100, TargetCPU: &targetCPU,
+		Name: "api", TargetKind: "Deployment", TargetName: "api", MinReplicas: &minimum, MaxReplicas: 5, TargetCPU: &targetCPU,
 	}}
 	planned, err := buildPlan(analysis, "0123abcd")
 	if err != nil {
@@ -726,7 +729,7 @@ func fixedService(runner command.Runner) *Service {
 		if failed(result) {
 			return result
 		}
-		if request.Name == "k6" {
+		if request.Name == "k6" && containsArgument(request.Args, "run") {
 			loadRan = true
 			for index, argument := range request.Args {
 				if argument == "--summary-export" && index+1 < len(request.Args) {
@@ -746,6 +749,7 @@ func fixedService(runner command.Runner) *Service {
 		return result
 	})
 	service := New(wrapped)
+	service.controlledExperiments = false
 	service.newID = func() (string, error) { return "0123abcd", nil }
 	service.now = clock(time.Unix(100, 0), time.Unix(101, 0))
 	service.probe = func(context.Context, string) (int, error) { return 200, nil }

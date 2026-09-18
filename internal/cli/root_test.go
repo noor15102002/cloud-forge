@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
@@ -38,7 +39,7 @@ func TestVerifyJSONContractAndExitCode(t *testing.T) {
 	}
 	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
-		if request.Name == "trivy" {
+		if request.Name == "trivy" && len(request.Args) > 1 {
 			result.Stdout = `{"Results":[]}`
 		}
 		for _, argument := range request.Args {
@@ -74,7 +75,7 @@ func TestVerifyMarkdownReport(t *testing.T) {
 	}
 	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
-		if request.Name == "trivy" {
+		if request.Name == "trivy" && len(request.Args) > 1 {
 			result.Stdout = `{"Results":[]}`
 		}
 		if containsCLIArgument(request.Args, "pods") {
@@ -167,14 +168,21 @@ func successfulCLIRunner() cliRunnerFunc {
 func cliTestRunner(vulnerable bool) cliRunnerFunc {
 	return func(_ context.Context, request command.Request) model.CommandResult {
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
-		if request.Name == "trivy" {
+		if request.Name == "k3d" || request.Name == "k6" || (request.Name == "trivy" && len(request.Args) == 1) || (request.Name == "docker" && len(request.Args) > 0 && request.Args[0] == "info") {
+			result.Stdout = "version 1.2.3"
+		}
+		if request.Name == "kubectl" && slices.Contains(request.Args, "--output=json") {
+			result.Stdout = `{"serverVersion":{"gitVersion":"v1.34.0"}}`
+		}
+
+		if request.Name == "trivy" && len(request.Args) > 1 {
 			if vulnerable {
 				result.Stdout = `{"Results":[{"Target":"image","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libc","InstalledVersion":"1","Severity":"HIGH"}]}]}`
 			} else {
 				result.Stdout = `{"Results":[]}`
 			}
 		}
-		if request.Name == "k6" {
+		if request.Name == "k6" && slices.Contains(request.Args, "run") {
 			result.Stdout = `{"metrics":{"http_reqs":{"values":{"count":200,"rate":10}},"http_req_failed":{"values":{"rate":0}},"http_req_duration":{"values":{"med":10,"p(95)":20,"p(99)":30}}}}`
 		}
 		if containsCLIArgument(request.Args, "pods") {

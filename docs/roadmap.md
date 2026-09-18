@@ -32,6 +32,10 @@ exhaustive task list.
 - [x] Update one marker-identified PR comment with minimum permissions.
 - [x] Document the fork and untrusted-code security model.
 
+## Pilot readiness
+
+- [ ] Complete the [pilot-readiness gate](pilot-readiness.md) and publish real runtime evidence before testing Peaxis or Avylo.
+
 ## v1.0 — Public V1
 
 - [x] Validate representative healthy and intentionally broken fixtures.

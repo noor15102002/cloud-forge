@@ -47,6 +47,9 @@ type probeFunc func(context.Context, string) (int, error)
 // Options controls one verification run.
 type Options struct {
 	KeepEnvironment bool
+	ConfigPath      string
+	Version         string
+	Commit          string
 }
 
 // Outcome contains the public report and the CLI exit code it implies.
@@ -57,25 +60,26 @@ type Outcome struct {
 
 // Service runs verification through injected command execution.
 type Service struct {
-	runner            command.Runner
-	now               func() time.Time
-	newID             func() (string, error)
-	probe             probeFunc
-	poll              time.Duration
-	trafficPoll       time.Duration
-	readinessTimeout  time.Duration
-	recoveryTimeout   time.Duration
-	rolloutTimeout    time.Duration
-	hpaMetricsTimeout time.Duration
-	hpaScaleTimeout   time.Duration
-	cleanupTimeout    time.Duration
-	loadProfile       k6executor.Profile
+	runner                command.Runner
+	controlledExperiments bool
+	now                   func() time.Time
+	newID                 func() (string, error)
+	probe                 probeFunc
+	poll                  time.Duration
+	trafficPoll           time.Duration
+	readinessTimeout      time.Duration
+	recoveryTimeout       time.Duration
+	rolloutTimeout        time.Duration
+	hpaMetricsTimeout     time.Duration
+	hpaScaleTimeout       time.Duration
+	cleanupTimeout        time.Duration
+	loadProfile           k6executor.Profile
 }
 
 // New creates a verification service.
 func New(runner command.Runner) *Service {
 	return &Service{
-		runner: runner, now: time.Now, newID: randomID,
+		runner: runner, now: time.Now, newID: randomID, controlledExperiments: true,
 		probe: httpProbe(directHTTPClient()),
 		poll:  200 * time.Millisecond, trafficPoll: 20 * time.Millisecond, readinessTimeout: readinessWindow,
 		recoveryTimeout: recoveryWindow, rolloutTimeout: recoveryWindow,
@@ -138,7 +142,15 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 
-	plan, err := buildPlan(analysis, id)
+	config, err := loadConfiguration(root, options.ConfigPath)
+	if err != nil {
+		out.addError("configuration_invalid", "CloudForge rejected the verification configuration before execution.", err.Error())
+		return out
+	}
+	if !s.controlledExperiments {
+		config.Experiments.ControlPath = ""
+	}
+	plan, err := buildConfiguredPlan(analysis, id, config)
 	if err != nil {
 		out.Run.Status = model.StatusFail
 		out.ExitCode = 1
@@ -148,7 +160,10 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		})
 		return out
 	}
+	out.Run.Fingerprint = newFingerprint(ctx, s.runner, root, plan, options)
 	out.Run.Environment.ClusterName = plan.clusterName
+	s.loadProfile.VirtualUsers = config.Load.VUs
+	s.loadProfile.Duration, _ = time.ParseDuration(config.Load.Duration)
 	if plan.httpSkipReason != "" {
 		out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
 			Code: "http_experiment_skipped", Status: model.StatusWarn,
@@ -176,9 +191,18 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		}
 	}
 
-	dockerClient := docker.New(s.runner)
-	k3dClient := k3d.New(s.runner)
-	kubernetesClient := kubernetes.New(s.runner)
+	kubeconfigPath := filepath.Join(temporary, "kubeconfig")
+	dockerConfig := filepath.Join(temporary, "docker")
+	if err := os.Mkdir(dockerConfig, 0o700); err != nil {
+		out.addError("workspace_failed", "CloudForge could not create its private Docker configuration.", err.Error())
+		return out
+	}
+	scoped := scopedRunner{runner: s.runner, kubeconfig: kubeconfigPath, dockerConfig: dockerConfig}
+	dockerClient := docker.New(scoped)
+	dockerClient.IsolateBuild(plan.clusterName)
+	builderAttempted := false
+	k3dClient := k3d.New(scoped)
+	kubernetesClient := kubernetes.New(scoped)
 	clusterAttempted := false
 	clusterCreated := false
 	imagesToCleanup := []string{plan.image}
@@ -207,6 +231,19 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		}
 	}()
 
+	defer func() {
+		if builderAttempted {
+			result := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult { return dockerClient.RemoveBuilder(cleanupCtx) })
+			if failed(result) {
+				out.addError("builder_cleanup_failed", "CloudForge could not remove its owned builder.", "Remove the named cloudforge builder after checking its ownership.")
+			}
+		}
+	}()
+	builderAttempted = true
+	if result := dockerClient.CreateBuilder(ctx); failed(result) {
+		out.addCommandDiagnostic("builder_create_failed", "CloudForge could not create its bounded build environment.", result)
+		return out
+	}
 	buildResult := dockerClient.BuildVersion(ctx, root, plan.image, "a")
 	buildStatus := model.StatusPass
 	buildSummary := "Container image built successfully."
@@ -246,7 +283,8 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 
-	trivyClient := trivy.New(s.runner)
+	fingerprintImage(ctx, scoped, plan.image, out.Run.Fingerprint)
+	trivyClient := trivy.New(scoped)
 	scan, scanErr := trivyClient.ScanImage(ctx, plan.image)
 	if scanErr != nil {
 		out.addError("trivy_output_invalid", "CloudForge could not parse Trivy's JSON report.", scanErr.Error())
@@ -273,6 +311,16 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 	clusterCreated = true
+	credentials := k3dClient.Kubeconfig(ctx, plan.clusterName)
+	if failed(credentials) || credentials.Truncated {
+		out.addError("kubeconfig_failed", "CloudForge could not obtain its private kubeconfig.", "Inspect the disposable cluster and retry.")
+		return out
+	}
+	if err := os.WriteFile(kubeconfigPath, []byte(credentials.Stdout), 0o600); err != nil {
+		out.addError("kubeconfig_failed", "CloudForge could not write its private kubeconfig.", err.Error())
+		return out
+	}
+	fingerprintTools(ctx, scoped, plan, out.Run.Fingerprint)
 	if plan.readinessPath != "" {
 		hostPort, portResult, portErr := dockerClient.PublishedPort(ctx, plan.clusterName, nodePort)
 		if portErr != nil || failed(portResult) {
@@ -281,6 +329,9 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		}
 		plan.readinessURL = localEndpointURL(plan.readinessScheme, plan.readinessPath, hostPort)
 		plan.healthURL = localEndpointURL(plan.healthScheme, plan.healthPath, hostPort)
+		if config.Endpoints.Load != "" {
+			plan.loadURL = localEndpointURL("http", config.Endpoints.Load, hostPort)
+		}
 		out.Run.Environment.Endpoint = plan.readinessURL
 	}
 	if result := k3dClient.ImportImage(ctx, plan.clusterName, plan.image); failed(result) {
@@ -335,7 +386,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 			model.Measurement{Name: "startup_duration_ms", Value: strconv.FormatInt(httpResult.DurationMS, 10), Unit: "ms"},
 			model.Measurement{Name: "readiness_http_status", Value: strconv.Itoa(httpResult.Status)},
 			model.Measurement{Name: "readiness_attempts", Value: strconv.Itoa(httpResult.Attempts), Unit: "requests"},
-			model.Measurement{Name: "gated_attempts", Value: strconv.Itoa(httpResult.Failures), Unit: "requests"},
+			model.Measurement{Name: "failed_startup_requests", Value: strconv.Itoa(httpResult.Failures), Unit: "requests"},
 		)
 	}
 	out.Run.Evidence = append(out.Run.Evidence, model.Evidence{
@@ -388,6 +439,16 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 			model.Evidence{ExperimentID: "horizontal-autoscaling", Title: "Horizontal autoscaling under load", Status: model.StatusSkipped, Summary: "Autoscaling observation requires an explicit HTTP readiness endpoint."},
 		)
 	} else {
+		gating := s.runReadinessGating(ctx, kubernetesClient, plan)
+		applyExperimentOutcome(&out, gating)
+		if gating.ExitCode != 0 {
+			return out
+		}
+		inFlight := s.runInFlightShutdown(ctx, kubernetesClient, plan)
+		applyExperimentOutcome(&out, inFlight)
+		if inFlight.ExitCode != 0 {
+			return out
+		}
 		shutdown := s.runGracefulShutdown(ctx, kubernetesClient, plan)
 		applyExperimentOutcome(&out, shutdown)
 		if shutdown.ExitCode != 0 {
@@ -441,28 +502,35 @@ func applyExperimentOutcome(out *Outcome, experiment recoveryOutcome) {
 }
 
 type plan struct {
-	clusterName     string
-	workloadName    string
-	image           string
-	rolloutImage    string
-	desiredReplicas int32
-	readinessScheme string
-	readinessPath   string
-	healthScheme    string
-	healthPath      string
-	readinessURL    string
-	healthURL       string
-	httpSkipReason  string
-	manifest        []byte
-	hpaManifest     []byte
-	hpaName         string
-	hpaMinReplicas  int32
-	hpaMaxReplicas  int32
-	hpaTargetCPU    int32
-	hpaSkipReason   string
+	clusterName        string
+	workloadName       string
+	image              string
+	rolloutImage       string
+	desiredReplicas    int32
+	readinessScheme    string
+	readinessPath      string
+	healthScheme       string
+	healthPath         string
+	readinessURL       string
+	healthURL          string
+	loadURL            string
+	config             model.RuntimeConfiguration
+	effectiveResources model.ResourceRequirements
+	httpSkipReason     string
+	manifest           []byte
+	hpaManifest        []byte
+	hpaName            string
+	hpaMinReplicas     int32
+	hpaMaxReplicas     int32
+	hpaTargetCPU       int32
+	hpaSkipReason      string
 }
 
 func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
+	return buildConfiguredPlan(analysis, id, defaultConfiguration())
+}
+
+func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.RuntimeConfiguration) (plan, error) {
 	application := analysis.Application
 	if len(application.Containers) != 1 || application.Containers[0].Source.Path != "Dockerfile" {
 		return plan{}, errors.New("verification requires exactly one root Dockerfile")
@@ -471,6 +539,9 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 		return plan{}, errors.New("verification requires zero or one Kubernetes Deployment; select a narrower application directory")
 	}
 	port, portName, err := selectPort(application)
+	if config.Runtime.Port > 0 {
+		port, portName, err = config.Runtime.Port, "http", nil
+	}
 	if err != nil {
 		return plan{}, err
 	}
@@ -485,12 +556,30 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 
 	replicas := int32(1)
 	resources := corev1.ResourceRequirements{}
-	var readinessProbe, livenessProbe *corev1.Probe
+	var readinessProbe, livenessProbe, startupProbe *corev1.Probe
+	var grace *int64
+	strategy := appsv1.DeploymentStrategy{}
+	var minReady int32
+	var progressDeadline *int32
 	readinessScheme, readinessPath := "", ""
 	healthScheme, healthPath := "", ""
 	httpSkipReason := ""
 	if len(application.Kubernetes.Deployments) == 1 {
 		deployment := application.Kubernetes.Deployments[0]
+		if len(deployment.Unsupported) > 0 {
+			return plan{}, fmt.Errorf("unsupported deployment settings: %s", strings.Join(deployment.Unsupported, ", "))
+		}
+		grace = deployment.TerminationGracePeriodSeconds
+		if grace != nil && (*grace < 1 || *grace > 120) {
+			return plan{}, errors.New("termination grace period must be between 1 and 120 seconds")
+		}
+		if deployment.Strategy != nil {
+			strategy = *deployment.Strategy.DeepCopy()
+		}
+		minReady, progressDeadline = deployment.MinReadySeconds, deployment.ProgressDeadlineSeconds
+		if deployment.Replicas != nil && (*deployment.Replicas < 1 || *deployment.Replicas > 5) {
+			return plan{}, errors.New("deployment replicas must be between 1 and 5; excessive replicas are rejected before execution")
+		}
 		if deployment.Replicas != nil && *deployment.Replicas > 0 {
 			replicas = *deployment.Replicas
 		}
@@ -505,6 +594,36 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 		}
 		readinessProbe = probeFor(deployment.Endpoints, "readiness", port, portName)
 		livenessProbe = probeFor(deployment.Endpoints, "liveness", port, portName)
+		for _, value := range deployment.Probes {
+			resolvedPort := value.Port
+			if _, parseErr := strconv.Atoi(resolvedPort); parseErr != nil {
+				for _, container := range deployment.Containers {
+					for _, candidate := range container.Ports {
+						if candidate.Name == resolvedPort {
+							resolvedPort = strconv.Itoa(int(candidate.Port))
+							break
+						}
+					}
+				}
+			}
+			if resolvedPort != strconv.Itoa(int(port)) {
+				return plan{}, fmt.Errorf("unsupported %s probe port: probes must use the selected application port", value.Purpose)
+			}
+			value.Port = strconv.Itoa(int(port))
+			probe, probeErr := preservedProbe(value)
+			if probeErr != nil {
+				return plan{}, probeErr
+			}
+			switch value.Purpose {
+			case "readiness":
+				readinessProbe = probe
+			case "liveness":
+				livenessProbe = probe
+			case "startup":
+				startupProbe = probe
+			}
+		}
+
 		readinessScheme, readinessPath, err = endpointRoute(deployment.Endpoints, "readiness", port, portName)
 		if err != nil {
 			return plan{}, err
@@ -519,6 +638,15 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 				return plan{}, err
 			}
 		}
+	}
+	if config.Endpoints.Readiness != "" {
+		readinessScheme, readinessPath = "http", config.Endpoints.Readiness
+	}
+	if config.Endpoints.Health != "" {
+		healthScheme, healthPath = "http", config.Endpoints.Health
+	}
+	if readinessProbe == nil && readinessPath != "" {
+		readinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: readinessPath, Port: intstr.FromInt32(port)}}}
 	}
 	if readinessProbe == nil {
 		readinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}}
@@ -537,18 +665,37 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 		healthScheme, healthPath = readinessScheme, readinessPath
 	}
 
-	labels := map[string]string{"app.kubernetes.io/name": workloadName, "app.kubernetes.io/managed-by": "cloudforge"}
+	peakReplicas := replicas
+	for _, hpa := range application.Kubernetes.HorizontalPodScalers {
+		if hpa.MaxReplicas > 5 || hpa.MaxReplicas < 1 {
+			return plan{}, errors.New("HPA maxReplicas must be between 1 and 5; no silent cap is applied")
+		}
+		if len(hpa.Unsupported) > 0 {
+			return plan{}, fmt.Errorf("unsupported HPA settings: %s", strings.Join(hpa.Unsupported, ", "))
+		}
+		if hpa.MaxReplicas > peakReplicas {
+			peakReplicas = hpa.MaxReplicas
+		}
+	}
+	resources, err = boundedResources(resources, peakReplicas, strategy)
+	if err != nil {
+		return plan{}, err
+	}
+	config.Runtime.Port = port
+	config.Endpoints.Readiness, config.Endpoints.Health = readinessPath, healthPath
+	labels := map[string]string{"app.kubernetes.io/name": workloadName, "app.kubernetes.io/managed-by": "cloudforge", "cloudforge.dev/run-id": id}
 	objects := []any{
 		&corev1.Namespace{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"}, ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "cloudforge"}}},
 		&appsv1.Deployment{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 			ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: namespace, Labels: labels},
 			Spec: appsv1.DeploymentSpec{
+				Strategy: strategy, MinReadySeconds: minReady, ProgressDeadlineSeconds: progressDeadline,
 				Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels},
-				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{Containers: []corev1.Container{{
+				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{TerminationGracePeriodSeconds: grace, Containers: []corev1.Container{{
 					Name: "application", Image: image, ImagePullPolicy: corev1.PullNever,
 					Ports:     []corev1.ContainerPort{{Name: portName, ContainerPort: port, Protocol: corev1.ProtocolTCP}},
-					Resources: resources, ReadinessProbe: readinessProbe, LivenessProbe: livenessProbe,
+					Resources: resources, ReadinessProbe: readinessProbe, LivenessProbe: livenessProbe, StartupProbe: startupProbe,
 				}}}},
 			},
 		},
@@ -565,7 +712,7 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 	result := plan{
 		clusterName: clusterName, workloadName: workloadName, image: image, rolloutImage: rolloutImage, desiredReplicas: replicas,
 		readinessScheme: readinessScheme, readinessPath: readinessPath, healthScheme: healthScheme, healthPath: healthPath,
-		httpSkipReason: httpSkipReason, manifest: manifest,
+		httpSkipReason: httpSkipReason, manifest: manifest, config: config, effectiveResources: modelResources(resources),
 	}
 	result.hpaSkipReason = "No supported HPA targets the selected Deployment."
 	if len(application.Kubernetes.HorizontalPodScalers) == 1 && len(application.Kubernetes.Deployments) == 1 {
@@ -576,7 +723,7 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 			if source.MinReplicas != nil && *source.MinReplicas > 0 {
 				minimum = *source.MinReplicas
 			}
-			maximum := minInt32(source.MaxReplicas, 5)
+			maximum := source.MaxReplicas
 			if minimum >= maximum {
 				result.hpaSkipReason = "The HPA minimum replica count is too high for CloudForge's five-replica local safety bound."
 				return result, nil
@@ -587,7 +734,7 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 				ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: namespace, Labels: labels},
 				Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
 					ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: workloadName},
-					MinReplicas:    &minimum, MaxReplicas: maximum,
+					MinReplicas:    &minimum, MaxReplicas: maximum, Behavior: source.Behavior.DeepCopy(),
 					Metrics: []autoscalingv2.MetricSpec{{Type: autoscalingv2.ResourceMetricSourceType, Resource: &autoscalingv2.ResourceMetricSource{Name: corev1.ResourceCPU, Target: autoscalingv2.MetricTarget{Type: autoscalingv2.UtilizationMetricType, AverageUtilization: &targetCPU}}}},
 				},
 			}
@@ -952,13 +1099,6 @@ func outcomeForFindings(values []model.Finding) (model.Status, int) {
 		}
 	}
 	return model.StatusPass, 0
-}
-
-func minInt32(left, right int32) int32 {
-	if left < right {
-		return left
-	}
-	return right
 }
 
 func normalizedNamespace(value string) string {

@@ -1,6 +1,11 @@
 // Package model contains CloudForge's public, machine-readable contracts.
 package model
 
+import (
+	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+)
+
 // SchemaVersion identifies the current machine-readable contract.
 const SchemaVersion = "v1alpha1"
 
@@ -76,22 +81,46 @@ type ResourceRequirements struct {
 
 // Container contains safe metadata for a Dockerfile stage or Kubernetes container.
 type Container struct {
-	Name      string               `json:"name,omitempty"`
-	Image     string               `json:"image,omitempty"`
-	User      string               `json:"user,omitempty"`
-	Ports     []ContainerPort      `json:"ports,omitempty"`
-	Resources ResourceRequirements `json:"resources,omitempty"`
-	Source    SourceReference      `json:"source"`
+	UnresolvedPorts bool                 `json:"unresolved_ports,omitempty"`
+	Name            string               `json:"name,omitempty"`
+	Image           string               `json:"image,omitempty"`
+	User            string               `json:"user,omitempty"`
+	Ports           []ContainerPort      `json:"ports,omitempty"`
+	Resources       ResourceRequirements `json:"resources,omitempty"`
+	Source          SourceReference      `json:"source"`
 }
 
-// Deployment describes an apps/v1 Kubernetes Deployment.
+// Probe preserves safe probe semantics without command text or header values.
+type Probe struct {
+	Purpose                       string   `json:"purpose"`
+	Type                          string   `json:"type"`
+	Path                          string   `json:"path,omitempty"`
+	Port                          string   `json:"port,omitempty"`
+	Scheme                        string   `json:"scheme,omitempty"`
+	GRPCService                   *string  `json:"grpc_service,omitempty"`
+	InitialDelaySeconds           int32    `json:"initial_delay_seconds,omitempty"`
+	TimeoutSeconds                int32    `json:"timeout_seconds,omitempty"`
+	PeriodSeconds                 int32    `json:"period_seconds,omitempty"`
+	SuccessThreshold              int32    `json:"success_threshold,omitempty"`
+	FailureThreshold              int32    `json:"failure_threshold,omitempty"`
+	TerminationGracePeriodSeconds *int64   `json:"termination_grace_period_seconds,omitempty"`
+	Unsupported                   []string `json:"unsupported,omitempty"`
+}
+
+// Deployment retains supported safe workload settings and unsupported field names.
 type Deployment struct {
-	Name       string          `json:"name"`
-	Namespace  string          `json:"namespace,omitempty"`
-	Replicas   *int32          `json:"replicas,omitempty"`
-	Containers []Container     `json:"containers,omitempty"`
-	Endpoints  []Endpoint      `json:"endpoints,omitempty"`
-	Source     SourceReference `json:"source"`
+	Probes                        []Probe                    `json:"probes,omitempty"`
+	TerminationGracePeriodSeconds *int64                     `json:"termination_grace_period_seconds,omitempty"`
+	Strategy                      *appsv1.DeploymentStrategy `json:"strategy,omitempty"`
+	MinReadySeconds               int32                      `json:"min_ready_seconds,omitempty"`
+	ProgressDeadlineSeconds       *int32                     `json:"progress_deadline_seconds,omitempty"`
+	Unsupported                   []string                   `json:"unsupported,omitempty"`
+	Name                          string                     `json:"name"`
+	Namespace                     string                     `json:"namespace,omitempty"`
+	Replicas                      *int32                     `json:"replicas,omitempty"`
+	Containers                    []Container                `json:"containers,omitempty"`
+	Endpoints                     []Endpoint                 `json:"endpoints,omitempty"`
+	Source                        SourceReference            `json:"source"`
 }
 
 // ServicePort describes a Kubernetes Service port mapping.
@@ -113,14 +142,16 @@ type Service struct {
 
 // HorizontalPodAutoscaler describes a supported Kubernetes HPA.
 type HorizontalPodAutoscaler struct {
-	Name        string          `json:"name"`
-	Namespace   string          `json:"namespace,omitempty"`
-	TargetKind  string          `json:"target_kind"`
-	TargetName  string          `json:"target_name"`
-	MinReplicas *int32          `json:"min_replicas,omitempty"`
-	MaxReplicas int32           `json:"max_replicas"`
-	TargetCPU   *int32          `json:"target_cpu_utilization,omitempty"`
-	Source      SourceReference `json:"source"`
+	Behavior    *autoscalingv2.HorizontalPodAutoscalerBehavior `json:"behavior,omitempty"`
+	Unsupported []string                                       `json:"unsupported,omitempty"`
+	Name        string                                         `json:"name"`
+	Namespace   string                                         `json:"namespace,omitempty"`
+	TargetKind  string                                         `json:"target_kind"`
+	TargetName  string                                         `json:"target_name"`
+	MinReplicas *int32                                         `json:"min_replicas,omitempty"`
+	MaxReplicas int32                                          `json:"max_replicas"`
+	TargetCPU   *int32                                         `json:"target_cpu_utilization,omitempty"`
+	Source      SourceReference                                `json:"source"`
 }
 
 // KubernetesResource retains safe identity metadata for an unsupported resource.
@@ -293,6 +324,7 @@ type VerificationEnvironment struct {
 
 // VerificationRun is the versioned result of a CloudForge verification.
 type VerificationRun struct {
+	Fingerprint   *RunFingerprint         `json:"fingerprint,omitempty"`
 	SchemaVersion string                  `json:"schema_version"`
 	RunID         string                  `json:"run_id"`
 	Status        Status                  `json:"status"`

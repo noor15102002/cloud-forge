@@ -31,7 +31,7 @@ var pythonFrameworks = map[string]string{
 
 var pythonArchitectureDependencies = map[string]struct{ name, kind string }{
 	"asyncpg": {"postgresql", "database"}, "psycopg": {"postgresql", "database"},
-	"psycopg2": {"postgresql", "database"}, "sqlalchemy": {"postgresql", "database"},
+	"psycopg2": {"postgresql", "database"}, "sqlalchemy": {"unknown", "database"},
 	"redis": {"redis", "cache"}, "hiredis": {"redis", "cache"},
 }
 
@@ -92,6 +92,9 @@ func (a *Analyzer) analyzePython(root string, files []string, result *model.Anal
 	for packageName, architecture := range pythonArchitectureDependencies {
 		if _, ok := dependencySet[packageName]; ok {
 			addDependency(result, architecture.name, architecture.kind, runtime.Source.Path)
+			if architecture.name == "unknown" {
+				result.Diagnostics = append(result.Diagnostics, diagnostic("database_backend_unknown", "A database ORM does not identify a specific backend.", runtime.Source.Path, "Configure and validate test dependencies explicitly; no database is provisioned automatically."))
+			}
 		}
 	}
 }

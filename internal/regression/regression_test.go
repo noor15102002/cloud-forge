@@ -151,7 +151,7 @@ func TestLoadRejectsOversizedBaseline(t *testing.T) {
 }
 
 func verificationRun(id string, evidence []model.Evidence) model.VerificationRun {
-	return model.VerificationRun{SchemaVersion: model.SchemaVersion, RunID: id, Evidence: evidence}
+	return model.VerificationRun{SchemaVersion: model.SchemaVersion, RunID: id, Evidence: evidence, Fingerprint: &model.RunFingerprint{CompatibilityKey: "unit-environment"}}
 }
 
 func writeBaseline(t *testing.T, document string) string {
@@ -161,4 +161,17 @@ func writeBaseline(t *testing.T, document string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestIncompatibleOrMissingFingerprintIsUnavailable(t *testing.T) {
+	current := verificationRun("current", nil)
+	baseline := verificationRun("base", nil)
+	baseline.Fingerprint.CompatibilityKey = "different"
+	if got := Compare(current, baseline); got.Status != model.StatusWarn || len(got.Regressions) != 0 || len(got.Unavailable) == 0 {
+		t.Fatalf("incompatible runs compared: %#v", got)
+	}
+	baseline.Fingerprint = nil
+	if got := Compare(current, baseline); got.Status != model.StatusWarn {
+		t.Fatalf("legacy fingerprint fabricated: %#v", got)
+	}
 }

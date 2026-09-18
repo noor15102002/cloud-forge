@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strconv"
 	"time"
 
@@ -14,10 +13,9 @@ import (
 )
 
 func (s *Service) runLoadAndAutoscaling(ctx context.Context, loadClient *k6executor.Client, client *kubernetes.Client, current plan, workspace, hpaManifestPath string) (recoveryOutcome, recoveryOutcome) {
-	loadURL, err := loadEndpoint(current.readinessURL)
-	if err != nil {
-		failure := lifecycleExecutionError("load-profile", "Bounded HTTP load profile", "load_endpoint_invalid", "CloudForge could not construct the load endpoint.", err.Error(), trafficObservation{})
-		return failure, skippedAutoscaling(current.hpaSkipReason)
+	loadURL := current.loadURL
+	if loadURL == "" {
+		return skippedLoad("No explicit endpoints.load was configured."), skippedAutoscaling("A representative load endpoint is required to test autoscaling.")
 	}
 
 	var starting kubernetes.HPAState
@@ -86,6 +84,9 @@ metricsComplete:
 		peakCPU = *starting.CurrentCPU
 	}
 	scaleDuration := int64(0)
+	scaleObserved := false
+	scaleExpected := false
+	var demandSince time.Time
 	scaleCtx, cancelScale := context.WithTimeout(ctx, s.hpaScaleTimeout)
 	defer cancelScale()
 	loadCtx, cancelLoad := context.WithCancel(ctx)
@@ -101,13 +102,29 @@ metricsComplete:
 			<-loadDone
 			return skippedLoad("The load profile was canceled because HPA state could not be inspected."), lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_observation_failed", "CloudForge could not inspect HPA behavior during load.", commandGuidance(result, observeErr), trafficObservation{})
 		}
+		if state.DesiredReplicas > startReplicas {
+			scaleExpected = true
+		}
+		if !loadFinished && state.CurrentCPU != nil && float64(*state.CurrentCPU) > float64(current.hpaTargetCPU)*1.1 {
+			if demandSince.IsZero() {
+				demandSince = time.Now()
+			}
+			if time.Since(demandSince) >= 15*time.Second {
+				scaleExpected = true
+			}
+		} else {
+			demandSince = time.Time{}
+		}
 		peakReplicas = maxInt32(peakReplicas, state.CurrentReplicas)
 		peakDesiredReplicas = maxInt32(peakDesiredReplicas, state.DesiredReplicas)
 		if state.CurrentCPU != nil {
 			peakCPU = maxInt32(peakCPU, *state.CurrentCPU)
 		}
 		if peakReplicas > startReplicas {
-			scaleDuration = elapsedMilliseconds(time.Since(loadStarted))
+			if !scaleObserved {
+				scaleDuration = elapsedMilliseconds(time.Since(loadStarted))
+				scaleObserved = true
+			}
 			if loadFinished {
 				break
 			}
@@ -146,6 +163,11 @@ scaleComplete:
 		{Name: "request_count", Value: strconv.FormatInt(summary.RequestCount, 10), Unit: "requests"},
 		{Name: "failed_requests", Value: strconv.FormatInt(failedRequests(summary), 10), Unit: "requests"},
 		{Name: "latency_p95_ms", Value: decimal(summary.P95MS), Unit: "ms"},
+	}
+	if peakReplicas <= startReplicas && !scaleExpected {
+		outcome := skippedAutoscaling("Insufficient scaling demand was observed; remaining at the starting replica count is not an application failure.")
+		outcome.Evidence.Measurements = measurements
+		return loadOutcome, outcome
 	}
 	if peakReplicas <= startReplicas {
 		return loadOutcome, lifecycleFailure("horizontal-autoscaling", "Horizontal autoscaling under load", "runtime.horizontal-autoscaling", "The HPA received CPU metrics but did not scale the Deployment.", "Review CPU requests, the utilization target, metrics-server, and the load profile.", elapsedMilliseconds(time.Since(loadStarted)), trafficObservation{}, measurements)
@@ -202,16 +224,6 @@ func skippedAutoscalingWithDiagnostic(reason string) recoveryOutcome {
 	result := skippedAutoscaling("CPU metrics were unavailable, so CloudForge skipped the HPA scale assertion.")
 	result.Diagnostic = &model.Diagnostic{Code: "hpa_metrics_unavailable", Status: model.StatusWarn, Message: result.Evidence.Summary, Guidance: "Observed cause: " + reason + " Check that metrics-server is healthy and that the Deployment declares CPU requests."}
 	return result
-}
-func loadEndpoint(value string) (string, error) {
-	parsed, err := url.Parse(value)
-	if err != nil {
-		return "", err
-	}
-	query := parsed.Query()
-	query.Set("cloudforge_load", "1")
-	parsed.RawQuery = query.Encode()
-	return parsed.String(), nil
 }
 func failedRequests(summary k6executor.Summary) int64 {
 	return int64(summary.ErrorRate*float64(summary.RequestCount) + 0.5)

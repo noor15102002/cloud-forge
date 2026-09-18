@@ -17,7 +17,7 @@ func TestLoadWithoutHPAProducesMetricsAndExplicitSkip(t *testing.T) {
 	runner := loadRunner(`{"metrics":{"http_reqs":{"values":{"count":20,"rate":10}},"http_req_failed":{"values":{"rate":0}},"http_req_duration":{"values":{"p(50)":1,"p(95)":2,"p(99)":3}}}}`, "")
 	service := New(runner)
 	service.loadProfile = k6executor.Profile{VirtualUsers: 2, Duration: time.Second}
-	load, autoscaling := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), plan{readinessURL: "http://127.0.0.1:8080/ready", hpaSkipReason: "No HPA was discovered."}, t.TempDir(), "")
+	load, autoscaling := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), plan{loadURL: "http://127.0.0.1:8080/ready", hpaSkipReason: "No HPA was discovered."}, t.TempDir(), "")
 	if load.ExitCode != 0 || load.Evidence.Status != model.StatusPass || measurementValue(load.Evidence.Measurements, "throughput_rps") != "10.000" {
 		t.Fatalf("unexpected load evidence: %#v", load)
 	}
@@ -33,7 +33,7 @@ func TestUnavailableHPAMetricsAreExplicitlySkipped(t *testing.T) {
 	service.poll = time.Millisecond
 	service.hpaMetricsTimeout = 3 * time.Millisecond
 	service.loadProfile = k6executor.Profile{VirtualUsers: 2, Duration: time.Second}
-	current := plan{clusterName: "test", workloadName: "api", readinessURL: "http://127.0.0.1:8080/ready", hpaName: "api", hpaTargetCPU: 70}
+	current := plan{clusterName: "test", workloadName: "api", loadURL: "http://127.0.0.1:8080/ready", hpaName: "api", hpaTargetCPU: 70}
 	load, autoscaling := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), current, t.TempDir(), "hpa.yaml")
 	if load.Evidence.Status != model.StatusPass || autoscaling.Evidence.Status != model.StatusSkipped || autoscaling.Diagnostic == nil || autoscaling.Diagnostic.Code != "hpa_metrics_unavailable" || !strings.Contains(autoscaling.Diagnostic.Guidance, "FailedGetResourceMetric") || !strings.Contains(autoscaling.Diagnostic.Guidance, "metrics-server") {
 		t.Fatalf("unexpected unavailable metrics outcome: load=%#v autoscaling=%#v", load, autoscaling)
@@ -57,7 +57,7 @@ func TestHPAMetricsDeadlineBecomesExplicitSkip(t *testing.T) {
 	service.poll = time.Millisecond
 	service.hpaMetricsTimeout = 3 * time.Millisecond
 	service.loadProfile = k6executor.Profile{VirtualUsers: 2, Duration: time.Second}
-	current := plan{clusterName: "test", workloadName: "api", readinessURL: "http://127.0.0.1:8080/ready", hpaName: "api", hpaTargetCPU: 70}
+	current := plan{clusterName: "test", workloadName: "api", loadURL: "http://127.0.0.1:8080/ready", hpaName: "api", hpaTargetCPU: 70}
 	load, autoscaling := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), current, t.TempDir(), "hpa.yaml")
 	if load.Evidence.Status != model.StatusPass || autoscaling.Evidence.Status != model.StatusSkipped || autoscaling.Diagnostic == nil || autoscaling.Diagnostic.Code != "hpa_metrics_unavailable" {
 		t.Fatalf("deadline should be a metrics skip: load=%#v autoscaling=%#v", load, autoscaling)
@@ -72,7 +72,7 @@ func TestDesiredReplicaGrowthWithoutRunningPodsFails(t *testing.T) {
 	service.hpaMetricsTimeout = 3 * time.Millisecond
 	service.hpaScaleTimeout = 3 * time.Millisecond
 	service.loadProfile = k6executor.Profile{VirtualUsers: 2, Duration: time.Second}
-	current := plan{clusterName: "test", workloadName: "api", desiredReplicas: 2, readinessURL: "http://127.0.0.1:8080/ready", hpaName: "api", hpaMinReplicas: 2, hpaMaxReplicas: 5, hpaTargetCPU: 70}
+	current := plan{clusterName: "test", workloadName: "api", desiredReplicas: 2, loadURL: "http://127.0.0.1:8080/ready", hpaName: "api", hpaMinReplicas: 2, hpaMaxReplicas: 5, hpaTargetCPU: 70}
 	load, autoscaling := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), current, t.TempDir(), "hpa.yaml")
 	if load.Evidence.Status != model.StatusPass || autoscaling.ExitCode != 1 || measurementValue(autoscaling.Evidence.Measurements, "peak_replicas") != "2" || measurementValue(autoscaling.Evidence.Measurements, "peak_desired_replicas") != "3" {
 		t.Fatalf("desired replicas must not count as actual scale-up: load=%#v autoscaling=%#v", load, autoscaling)
@@ -83,7 +83,7 @@ func TestLoadErrorsRemainApplicationFailures(t *testing.T) {
 	runner := loadRunner(`{"metrics":{"http_reqs":{"values":{"count":20,"rate":10}},"http_req_failed":{"values":{"rate":0.1}},"http_req_duration":{"values":{"p(50)":1,"p(95)":2,"p(99)":3}}}}`, "")
 	service := New(runner)
 	service.loadProfile = k6executor.Profile{VirtualUsers: 2, Duration: time.Second}
-	load, autoscaling := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), plan{readinessURL: "http://127.0.0.1:8080/ready"}, t.TempDir(), "")
+	load, autoscaling := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), plan{loadURL: "http://127.0.0.1:8080/ready"}, t.TempDir(), "")
 	if load.ExitCode != 1 || load.Evidence.Status != model.StatusFail || measurementValue(load.Evidence.Measurements, "failed_requests") != "2" || autoscaling.Evidence.Status != model.StatusSkipped {
 		t.Fatalf("unexpected load failure: load=%#v autoscaling=%#v", load, autoscaling)
 	}

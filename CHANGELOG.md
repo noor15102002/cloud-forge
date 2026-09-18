@@ -5,6 +5,11 @@ Versioning once releases begin.
 
 ## Unreleased
 
+- Pilot implementation: correct root/probe/ORM/port analysis, bounded regular-file reading, faithful supported workload settings, private runtime configuration and resource budgets.
+- Explicit endpoint/load configuration, compatible environment fingerprints and optional controlled readiness/in-flight shutdown experiments.
+- Runnable Node/FastAPI reference fixtures and disposable-runner pilot validation. See the pilot checklist for validation status.
+
+
 - Added graceful shutdown and synthetic version A-to-B rolling deployment experiments under continuous HTTP traffic.
 - Added bounded k6 load profiles with normalized throughput, error-rate, and latency evidence.
 - Added CPU-based HPA scale-up observation with explicit missing-metrics skip diagnostics.

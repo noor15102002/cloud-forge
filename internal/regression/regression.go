@@ -11,10 +11,12 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/noor15102002/cloud-forge/internal/safefile"
 
 	"github.com/noor15102002/cloud-forge/pkg/model"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
@@ -60,26 +62,11 @@ var measurementPolicies = map[string]measurementPolicy{
 
 // Load reads one bounded, strict, version-compatible verification report.
 func Load(path string) (model.VerificationRun, error) {
-	file, err := os.Open(path) // #nosec G304 -- the caller explicitly supplies the report path.
+	data, err := safefile.Read(filepath.Dir(path), filepath.Base(path), maxReportBytes)
 	if err != nil {
-		return model.VerificationRun{}, fmt.Errorf("open verification report %q: %w", path, err)
+		return model.VerificationRun{}, fmt.Errorf("read verification report: %w", err)
 	}
-	defer func() { _ = file.Close() }()
 
-	info, err := file.Stat()
-	if err != nil {
-		return model.VerificationRun{}, fmt.Errorf("inspect verification report %q: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return model.VerificationRun{}, fmt.Errorf("verification report %q is not a regular file", path)
-	}
-	data, err := io.ReadAll(io.LimitReader(file, maxReportBytes+1))
-	if err != nil {
-		return model.VerificationRun{}, fmt.Errorf("read verification report %q: %w", path, err)
-	}
-	if len(data) > maxReportBytes {
-		return model.VerificationRun{}, fmt.Errorf("verification report %q exceeds the %d-byte limit", path, maxReportBytes)
-	}
 	var identity struct {
 		SchemaVersion string `json:"schema_version"`
 	}
@@ -180,6 +167,11 @@ func Compare(current, baseline model.VerificationRun) model.BaselineComparison {
 	if current.Application != "" && baseline.Application != "" && current.Application != baseline.Application {
 		comparison.Status = model.StatusWarn
 		comparison.Unavailable = append(comparison.Unavailable, unavailable("application", model.ComparisonStatus, "", fmt.Sprintf("baseline application %q does not match current application %q", baseline.Application, current.Application)))
+		return comparison
+	}
+	if current.Fingerprint == nil || baseline.Fingerprint == nil || current.Fingerprint.CompatibilityKey == "" || baseline.Fingerprint.CompatibilityKey == "" || current.Fingerprint.CompatibilityKey != baseline.Fingerprint.CompatibilityKey {
+		comparison.Status = model.StatusWarn
+		comparison.Unavailable = append(comparison.Unavailable, unavailable("environment", model.ComparisonStatus, "", "baseline lacks a compatible complete experiment/environment fingerprint"))
 		return comparison
 	}
 	currentByID := evidenceByID(current.Evidence)

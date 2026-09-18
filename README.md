@@ -95,13 +95,13 @@ This slice reports detected vulnerabilities as warnings while preserving
 Trivy's lowercase severity. Configurable vulnerability enforcement remains
 planned.
 
+See [pilot runtime configuration](docs/runtime-configuration.md) for explicit endpoints, supported deployment settings, safety budgets and controlled experiment requirements.
+
 When an analyzed HPA safely targets the selected Deployment, verification
 applies a generated autoscaler after the lifecycle experiments. It waits for
-CPU metrics, runs a fixed 16-user, 20-second k6 profile, and records request
+CPU metrics, runs the explicitly configured bounded k6 profile, and records request
 count, throughput, error rate, P50/P95/P99 latency, starting and peak replicas,
-and scale-up duration. The generated HPA is capped at five replicas for local
-developer machines. Missing metrics produce explicit skipped evidence rather
-than an invented scaling result.
+and scale-up duration. HPAs above five replicas are rejected before execution. Missing metrics or insufficient scaling demand produce explicit skipped evidence.
 
 The packaged GitHub Action installs pinned runtime tools, uploads JSON and
 Markdown reports, supports explicitly selected baseline artifacts, and updates

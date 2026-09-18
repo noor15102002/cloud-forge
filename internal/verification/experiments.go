@@ -141,7 +141,7 @@ shutdownComplete:
 	inFlight := overlappingRequests(traffic.Samples, terminationStarted, terminationCompleted)
 	measurements := []model.Measurement{
 		{Name: "request_count", Value: strconv.Itoa(traffic.Requests), Unit: "requests"},
-		{Name: "in_flight_requests", Value: strconv.Itoa(inFlight), Unit: "requests"},
+		{Name: "requests_overlapping_deletion", Value: strconv.Itoa(inFlight), Unit: "requests"},
 		{Name: "dropped_requests", Value: strconv.Itoa(traffic.Failures), Unit: "requests"},
 		{Name: "downtime_ms", Value: strconv.FormatInt(traffic.MaxDowntimeMS, 10), Unit: "ms"},
 		{Name: "termination_duration_ms", Value: strconv.FormatInt(elapsedMilliseconds(terminationCompleted.Sub(terminationStarted)), 10), Unit: "ms"},
@@ -154,7 +154,7 @@ shutdownComplete:
 	if !recovered || traffic.Failures > 0 || finalStatus < 200 || finalStatus >= 300 {
 		return lifecycleFailure("graceful-shutdown", "Graceful shutdown under traffic", "runtime.graceful-shutdown", "The application dropped traffic or did not recover cleanly after SIGTERM.", "Inspect SIGTERM handling, readiness removal, connection draining, replica count, and termination grace period.", duration, traffic, measurements)
 	}
-	return lifecycleSuccess("graceful-shutdown", "Graceful shutdown under traffic", "runtime.graceful-shutdown", "The application remained healthy while Kubernetes terminated and replaced a pod.", duration, fmt.Sprintf("%d in-flight requests, %d dropped requests", inFlight, traffic.Failures), measurements)
+	return lifecycleSuccess("graceful-shutdown", "Graceful shutdown under traffic", "runtime.graceful-shutdown", "The application remained healthy while Kubernetes terminated and replaced a pod.", duration, fmt.Sprintf("%d requests overlapping deletion, %d dropped requests", inFlight, traffic.Failures), measurements)
 }
 
 func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Client, client *kubernetes.Client, current plan, buildResult model.CommandResult) recoveryOutcome {

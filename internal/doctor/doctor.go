@@ -59,9 +59,14 @@ func (d *Doctor) Run(ctx context.Context) model.DoctorReport {
 			check.Detail = failureDetail(result.FailureType)
 			check.Guidance = spec.guidance
 		} else {
-			check.Version = safeFirstLine(result.Stdout)
+			check.Version = ParsedVersion(result.Stdout)
 			if check.Version == "" {
-				check.Version = safeFirstLine(result.Stderr)
+				check.Version = ParsedVersion(result.Stderr)
+			}
+			if check.Version == "" {
+				check.Status = model.StatusFail
+				check.Detail = "Version output was empty or unrecognized."
+				check.Guidance = spec.guidance
 			}
 		}
 		report.Checks = append(report.Checks, check)
