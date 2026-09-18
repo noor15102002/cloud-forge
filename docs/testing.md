@@ -17,6 +17,11 @@ cluster remains. Unit tests inject the command runner to cover build, readiness,
 cluster creation, cancellation, and retained-environment paths without requiring
 local runtime tools. Parser tests cover normalized and malformed Trivy output.
 
+The healthy Node fixture delays listener shutdown briefly after SIGTERM so
+Kubernetes can remove the terminating endpoint before connections are closed.
+The broken shutdown fixture exits immediately, while the broken rollout fixture
+keeps synthetic version `b` unready.
+
 Runtime tests also cover readiness HTTP retries, successful replacement after
 a temporary unready state, request failures during deletion, recovery timeout,
 final health, graceful termination traffic, version rollout transitions,

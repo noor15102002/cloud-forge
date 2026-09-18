@@ -13,5 +13,6 @@ const server = http.createServer((request, response) => {
 server.listen(8080, "0.0.0.0");
 
 process.on("SIGTERM", () => {
-  server.close(() => process.exit(0));
+  // Allow Kubernetes endpoint removal to propagate before closing listeners.
+  setTimeout(() => server.close(() => process.exit(0)), 500);
 });
