@@ -58,6 +58,10 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	if rollout == nil || measurementValue(rollout.Measurements, "source_version") != "a" || measurementValue(rollout.Measurements, "target_version") != "b" || measurementValue(rollout.Measurements, "version_transitions") != "1" {
 		t.Fatalf("missing rolling deployment evidence: %#v", rollout)
 	}
+	shutdown := evidenceByID(outcome.Run.Evidence, "graceful-shutdown")
+	if shutdown == nil || measurementValue(shutdown.Measurements, "in_flight_requests") == "0" {
+		t.Fatalf("shutdown did not synchronize with an in-flight request: %#v", shutdown)
+	}
 	if len(calls) != 22 || !containsArgument(calls[len(calls)-3].Args, "delete") || !containsArgument(calls[len(calls)-2].Args, "rm") || !containsArgument(calls[len(calls)-1].Args, "rm") {
 		t.Fatalf("unexpected command lifecycle: %#v", calls)
 	}
@@ -335,6 +339,23 @@ func TestRollingDeploymentCommandFailureIsExecutionError(t *testing.T) {
 	}
 }
 
+func TestRollingImageBuildFailureIsExecutionError(t *testing.T) {
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		result := successfulCommand(request)
+		if request.Name == "docker" && containsArgument(request.Args, "CLOUDFORGE_VERSION=b") {
+			result.ExitCode = 1
+			result.FailureType = model.FailureExit
+			result.Stderr = "fixture build failed"
+		}
+		return result
+	})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
+	if outcome.ExitCode != 2 || rollout == nil || rollout.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "rollout_image_build_failed") {
+		t.Fatalf("version B build failure should remain an execution error: %#v", outcome)
+	}
+}
+
 func TestPodDeleteErrorPreservesCollectedTraffic(t *testing.T) {
 	deleteCount := 0
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
@@ -362,7 +383,7 @@ func TestTrafficCancellationIsNotAnApplicationFailure(t *testing.T) {
 		cancel()
 		return 0, context.Canceled
 	}
-	observed := service.collectTraffic(ctx, "http://127.0.0.1:18080/ready", make(chan trafficSample, 1))
+	observed := service.collectTraffic(ctx, "http://127.0.0.1:18080/ready", make(chan trafficSample, 1), nil)
 	if observed.Requests != 0 || observed.Failures != 0 {
 		t.Fatalf("CloudForge cancellation was counted as application traffic: %#v", observed)
 	}

@@ -78,15 +78,22 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 
 	trafficCtx, stopTraffic := context.WithCancel(ctx)
 	sampled := make(chan trafficSample, 1)
+	started := make(chan time.Time, 1)
 	trafficDone := make(chan trafficObservation, 1)
-	go func() { trafficDone <- s.collectTraffic(trafficCtx, current.readinessURL, sampled) }()
-	if _, ok := waitForSample(ctx, sampled, time.Time{}); !ok {
+	go func() { trafficDone <- s.collectTraffic(trafficCtx, current.readinessURL, sampled, started) }()
+	initialSample, ok := waitForSample(ctx, sampled, time.Time{})
+	if !ok {
 		stopTraffic()
 		traffic := <-trafficDone
 		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_canceled", "Graceful shutdown was canceled before traffic started.", ctx.Err().Error(), traffic)
 	}
 
-	terminationStarted := time.Now()
+	terminationStarted, ok := waitForRequestStart(ctx, started, initialSample.CompletedAt)
+	if !ok {
+		stopTraffic()
+		traffic := <-trafficDone
+		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_canceled", "Graceful shutdown was canceled before an in-flight request started.", ctx.Err().Error(), traffic)
+	}
 	deleteResult := client.DeletePod(ctx, current.clusterName, namespace, podName)
 	terminationCompleted := time.Now()
 	if failed(deleteResult) {
@@ -153,7 +160,7 @@ shutdownComplete:
 func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Client, client *kubernetes.Client, current plan, buildResult model.CommandResult) recoveryOutcome {
 	title := "Rolling deployment under traffic"
 	if failed(buildResult) {
-		return lifecycleFailure("rolling-deployment", title, "runtime.rolling-deployment", "Version B could not be built for the rolling deployment.", "Correct the version B container build before evaluating rollout behavior.", buildResult.DurationMS, trafficObservation{}, []model.Measurement{{Name: "version_b_build_duration_ms", Value: strconv.FormatInt(buildResult.DurationMS, 10), Unit: "ms"}})
+		return lifecycleExecutionError("rolling-deployment", title, "rollout_image_build_failed", "CloudForge could not build the version B image.", commandGuidance(buildResult, nil), trafficObservation{}, model.Measurement{Name: "version_b_build_duration_ms", Value: strconv.FormatInt(buildResult.DurationMS, 10), Unit: "ms"})
 	}
 	if result := k3dClient.ImportImage(ctx, current.clusterName, current.rolloutImage); failed(result) {
 		return lifecycleExecutionError("rolling-deployment", title, "rollout_image_import_failed", "k3d could not import the version B image.", commandGuidance(result, nil), trafficObservation{})
@@ -168,7 +175,7 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 	trafficCtx, stopTraffic := context.WithCancel(ctx)
 	sampled := make(chan trafficSample, 1)
 	trafficDone := make(chan trafficObservation, 1)
-	go func() { trafficDone <- s.collectTraffic(trafficCtx, current.readinessURL, sampled) }()
+	go func() { trafficDone <- s.collectTraffic(trafficCtx, current.readinessURL, sampled, nil) }()
 	if _, ok := waitForSample(ctx, sampled, time.Time{}); !ok {
 		stopTraffic()
 		traffic := <-trafficDone
@@ -275,7 +282,7 @@ func (s *Service) runPodRecovery(ctx context.Context, client *kubernetes.Client,
 	trafficCtx, stopTraffic := context.WithCancel(ctx)
 	sampled := make(chan trafficSample, 1)
 	trafficDone := make(chan trafficObservation, 1)
-	go func() { trafficDone <- s.collectTraffic(trafficCtx, current.readinessURL, sampled) }()
+	go func() { trafficDone <- s.collectTraffic(trafficCtx, current.readinessURL, sampled, nil) }()
 	select {
 	case <-sampled:
 	case <-ctx.Done():
@@ -379,13 +386,19 @@ complete:
 	return outcome
 }
 
-func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<- trafficSample) trafficObservation {
+func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<- trafficSample, started chan<- time.Time) trafficObservation {
 	result := trafficObservation{}
 	ticker := time.NewTicker(s.trafficPoll)
 	defer ticker.Stop()
 	var failureStarted time.Time
 	for {
 		requestStarted := time.Now()
+		if started != nil {
+			select {
+			case started <- requestStarted:
+			default:
+			}
+		}
 		status, err := s.probe(ctx, url)
 		now := time.Now()
 		if ctx.Err() != nil {
@@ -419,6 +432,19 @@ func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<-
 			}
 			return result
 		case <-ticker.C:
+		}
+	}
+}
+
+func waitForRequestStart(ctx context.Context, started <-chan time.Time, after time.Time) (time.Time, bool) {
+	for {
+		select {
+		case value := <-started:
+			if value.After(after) {
+				return value, true
+			}
+		case <-ctx.Done():
+			return time.Time{}, false
 		}
 	}
 }
@@ -492,14 +518,16 @@ func lifecycleFailure(experimentID, title, findingID, summary, guidance string, 
 	return recoveryOutcome{Evidence: evidence, Finding: &finding, Diagnostic: &diagnostic, ExitCode: 1}
 }
 
-func lifecycleExecutionError(experimentID, title, code, summary, guidance string, traffic trafficObservation) recoveryOutcome {
+func lifecycleExecutionError(experimentID, title, code, summary, guidance string, traffic trafficObservation, additional ...model.Measurement) recoveryOutcome {
+	measurements := []model.Measurement{
+		{Name: "request_count", Value: strconv.Itoa(traffic.Requests), Unit: "requests"},
+		{Name: "failed_requests", Value: strconv.Itoa(traffic.Failures), Unit: "requests"},
+		{Name: "downtime_ms", Value: strconv.FormatInt(traffic.MaxDowntimeMS, 10), Unit: "ms"},
+	}
+	measurements = append(measurements, additional...)
 	evidence := model.Evidence{
 		ExperimentID: experimentID, Title: title, Status: model.StatusError, Summary: summary,
-		Measurements: []model.Measurement{
-			{Name: "request_count", Value: strconv.Itoa(traffic.Requests), Unit: "requests"},
-			{Name: "failed_requests", Value: strconv.Itoa(traffic.Failures), Unit: "requests"},
-			{Name: "downtime_ms", Value: strconv.FormatInt(traffic.MaxDowntimeMS, 10), Unit: "ms"},
-		},
+		Measurements: measurements,
 	}
 	diagnostic := model.Diagnostic{Code: code, Status: model.StatusError, Message: summary, Guidance: guidance}
 	return recoveryOutcome{Evidence: evidence, Diagnostic: &diagnostic, ExitCode: 2}
