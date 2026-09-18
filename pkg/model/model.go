@@ -179,11 +179,11 @@ type Finding struct {
 	Status      Status           `json:"status"`
 	Severity    Severity         `json:"severity"`
 	Summary     string           `json:"summary"`
-	Observed    string           `json:"observed,omitempty"`
-	Expected    string           `json:"expected,omitempty"`
-	Remediation string           `json:"remediation,omitempty"`
-	DurationMS  int64            `json:"duration_ms,omitempty"`
-	Source      *SourceReference `json:"source,omitempty"`
+	Observed    string           `json:"observed"`
+	Expected    string           `json:"expected"`
+	Remediation string           `json:"remediation"`
+	DurationMS  int64            `json:"duration_ms"`
+	Source      *SourceReference `json:"source"`
 }
 
 // FailureType classifies command execution failures.

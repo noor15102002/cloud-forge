@@ -20,9 +20,10 @@ issues rather than an exhaustive task list.
 
 ## v0.3 — Regression Engine
 
-- [ ] Stabilize the verification evidence schema and JSON report.
+- [x] Stabilize the verification evidence schema and JSON report.
+- [x] Render concise terminal and pull-request-ready Markdown verification reports.
 - [ ] Load explicit baseline files and compare measurements and statuses.
-- [ ] Render terminal and Markdown regression reports.
+- [ ] Add baseline regression sections to terminal and Markdown reports.
 
 ## v0.4 — GitHub Action
 

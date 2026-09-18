@@ -13,7 +13,7 @@ The implemented slice contains:
 - `internal/executor`: Docker, k3d, kubectl, k6, and Trivy command adapters
 - `internal/findings`: deterministic container and Kubernetes configuration checks
 - `internal/verification`: generated workload planning and lifecycle orchestration
-- `internal/render`: text and JSON serialization
+- `internal/render`: canonical JSON plus terminal and Markdown reports
 - `pkg/model`: versioned output contracts
 
 The analyzer never executes repository code. It uses structured JSON and TOML
@@ -34,7 +34,7 @@ flowchart LR
     Executor --> Runner
     Analyzer --> Model[Versioned models]
     Doctor --> Model
-    Model --> Render[Text / JSON renderer]
+    Model --> Render[Text / JSON / Markdown renderer]
 ```
 
 Verification generates one narrowly scoped Kubernetes workload from
@@ -60,3 +60,11 @@ bounded k6 profile against the loopback endpoint. It normalizes request count,
 throughput, error rate, and P50/P95/P99 latency, while the Kubernetes adapter
 decodes official HPA status types to record starting and peak replicas. Missing
 metrics remain explicit skipped evidence with a diagnostic cause.
+
+Verification JSON is canonicalized on a copy of the result before encoding:
+evidence, measurements, findings, and diagnostics use complete deterministic
+sort keys. The checked-in `v1alpha1` JSON Schema defines required fields and
+enums. Terminal output summarizes experiments and actionable findings, while
+Markdown includes detailed collapsible measurements and findings for later PR
+comment integration. Repository-derived Markdown text is escaped before output;
+the canonical JSON retains the complete result when display limits apply.

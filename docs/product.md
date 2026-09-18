@@ -13,8 +13,9 @@ measured container-build and Deployment-readiness evidence in an isolated k3d
 cluster. It also measures HTTP readiness, pod replacement, graceful shutdown,
 and version-to-version rolling deployment behavior under continuous traffic.
 It also runs a bounded deterministic k6 profile and observes CPU-based HPA
-scale-up when the repository declares one. Baseline comparison remains on the
-roadmap.
+scale-up when the repository declares one. Results are available as concise
+terminal output, canonical versioned JSON, or pull-request-ready Markdown.
+Baseline comparison remains on the roadmap.
 
 CloudForge is not a deployment platform, CI system, static Kubernetes linter,
 generic security scanner, hosted dashboard, or AI decision engine.

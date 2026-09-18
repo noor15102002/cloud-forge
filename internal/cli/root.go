@@ -140,7 +140,7 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 	var format string
 	var keepEnvironment bool
 	cmd := &cobra.Command{Use: "verify [path]", Short: "Build and verify an application in a disposable k3d cluster", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		if err := validateFormat(format); err != nil {
+		if err := validateVerificationFormat(format); err != nil {
 			return &exitError{code: 2, err: err}
 		}
 		path := "."
@@ -151,9 +151,12 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 		outcome := verification.New(runner).Run(cmd.Context(), path, verification.Options{KeepEnvironment: keepEnvironment})
 		logger().Debug("verification completed", "status", outcome.Run.Status, "evidence", len(outcome.Run.Evidence))
 		var err error
-		if format == "json" {
+		switch format {
+		case "json":
 			err = render.JSON(stdout, outcome.Run)
-		} else {
+		case "markdown":
+			err = render.VerificationMarkdown(stdout, outcome.Run)
+		default:
 			err = render.VerificationText(stdout, outcome.Run)
 		}
 		if err != nil {
@@ -164,7 +167,7 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 		}
 		return nil
 	}}
-	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, or markdown")
 	cmd.Flags().BoolVar(&keepEnvironment, "keep-environment", false, "keep the k3d cluster after verification")
 	return cmd
 }
@@ -205,6 +208,13 @@ func newAnalyzeCommand(stdout io.Writer, logger func() *slog.Logger) *cobra.Comm
 func validateFormat(value string) error {
 	if value != "text" && value != "json" {
 		return fmt.Errorf("unsupported format %q; use text or json", strings.TrimSpace(value))
+	}
+	return nil
+}
+
+func validateVerificationFormat(value string) error {
+	if value != "text" && value != "json" && value != "markdown" {
+		return fmt.Errorf("unsupported format %q; use text, json, or markdown", strings.TrimSpace(value))
 	}
 	return nil
 }

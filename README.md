@@ -9,8 +9,8 @@ regression reporting.
 > repository analysis, and a first Docker-to-k3d readiness verification path.
 > Analysis includes normalized container and Kubernetes configuration findings;
 > verification adds normalized Trivy findings, bounded k6 load measurements,
-> and HPA scaling evidence. Reports, baselines, and the distributable GitHub
-> Action remain planned.
+> HPA scaling evidence, and stable terminal, JSON, and Markdown reports.
+> Baseline comparison and the distributable GitHub Action remain planned.
 
 ## Why CloudForge
 
@@ -50,6 +50,7 @@ cloudforge analyze .
 cloudforge analyze ./services/api --format json
 cloudforge verify .
 cloudforge verify ./services/api --format json
+cloudforge verify ./services/api --format markdown
 ```
 
 `analyze` supports application roots containing Node.js, TypeScript, or Python
@@ -59,8 +60,12 @@ yet. It reports source-linked findings for container users and ports, probes,
 replicas, resources, Service ports, and HPA ranges. It does not execute
 repository code.
 
-JSON output uses the versioned `v1alpha1` schema. Collections are sorted for
-repeatable output; consumers must not depend on JSON object key ordering.
+JSON output is the canonical report and uses the versioned `v1alpha1` schema
+defined in [`schemas/verification.v1alpha1.schema.json`](schemas/verification.v1alpha1.schema.json).
+Collections are sorted for repeatable output; consumers must not depend on JSON
+object key ordering. Verification also supports concise terminal output and a
+Markdown report suitable for a pull-request comment.
+See [the reporting guide](docs/reporting.md) for the format contracts.
 
 `verify` builds the root Dockerfile, creates a uniquely named k3d cluster,
 imports the image, deploys a generated Namespace, Deployment, and Service, and

@@ -47,3 +47,8 @@ preserved separately. CloudForge does not yet impose a vulnerability threshold.
 
 Subprocesses use executable and argument arrays rather than shell command
 strings. Logs must never contain tokens, credentials, or full environments.
+
+Markdown reports escape repository-derived text, inline HTML, links, and
+mentions before producing content intended for a pull-request comment. JSON
+retains the original normalized values and should be treated as data by
+consumers.
