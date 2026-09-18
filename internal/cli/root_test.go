@@ -237,7 +237,7 @@ func TestReportRejectsMalformedJSON(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	code := Execute(context.Background(), []string{"report", path, "--format", "markdown"}, &stdout, &stderr)
-	if code != 2 || stdout.Len() != 0 || !bytes.Contains(stderr.Bytes(), []byte("does not satisfy")) {
+	if code != 2 || stdout.Len() != 0 || !bytes.Contains(stderr.Bytes(), []byte("does not satisfy")) || bytes.Contains(stderr.Bytes(), []byte("baseline")) {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }

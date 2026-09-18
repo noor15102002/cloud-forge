@@ -28,7 +28,7 @@ inputs:
     required: false
     default: ""
   artifact-name:
-    description: Name for the uploaded JSON and Markdown report artifact.
+    description: Name for the uploaded JSON and Markdown report artifact. Keep the default when using the bundled pull-request reporter.
     required: false
     default: cloudforge-verification
   retention-days:

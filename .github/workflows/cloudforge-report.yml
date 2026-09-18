@@ -27,6 +27,9 @@ jobs:
           persist-credentials: false
 
       - name: Download untrusted verification artifact as data
+        # The bundled reporter intentionally consumes the verification action's
+        # default artifact name. Custom artifact names require a corresponding
+        # repository-specific reporting workflow.
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cloudforge-verification

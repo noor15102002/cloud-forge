@@ -40,9 +40,31 @@ The action accepts either `baseline-path` or `baseline-run-id`. A local path is
 appropriate when the workflow has already obtained or checked out a trusted
 baseline. `baseline-run-id` downloads `verification.json` from the configured
 `baseline-artifact-name` through the commit-pinned official download action.
-It also requires an explicit read-only `github-token` input:
+It also requires an explicit token with `actions: read`. This complete manual
+workflow keeps selection of the baseline run in a trusted workflow input:
 
 ```yaml
+name: CloudForge with baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      trusted_baseline_run_id:
+        description: Successful default-branch Runtime integration run ID
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       - uses: noor15102002/cloud-forge@FULL_40_CHARACTER_COMMIT_SHA
         with:
           path: .
@@ -80,6 +102,11 @@ shows the complete pattern:
 The reporter never executes code from the pull request and never trusts the
 uploaded Markdown artifact. Concurrency is grouped by pull request to prevent
 two completed runs from racing to create duplicate comments.
+
+The checked-in reporter consumes the default `cloudforge-verification`
+artifact name. Keep that default when using the bundled workflow. Repositories
+that set `artifact-name` must use the same name in their own trusted reporting
+workflow.
 
 ## Outputs
 
