@@ -4,7 +4,11 @@ const marker = '<!-- cloudforge-verification-report:v1alpha1 -->'
 const maximumBodyBytes = 60_000
 
 function validatePullRequestNumber(value) {
-  const number = Number(value)
+  const text = String(value)
+  if (!/^[1-9][0-9]*$/.test(text)) {
+    throw new Error(`invalid pull request number: ${value}`)
+  }
+  const number = Number(text)
   if (!Number.isSafeInteger(number) || number <= 0) {
     throw new Error(`invalid pull request number: ${value}`)
   }
@@ -24,7 +28,17 @@ async function updateComment({ github, owner, repo, pullRequestNumber, body }) {
   const issueNumber = validatePullRequestNumber(pullRequestNumber)
   validateBody(body)
 
-  const authenticated = await github.rest.users.getAuthenticated()
+  let authenticatedLogin = 'github-actions[bot]'
+  try {
+    const result = await github.graphql('query CloudForgeViewer { viewer { login } }')
+    if (result && result.viewer && typeof result.viewer.login === 'string') {
+      authenticatedLogin = result.viewer.login
+    }
+  } catch {
+    // Installation tokens cannot call users.getAuthenticated. The standard
+    // Actions bot login remains a safe ownership fallback.
+  }
+  authenticatedLogin = authenticatedLogin.toLowerCase()
   const comments = await github.paginate(github.rest.issues.listComments, {
     owner,
     repo,
@@ -33,7 +47,8 @@ async function updateComment({ github, owner, repo, pullRequestNumber, body }) {
   })
   const owned = comments.filter((comment) =>
     comment.user &&
-    comment.user.id === authenticated.data.id &&
+    typeof comment.user.login === 'string' &&
+    comment.user.login.toLowerCase() === authenticatedLogin &&
     typeof comment.body === 'string' &&
     comment.body.startsWith(marker)
   )
