@@ -3,6 +3,13 @@
 `cloudforge verify` writes one report to standard output. Operational logs stay
 on standard error, so reports can be redirected without contamination.
 
+`cloudforge report <verification.json> --format text|json|markdown` validates a
+saved report against the bounded `v1alpha1` contract and renders it without
+analyzing, building, or executing repository code. The trusted GitHub reporter
+uses this command for pull-request artifacts. Its exit status describes loading
+and rendering only; the original run and comparison statuses remain in the
+report.
+
 ## JSON
 
 Use `--format json` for automation. JSON is the canonical `v1alpha1` contract;

@@ -23,6 +23,8 @@ jobs:
         run: test -z "$(gofmt -l cmd internal pkg)"
       - name: Test
         run: go test -race ./...
+      - name: Test pull request reporter
+        run: node --test .github/actions/report/comment.test.cjs
       - name: Vet
         run: go vet ./...
       - name: Install analysis tools
@@ -30,8 +32,11 @@ jobs:
           # Pinned post-v2.9 commit includes Go 1.27 export-data support.
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@5573d88ff78251eba05ca31a1d5f530f3b02eb89
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          go install github.com/rhysd/actionlint/cmd/actionlint@03d0035246f3e81f36aed592ffb4bebf33a03106
       - name: Lint
         run: golangci-lint run
+      - name: Validate GitHub Actions
+        run: actionlint
       - name: Check known Go vulnerabilities
         run: govulncheck ./...
       - name: Build

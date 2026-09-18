@@ -1,4 +1,4 @@
-.PHONY: build check fmt test vet lint vuln
+.PHONY: actions build check fmt test vet lint vuln
 
 build:
 	go build -o bin/cloudforge ./cmd/cloudforge
@@ -18,4 +18,8 @@ lint:
 vuln:
 	govulncheck ./...
 
-check: test vet lint vuln build
+actions:
+	node --test .github/actions/report/comment.test.cjs
+	actionlint
+
+check: test vet lint vuln actions build

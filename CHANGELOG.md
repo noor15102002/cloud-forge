@@ -11,6 +11,9 @@ Versioning once releases begin.
 - Added canonical verification JSON, a versioned JSON Schema, concise terminal summaries, and pull-request-ready Markdown reports.
 - Added strict explicit baseline files with deterministic status and normalized measurement comparison.
 - Added separate regression, improvement, and unavailable sections to JSON, terminal, and Markdown reports.
+- Added a composite Ubuntu verification action with pinned runtime tools and JSON/Markdown artifacts.
+- Added a trust-separated workflow that validates untrusted report JSON before updating one bot-owned pull-request comment.
+- Added `cloudforge report` for safe rendering of saved verification JSON without repository execution.
 
 ### Added
 

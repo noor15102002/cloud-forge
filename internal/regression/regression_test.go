@@ -142,7 +142,7 @@ func TestEmbeddedSchemaMatchesPublicContract(t *testing.T) {
 
 func TestLoadRejectsOversizedBaseline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "baseline.json")
-	if err := os.WriteFile(path, []byte(strings.Repeat(" ", maxBaselineBytes+1)), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Repeat(" ", maxReportBytes+1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "exceeds") {

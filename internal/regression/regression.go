@@ -1,5 +1,6 @@
-// Package regression loads explicit verification baselines and compares them
-// with current runtime evidence without depending on an artifact provider.
+// Package regression loads verification reports and compares explicit
+// baselines with current runtime evidence without depending on an artifact
+// provider.
 package regression
 
 import (
@@ -19,7 +20,7 @@ import (
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-const maxBaselineBytes = 4 << 20
+const maxReportBytes = 4 << 20
 
 //go:embed verification.v1alpha1.schema.json
 var verificationSchema []byte
@@ -59,56 +60,56 @@ var measurementPolicies = map[string]measurementPolicy{
 
 // Load reads one bounded, strict, version-compatible verification report.
 func Load(path string) (model.VerificationRun, error) {
-	file, err := os.Open(path) // #nosec G304 -- the caller explicitly supplies the baseline path.
+	file, err := os.Open(path) // #nosec G304 -- the caller explicitly supplies the report path.
 	if err != nil {
-		return model.VerificationRun{}, fmt.Errorf("open baseline %q: %w", path, err)
+		return model.VerificationRun{}, fmt.Errorf("open verification report %q: %w", path, err)
 	}
 	defer func() { _ = file.Close() }()
 
 	info, err := file.Stat()
 	if err != nil {
-		return model.VerificationRun{}, fmt.Errorf("inspect baseline %q: %w", path, err)
+		return model.VerificationRun{}, fmt.Errorf("inspect verification report %q: %w", path, err)
 	}
 	if !info.Mode().IsRegular() {
-		return model.VerificationRun{}, fmt.Errorf("baseline %q is not a regular file", path)
+		return model.VerificationRun{}, fmt.Errorf("verification report %q is not a regular file", path)
 	}
-	data, err := io.ReadAll(io.LimitReader(file, maxBaselineBytes+1))
+	data, err := io.ReadAll(io.LimitReader(file, maxReportBytes+1))
 	if err != nil {
-		return model.VerificationRun{}, fmt.Errorf("read baseline %q: %w", path, err)
+		return model.VerificationRun{}, fmt.Errorf("read verification report %q: %w", path, err)
 	}
-	if len(data) > maxBaselineBytes {
-		return model.VerificationRun{}, fmt.Errorf("baseline %q exceeds the %d-byte limit", path, maxBaselineBytes)
+	if len(data) > maxReportBytes {
+		return model.VerificationRun{}, fmt.Errorf("verification report %q exceeds the %d-byte limit", path, maxReportBytes)
 	}
 	var identity struct {
 		SchemaVersion string `json:"schema_version"`
 	}
 	if err := json.Unmarshal(data, &identity); err != nil {
-		return model.VerificationRun{}, fmt.Errorf("decode baseline %q: %w", path, err)
+		return model.VerificationRun{}, fmt.Errorf("decode verification report %q: %w", path, err)
 	}
 	if identity.SchemaVersion != model.SchemaVersion {
-		return model.VerificationRun{}, fmt.Errorf("baseline schema version %q is unsupported; expected %q", identity.SchemaVersion, model.SchemaVersion)
+		return model.VerificationRun{}, fmt.Errorf("verification report schema version %q is unsupported; expected %q", identity.SchemaVersion, model.SchemaVersion)
 	}
 	if err := validateSchema(data); err != nil {
-		return model.VerificationRun{}, fmt.Errorf("baseline %q does not satisfy the %s schema: %w", path, model.SchemaVersion, err)
+		return model.VerificationRun{}, fmt.Errorf("verification report %q does not satisfy the %s schema: %w", path, model.SchemaVersion, err)
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var baseline model.VerificationRun
 	if err := decoder.Decode(&baseline); err != nil {
-		return model.VerificationRun{}, fmt.Errorf("decode baseline %q: %w", path, err)
+		return model.VerificationRun{}, fmt.Errorf("decode verification report %q: %w", path, err)
 	}
 	if err := requireJSONEnd(decoder); err != nil {
-		return model.VerificationRun{}, fmt.Errorf("decode baseline %q: %w", path, err)
+		return model.VerificationRun{}, fmt.Errorf("decode verification report %q: %w", path, err)
 	}
 	if baseline.RunID == "" || baseline.Evidence == nil {
-		return model.VerificationRun{}, errors.New("baseline is missing required run_id or evidence fields")
+		return model.VerificationRun{}, errors.New("verification report is missing required run_id or evidence fields")
 	}
 	if !validStatus(baseline.Status) {
-		return model.VerificationRun{}, fmt.Errorf("baseline has invalid status %q", baseline.Status)
+		return model.VerificationRun{}, fmt.Errorf("verification report has invalid status %q", baseline.Status)
 	}
 	if err := validateEvidence(baseline.Evidence); err != nil {
-		return model.VerificationRun{}, fmt.Errorf("baseline is invalid: %w", err)
+		return model.VerificationRun{}, fmt.Errorf("verification report is invalid: %w", err)
 	}
 	return baseline, nil
 }

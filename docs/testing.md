@@ -42,3 +42,10 @@ duplicate evidence, status ordering, metric direction, missing measurements,
 and separation of current findings from relative changes. CLI tests confirm an
 invalid baseline prevents execution and a detected regression produces a full
 report with exit status `1`.
+
+GitHub integration tests execute the packaged composite action against the real
+healthy fixture and continue to exercise the intentionally broken shutdown and
+rollout fixtures with its built binary. Node's built-in test runner covers
+marker validation, comment size limits, create-versus-update behavior, owner
+checks, and duplicate bot-comment cleanup. Workflow and action YAML is parsed
+during CI before runtime integration.

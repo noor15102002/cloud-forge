@@ -18,6 +18,9 @@ terminal output, canonical versioned JSON, or pull-request-ready Markdown.
 An explicit previous report can be supplied to classify status and measurement
 regressions, improvements, and unavailable comparisons without coupling the
 core engine to an artifact provider.
+The GitHub Action packages this flow for Ubuntu, uploads both report formats,
+and publishes one stable pull-request comment through a separate trusted
+reporting workflow.
 
 CloudForge is not a deployment platform, CI system, static Kubernetes linter,
 generic security scanner, hosted dashboard, or AI decision engine.

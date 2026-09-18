@@ -9,9 +9,9 @@ regression reporting.
 > repository analysis, and a first Docker-to-k3d readiness verification path.
 > Analysis includes normalized container and Kubernetes configuration findings;
 > verification adds normalized Trivy findings, bounded k6 load measurements,
-> HPA scaling evidence, stable terminal, JSON, and Markdown reports, and
-> explicit baseline regression comparison. The distributable GitHub Action
-> remains planned.
+> HPA scaling evidence, stable terminal, JSON, and Markdown reports, explicit
+> baseline regression comparison, and a trust-separated GitHub Action with
+> artifact and pull-request reporting.
 
 ## Why CloudForge
 
@@ -53,6 +53,7 @@ cloudforge verify .
 cloudforge verify ./services/api --format json
 cloudforge verify ./services/api --format markdown
 cloudforge verify ./services/api --baseline ./baseline.json
+cloudforge report ./verification.json --format markdown
 ```
 
 `analyze` supports application roots containing Node.js, TypeScript, or Python
@@ -102,8 +103,11 @@ and scale-up duration. The generated HPA is capped at five replicas for local
 developer machines. Missing metrics produce explicit skipped evidence rather
 than an invented scaling result.
 
-The planned GitHub Action will upload reports and update one stable pull request
-comment. It is not included in the current slice.
+The packaged GitHub Action installs pinned runtime tools, uploads JSON and
+Markdown reports, supports explicitly selected baseline artifacts, and updates
+one stable pull-request comment through a separate trusted workflow. See the
+[GitHub Action guide](docs/github-action.md) for pinned usage and the fork
+security model.
 
 ## Security and limitations
 

@@ -1,0 +1,45 @@
+name: CloudForge pull request report
+
+on:
+  workflow_run:
+    workflows: [Runtime integration]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: cloudforge-report-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0].number != null }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out trusted default-branch reporter
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Download untrusted verification artifact as data
+        # The bundled reporter intentionally consumes the verification action's
+        # default artifact name. Custom artifact names require a corresponding
+        # repository-specific reporting workflow.
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cloudforge-verification
+          path: ${{ runner.temp }}/cloudforge-artifact
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Publish stable CloudForge report
+        uses: ./.github/actions/report
+        with:
+          report-path: ${{ runner.temp }}/cloudforge-artifact/verification.json
+          pull-request-number: ${{ github.event.workflow_run.pull_requests[0].number }}
+          github-token: ${{ github.token }}

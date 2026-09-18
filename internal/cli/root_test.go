@@ -214,6 +214,34 @@ func TestMarkdownFormatIsLimitedToVerification(t *testing.T) {
 	}
 }
 
+func TestReportRendersValidatedJSONWithoutExecution(t *testing.T) {
+	path := filepath.Join("..", "render", "testdata", "verification.json")
+	var stdout, stderr bytes.Buffer
+	root := newRootCommand(&stdout, &stderr, cliRunnerFunc(func(_ context.Context, _ command.Request) model.CommandResult {
+		t.Fatal("report must not execute subprocesses")
+		return model.CommandResult{}
+	}))
+	root.SetArgs([]string{"report", path, "--format", "markdown"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("report failed: %v stderr=%q", err, stderr.String())
+	}
+	if !bytes.HasPrefix(stdout.Bytes(), []byte("<!-- cloudforge-verification-report:v1alpha1 -->")) || !bytes.Contains(stdout.Bytes(), []byte("### Baseline comparison")) {
+		t.Fatalf("unexpected rendered report:\n%s", stdout.String())
+	}
+}
+
+func TestReportRejectsMalformedJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":"v1alpha1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Execute(context.Background(), []string{"report", path, "--format", "markdown"}, &stdout, &stderr)
+	if code != 2 || stdout.Len() != 0 || !bytes.Contains(stderr.Bytes(), []byte("does not satisfy")) || bytes.Contains(stderr.Bytes(), []byte("baseline")) {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
 func containsCLIArgument(arguments []string, wanted string) bool {
 	for _, argument := range arguments {
 		if argument == wanted {

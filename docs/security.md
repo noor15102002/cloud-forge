@@ -11,10 +11,25 @@ version, kind, name, namespace, and source location. Command output used by
 
 Verification executes Docker builds and application code in a disposable local
 k3d cluster. Operators must assume that a verified repository can execute
-arbitrary code through its Dockerfile and container entry point. Run it only on
-trusted repositories. The integration workflow uses no repository secrets and
-has read-only repository permissions; fork pull requests must not receive
-credentials or privileged infrastructure.
+arbitrary code through its Dockerfile and container entry point. Local users
+should run it only for repositories they trust. The GitHub verification job
+uses no repository secrets, has read-only repository permissions, and checks
+out pull requests without persisted credentials. Fork pull requests do not
+receive write credentials or privileged infrastructure.
+
+Pull-request comments use a separate `workflow_run` job whose definition and
+reporter code come from the trusted default branch. That job receives only
+`actions: read`, `contents: read`, and `pull-requests: write`. It downloads the
+pull-request artifact as untrusted data, validates the complete bounded JSON
+schema, and regenerates escaped Markdown before calling GitHub. It never
+executes the pull request's Dockerfile, scripts, binary, or uploaded Markdown.
+The standard GitHub token is passed only to official artifact download and
+comment steps.
+
+Cross-run baseline download is opt-in and requires a caller-selected run ID and
+an explicit read-only token. Use it only from a trusted pinned workflow, and
+select successful default-branch runs. The token is scoped to the download step
+and is not passed to application verification.
 
 CloudForge generates a Namespace, Deployment, and Service from analyzed
 metadata. It does not apply source manifests or copy Secret, ConfigMap, or
