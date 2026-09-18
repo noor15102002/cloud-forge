@@ -15,7 +15,8 @@
     "environment": {"$ref": "#/$defs/environment"},
     "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
     "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
-    "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+    "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}},
+    "comparison": {"$ref": "#/$defs/comparison"}
   },
   "$defs": {
     "status": {"enum": ["pass", "warn", "fail", "skipped", "error"]},
@@ -80,6 +81,44 @@
         "summary": {"type": "string"},
         "duration_ms": {"type": "integer", "minimum": 0},
         "measurements": {"type": "array", "items": {"$ref": "#/$defs/measurement"}}
+      }
+    },
+    "comparisonKind": {"enum": ["status", "measurement"]},
+    "comparisonChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["experiment_id", "kind", "baseline", "current", "summary"],
+      "properties": {
+        "experiment_id": {"type": "string"},
+        "kind": {"$ref": "#/$defs/comparisonKind"},
+        "measurement": {"type": "string"},
+        "baseline": {"type": "string"},
+        "current": {"type": "string"},
+        "unit": {"type": "string"},
+        "summary": {"type": "string"}
+      }
+    },
+    "comparisonUnavailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["experiment_id", "kind", "reason"],
+      "properties": {
+        "experiment_id": {"type": "string"},
+        "kind": {"$ref": "#/$defs/comparisonKind"},
+        "measurement": {"type": "string"},
+        "reason": {"type": "string"}
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline_run_id", "status"],
+      "properties": {
+        "baseline_run_id": {"type": "string"},
+        "status": {"$ref": "#/$defs/status"},
+        "regressions": {"type": "array", "items": {"$ref": "#/$defs/comparisonChange"}},
+        "improvements": {"type": "array", "items": {"$ref": "#/$defs/comparisonChange"}},
+        "unavailable": {"type": "array", "items": {"$ref": "#/$defs/comparisonUnavailable"}}
       }
     },
     "environment": {

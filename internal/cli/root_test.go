@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -89,6 +90,97 @@ func TestVerifyMarkdownReport(t *testing.T) {
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("<!-- cloudforge-verification-report:v1alpha1 -->")) || !bytes.Contains(stdout.Bytes(), []byte("## CloudForge verification")) {
 		t.Fatalf("unexpected Markdown report:\n%s", stdout.String())
+	}
+}
+
+func TestVerifyBaselineRegressionProducesReportAndExitOne(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "package.json"), []byte(`{"name":"cli-test"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "Dockerfile"), []byte("FROM node:22-alpine\nUSER node\nEXPOSE 8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := successfulCLIRunner()
+	var initialOutput, initialError bytes.Buffer
+	initial := newRootCommand(&initialOutput, &initialError, runner)
+	initial.SetArgs([]string{"verify", directory, "--format", "json"})
+	if err := initial.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("initial verify failed: %v stderr=%q", err, initialError.String())
+	}
+	var baseline model.VerificationRun
+	if err := json.Unmarshal(initialOutput.Bytes(), &baseline); err != nil {
+		t.Fatal(err)
+	}
+	baselinePath := filepath.Join(t.TempDir(), "baseline.json")
+	baselineData, err := json.Marshal(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(baselinePath, baselineData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	root := newRootCommand(&stdout, &stderr, cliTestRunner(true))
+	root.SetArgs([]string{"verify", directory, "--format", "json", "--baseline", baselinePath})
+	err = root.ExecuteContext(context.Background())
+	var coded *exitError
+	if !errors.As(err, &coded) || coded.code != 1 {
+		t.Fatalf("expected regression exit code 1, got %v", err)
+	}
+	var current model.VerificationRun
+	if err := json.Unmarshal(stdout.Bytes(), &current); err != nil {
+		t.Fatalf("invalid comparison JSON: %v\n%s", err, stdout.String())
+	}
+	if current.Status != model.StatusWarn || current.Comparison == nil || current.Comparison.Status != model.StatusFail || len(current.Comparison.Regressions) == 0 {
+		t.Fatalf("absolute and regression outcomes were not kept separate: %#v", current)
+	}
+}
+
+func TestVerifyRejectsInvalidBaselineBeforeExecution(t *testing.T) {
+	baselinePath := filepath.Join(t.TempDir(), "baseline.json")
+	if err := os.WriteFile(baselinePath, []byte(`{"schema_version":"future"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		calls++
+		return model.CommandResult{Command: request.Name}
+	})
+	var stdout, stderr bytes.Buffer
+	root := newRootCommand(&stdout, &stderr, runner)
+	root.SetArgs([]string{"verify", ".", "--baseline", baselinePath})
+	var coded *exitError
+	if err := root.ExecuteContext(context.Background()); !errors.As(err, &coded) || coded.code != 2 {
+		t.Fatalf("expected baseline usage error, got %v", err)
+	}
+	if calls != 0 || stdout.Len() != 0 {
+		t.Fatalf("invalid baseline executed commands or wrote a report: calls=%d stdout=%q", calls, stdout.String())
+	}
+}
+
+func successfulCLIRunner() cliRunnerFunc {
+	return cliTestRunner(false)
+}
+
+func cliTestRunner(vulnerable bool) cliRunnerFunc {
+	return func(_ context.Context, request command.Request) model.CommandResult {
+		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		if request.Name == "trivy" {
+			if vulnerable {
+				result.Stdout = `{"Results":[{"Target":"image","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libc","InstalledVersion":"1","Severity":"HIGH"}]}]}`
+			} else {
+				result.Stdout = `{"Results":[]}`
+			}
+		}
+		if request.Name == "k6" {
+			result.Stdout = `{"metrics":{"http_reqs":{"values":{"count":200,"rate":10}},"http_req_failed":{"values":{"rate":0}},"http_req_duration":{"values":{"med":10,"p(95)":20,"p(99)":30}}}}`
+		}
+		if containsCLIArgument(request.Args, "pods") {
+			result.Stdout = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"api"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
+		}
+		return result
 	}
 }
 

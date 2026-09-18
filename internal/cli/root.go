@@ -14,8 +14,10 @@ import (
 	"github.com/noor15102002/cloud-forge/internal/analyzer"
 	"github.com/noor15102002/cloud-forge/internal/command"
 	"github.com/noor15102002/cloud-forge/internal/doctor"
+	"github.com/noor15102002/cloud-forge/internal/regression"
 	"github.com/noor15102002/cloud-forge/internal/render"
 	"github.com/noor15102002/cloud-forge/internal/verification"
+	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
 var (
@@ -139,9 +141,20 @@ func newDoctorCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner command.Runner) *cobra.Command {
 	var format string
 	var keepEnvironment bool
+	var baselinePath string
 	cmd := &cobra.Command{Use: "verify [path]", Short: "Build and verify an application in a disposable k3d cluster", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateVerificationFormat(format); err != nil {
 			return &exitError{code: 2, err: err}
+		}
+		var baselineLoaded bool
+		var baseline model.VerificationRun
+		if baselinePath != "" {
+			var err error
+			baseline, err = regression.Load(baselinePath)
+			if err != nil {
+				return &exitError{code: 2, err: fmt.Errorf("CloudForge could not load the verification baseline: %w", err)}
+			}
+			baselineLoaded = true
 		}
 		path := "."
 		if len(args) == 1 {
@@ -149,6 +162,10 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 		}
 		logger().Info("starting application verification", "path", path, "keep_environment", keepEnvironment)
 		outcome := verification.New(runner).Run(cmd.Context(), path, verification.Options{KeepEnvironment: keepEnvironment})
+		if baselineLoaded {
+			comparison := regression.Compare(outcome.Run, baseline)
+			outcome.Run.Comparison = &comparison
+		}
 		logger().Debug("verification completed", "status", outcome.Run.Status, "evidence", len(outcome.Run.Evidence))
 		var err error
 		switch format {
@@ -165,10 +182,14 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 		if outcome.ExitCode != 0 {
 			return &exitError{code: outcome.ExitCode, err: fmt.Errorf("verification finished with status %s", outcome.Run.Status)}
 		}
+		if outcome.Run.Comparison != nil && outcome.Run.Comparison.Status == model.StatusFail {
+			return &exitError{code: 1, err: errors.New("verification contains baseline regressions")}
+		}
 		return nil
 	}}
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, or markdown")
 	cmd.Flags().BoolVar(&keepEnvironment, "keep-environment", false, "keep the k3d cluster after verification")
+	cmd.Flags().StringVar(&baselinePath, "baseline", "", "compare with an explicit v1alpha1 verification JSON file")
 	return cmd
 }
 

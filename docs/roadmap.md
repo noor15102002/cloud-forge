@@ -22,8 +22,8 @@ issues rather than an exhaustive task list.
 
 - [x] Stabilize the verification evidence schema and JSON report.
 - [x] Render concise terminal and pull-request-ready Markdown verification reports.
-- [ ] Load explicit baseline files and compare measurements and statuses.
-- [ ] Add baseline regression sections to terminal and Markdown reports.
+- [x] Load explicit baseline files and compare measurements and statuses.
+- [x] Add baseline regression sections to terminal and Markdown reports.
 
 ## v0.4 — GitHub Action
 

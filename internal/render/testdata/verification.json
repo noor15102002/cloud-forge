@@ -88,5 +88,38 @@
         "document": 2
       }
     }
-  ]
+  ],
+  "comparison": {
+    "baseline_run_id": "baseline-100",
+    "status": "fail",
+    "regressions": [
+      {
+        "experiment_id": "load-profile",
+        "kind": "measurement",
+        "measurement": "latency_p95_ms",
+        "baseline": "90.000",
+        "current": "120.000",
+        "unit": "ms",
+        "summary": "latency_p95_ms changed from 90.000 ms to 120.000 ms"
+      }
+    ],
+    "improvements": [
+      {
+        "experiment_id": "load-profile",
+        "kind": "measurement",
+        "measurement": "throughput_rps",
+        "baseline": "40.000",
+        "current": "50.000",
+        "unit": "requests/second",
+        "summary": "throughput_rps changed from 40.000 requests/second to 50.000 requests/second"
+      }
+    ],
+    "unavailable": [
+      {
+        "experiment_id": "horizontal-autoscaling",
+        "kind": "status",
+        "reason": "status comparison is unavailable for baseline pass and current skipped"
+      }
+    ]
+  }
 }

@@ -245,6 +245,43 @@ type Evidence struct {
 	Measurements []Measurement `json:"measurements,omitempty"`
 }
 
+// ComparisonKind identifies the field compared with a baseline report.
+type ComparisonKind string
+
+// Supported baseline comparison kinds.
+const (
+	ComparisonStatus      ComparisonKind = "status"
+	ComparisonMeasurement ComparisonKind = "measurement"
+)
+
+// ComparisonChange records one comparable change from a baseline run.
+type ComparisonChange struct {
+	ExperimentID string         `json:"experiment_id"`
+	Kind         ComparisonKind `json:"kind"`
+	Measurement  string         `json:"measurement,omitempty"`
+	Baseline     string         `json:"baseline"`
+	Current      string         `json:"current"`
+	Unit         string         `json:"unit,omitempty"`
+	Summary      string         `json:"summary"`
+}
+
+// ComparisonUnavailable explains why baseline evidence could not be compared.
+type ComparisonUnavailable struct {
+	ExperimentID string         `json:"experiment_id"`
+	Kind         ComparisonKind `json:"kind"`
+	Measurement  string         `json:"measurement,omitempty"`
+	Reason       string         `json:"reason"`
+}
+
+// BaselineComparison separates relative changes from absolute run findings.
+type BaselineComparison struct {
+	BaselineRunID string                  `json:"baseline_run_id"`
+	Status        Status                  `json:"status"`
+	Regressions   []ComparisonChange      `json:"regressions,omitempty"`
+	Improvements  []ComparisonChange      `json:"improvements,omitempty"`
+	Unavailable   []ComparisonUnavailable `json:"unavailable,omitempty"`
+}
+
 // VerificationEnvironment identifies disposable resources created for a run.
 type VerificationEnvironment struct {
 	Backend     string `json:"backend"`
@@ -266,4 +303,5 @@ type VerificationRun struct {
 	Findings      []Finding               `json:"findings,omitempty"`
 	Evidence      []Evidence              `json:"evidence"`
 	Diagnostics   []Diagnostic            `json:"diagnostics,omitempty"`
+	Comparison    *BaselineComparison     `json:"comparison,omitempty"`
 }

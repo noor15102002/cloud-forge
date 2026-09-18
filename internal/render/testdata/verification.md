@@ -21,6 +21,31 @@
 
 </details>
 
+### Baseline comparison
+
+**Status:** FAIL · **Baseline run:** baseline-100 · **Regressions:** 1 · **Improvements:** 1 · **Unavailable:** 1
+
+#### Regressions
+
+| Evidence | Baseline | Current | Change |
+|---|---:|---:|---|
+| load-profile/latency&#95;p95&#95;ms | 90&#46;000 ms | 120&#46;000 ms | latency&#95;p95&#95;ms changed from 90&#46;000 ms to 120&#46;000 ms |
+
+#### Improvements
+
+| Evidence | Baseline | Current | Change |
+|---|---:|---:|---|
+| load-profile/throughput&#95;rps | 40&#46;000 requests/second | 50&#46;000 requests/second | throughput&#95;rps changed from 40&#46;000 requests/second to 50&#46;000 requests/second |
+
+<details>
+<summary>Unavailable comparisons (showing 1 of 1)</summary>
+
+| Evidence | Reason |
+|---|---|
+| horizontal-autoscaling status | status comparison is unavailable for baseline pass and current skipped |
+
+</details>
+
 <details>
 <summary>Findings (2)</summary>
 

@@ -47,6 +47,9 @@ func TestMarkdownTextNeutralizesCommentMarkup(t *testing.T) {
 
 func TestVerificationJSONSortsCollectionsWithoutMutatingInput(t *testing.T) {
 	run := reportFixture()
+	run.Comparison.Regressions = append(run.Comparison.Regressions, model.ComparisonChange{ExperimentID: "container-scan", Kind: model.ComparisonStatus, Baseline: "pass", Current: "warn", Summary: "status changed from pass to warn"})
+	run.Comparison.Improvements = append(run.Comparison.Improvements, model.ComparisonChange{ExperimentID: "pod-recovery", Kind: model.ComparisonStatus, Baseline: "fail", Current: "pass", Summary: "status changed from fail to pass"})
+	run.Comparison.Unavailable = append(run.Comparison.Unavailable, model.ComparisonUnavailable{ExperimentID: "new-experiment", Kind: model.ComparisonStatus, Reason: "baseline does not contain this current experiment"})
 	originalFirstEvidence := run.Evidence[0].ExperimentID
 	var first, second bytes.Buffer
 	if err := JSON(&first, run); err != nil {
@@ -58,6 +61,9 @@ func TestVerificationJSONSortsCollectionsWithoutMutatingInput(t *testing.T) {
 	reverseEvidence(run.Evidence)
 	reverseFindings(run.Findings)
 	reverseDiagnostics(run.Diagnostics)
+	reverseComparisonChanges(run.Comparison.Regressions)
+	reverseComparisonChanges(run.Comparison.Improvements)
+	reverseUnavailable(run.Comparison.Unavailable)
 	for index := range run.Evidence {
 		reverseMeasurements(run.Evidence[index].Measurements)
 	}
@@ -120,6 +126,12 @@ func reportFixture() model.VerificationRun {
 			{ID: "container.startup", Category: "container", Status: model.StatusPass, Severity: model.SeverityInfo, Summary: "Application started.", Observed: "2/2 ready", Expected: "all replicas ready", DurationMS: 400},
 		},
 		Diagnostics: []model.Diagnostic{{Code: "hpa_metrics_unavailable", Status: model.StatusWarn, Message: "CPU metrics unavailable.", Guidance: "Check metrics-server.", Source: &model.SourceReference{Path: "deploy|app.yaml", Document: 2}}},
+		Comparison: &model.BaselineComparison{
+			BaselineRunID: "baseline-100", Status: model.StatusFail,
+			Regressions:  []model.ComparisonChange{{ExperimentID: "load-profile", Kind: model.ComparisonMeasurement, Measurement: "latency_p95_ms", Baseline: "90.000", Current: "120.000", Unit: "ms", Summary: "latency_p95_ms changed from 90.000 ms to 120.000 ms"}},
+			Improvements: []model.ComparisonChange{{ExperimentID: "load-profile", Kind: model.ComparisonMeasurement, Measurement: "throughput_rps", Baseline: "40.000", Current: "50.000", Unit: "requests/second", Summary: "throughput_rps changed from 40.000 requests/second to 50.000 requests/second"}},
+			Unavailable:  []model.ComparisonUnavailable{{ExperimentID: "horizontal-autoscaling", Kind: model.ComparisonStatus, Reason: "status comparison is unavailable for baseline pass and current skipped"}},
+		},
 	}
 }
 
@@ -182,6 +194,16 @@ func reverseDiagnostics(values []model.Diagnostic) {
 	}
 }
 func reverseMeasurements(values []model.Measurement) {
+	for left, right := 0, len(values)-1; left < right; left, right = left+1, right-1 {
+		values[left], values[right] = values[right], values[left]
+	}
+}
+func reverseComparisonChanges(values []model.ComparisonChange) {
+	for left, right := 0, len(values)-1; left < right; left, right = left+1, right-1 {
+		values[left], values[right] = values[right], values[left]
+	}
+}
+func reverseUnavailable(values []model.ComparisonUnavailable) {
 	for left, right := 0, len(values)-1; left < right; left, right = left+1, right-1 {
 		values[left], values[right] = values[right], values[left]
 	}

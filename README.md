@@ -9,8 +9,9 @@ regression reporting.
 > repository analysis, and a first Docker-to-k3d readiness verification path.
 > Analysis includes normalized container and Kubernetes configuration findings;
 > verification adds normalized Trivy findings, bounded k6 load measurements,
-> HPA scaling evidence, and stable terminal, JSON, and Markdown reports.
-> Baseline comparison and the distributable GitHub Action remain planned.
+> HPA scaling evidence, stable terminal, JSON, and Markdown reports, and
+> explicit baseline regression comparison. The distributable GitHub Action
+> remains planned.
 
 ## Why CloudForge
 
@@ -51,6 +52,7 @@ cloudforge analyze ./services/api --format json
 cloudforge verify .
 cloudforge verify ./services/api --format json
 cloudforge verify ./services/api --format markdown
+cloudforge verify ./services/api --baseline ./baseline.json
 ```
 
 `analyze` supports application roots containing Node.js, TypeScript, or Python
@@ -66,6 +68,14 @@ Collections are sorted for repeatable output; consumers must not depend on JSON
 object key ordering. Verification also supports concise terminal output and a
 Markdown report suitable for a pull-request comment.
 See [the reporting guide](docs/reporting.md) for the format contracts.
+
+Pass a previously saved verification JSON report with `--baseline`. CloudForge
+compares experiment statuses and normalized numeric measurements with an
+explicit quality direction, while keeping absolute findings separate from
+relative regressions. A detected regression exits with status `1`; missing,
+skipped, nonnumeric, or unit-incompatible evidence is reported as unavailable
+instead of being treated as a regression. Baselines are read before repository
+code executes and must be strict, bounded `v1alpha1` JSON files.
 
 `verify` builds the root Dockerfile, creates a uniquely named k3d cluster,
 imports the image, deploys a generated Namespace, Deployment, and Service, and
@@ -91,10 +101,6 @@ count, throughput, error rate, P50/P95/P99 latency, starting and peak replicas,
 and scale-up duration. The generated HPA is capped at five replicas for local
 developer machines. Missing metrics produce explicit skipped evidence rather
 than an invented scaling result.
-
-## Planned verification work
-
-- Baseline-to-pull-request regression comparison
 
 The planned GitHub Action will upload reports and update one stable pull request
 comment. It is not included in the current slice.
