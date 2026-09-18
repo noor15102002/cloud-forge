@@ -7,8 +7,9 @@ regression reporting.
 
 > **Current status:** CloudForge implements environment diagnostics, read-only
 > repository analysis, and a first Docker-to-k3d readiness verification path.
-> Broader experiments, reports, baselines, and the distributable GitHub Action
-> remain planned.
+> Analysis includes normalized container and Kubernetes configuration findings;
+> verification adds normalized Trivy vulnerability findings. Broader experiments,
+> reports, baselines, and the distributable GitHub Action remain planned.
 
 ## Why CloudForge
 
@@ -53,7 +54,9 @@ cloudforge verify ./services/api --format json
 `analyze` supports application roots containing Node.js, TypeScript, or Python
 metadata, root Dockerfiles, and plain Kubernetes Deployment, Service, and HPA
 manifests. It recognizes Helm and Compose but does not render or analyze them
-yet. It does not execute repository code.
+yet. It reports source-linked findings for container users and ports, probes,
+replicas, resources, Service ports, and HPA ranges. It does not execute
+repository code.
 
 JSON output uses the versioned `v1alpha1` schema. Collections are sorted for
 repeatable output; consumers must not depend on JSON object key ordering.
@@ -63,11 +66,15 @@ imports the image, deploys a generated Namespace, Deployment, and Service, and
 records build and readiness evidence. It deletes the cluster after success,
 failure, timeout, or cancellation. Use `--keep-environment` only when you need
 to inspect the cluster manually. Verification executes Dockerfile instructions
-and application code; use it only with repositories you trust.
+and application code, and scans the built image with Trivy. Use it only with
+repositories you trust.
+
+This slice reports detected vulnerabilities as warnings while preserving
+Trivy's lowercase severity. A configurable blocking policy belongs to the
+later regression and reporting work.
 
 ## Planned verification experiments
 
-- Container metadata and Trivy findings
 - Deeper health and readiness behavior
 - Pod recovery and graceful shutdown
 - Rolling deployments under continuous traffic

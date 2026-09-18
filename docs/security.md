@@ -22,5 +22,13 @@ environment values into the generated workload. A separate cleanup context
 deletes the cluster after success, failure, timeout, or cancellation unless the
 operator explicitly passes `--keep-environment`.
 
+Trivy runs against the locally built image. CloudForge parses bounded JSON and
+retains vulnerability identifier, package, installed version, fixed version,
+severity, and image target metadata. Raw scanner output is not included in the
+public report.
+
+Vulnerability findings are warnings in this slice, with the scanner severity
+preserved separately. CloudForge does not yet impose a vulnerability threshold.
+
 Subprocesses use executable and argument arrays rather than shell command
 strings. Logs must never contain tokens, credentials, or full environments.

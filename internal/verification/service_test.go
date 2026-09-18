@@ -24,6 +24,9 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		calls = append(calls, request)
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args, DurationMS: 12}
+		if request.Name == "trivy" {
+			result.Stdout = `{"Results":[]}`
+		}
 		if request.Name == "kubectl" && containsArgument(request.Args, "apply") {
 			data, err := os.ReadFile(request.Args[len(request.Args)-1])
 			if err != nil {
@@ -44,10 +47,10 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	if outcome.ExitCode != 0 || outcome.Run.Status != model.StatusPass {
 		t.Fatalf("unexpected outcome: %#v", outcome)
 	}
-	if len(outcome.Run.Evidence) != 2 || outcome.Run.Evidence[1].Measurements[0].Value != "2" {
+	if len(outcome.Run.Evidence) != 3 || outcome.Run.Evidence[2].Measurements[0].Value != "2" {
 		t.Fatalf("missing readiness evidence: %#v", outcome.Run.Evidence)
 	}
-	if len(calls) != 8 || !containsArgument(calls[len(calls)-2].Args, "delete") || !containsArgument(calls[len(calls)-1].Args, "rm") {
+	if len(calls) != 9 || !containsArgument(calls[len(calls)-2].Args, "delete") || !containsArgument(calls[len(calls)-1].Args, "rm") {
 		t.Fatalf("unexpected command lifecycle: %#v", calls)
 	}
 	for _, expected := range []string{"kind: Namespace", "kind: Deployment", "kind: Service", "imagePullPolicy: Never", "path: /ready", "cpu: 100m", "replicas: 2"} {
@@ -73,11 +76,68 @@ func TestBuildFailureDoesNotCreateCluster(t *testing.T) {
 	}
 }
 
+func TestTrivyFailureIsExecutionErrorAndRemovesImage(t *testing.T) {
+	var calls []command.Request
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		calls = append(calls, request)
+		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		if request.Name == "trivy" {
+			result.ExitCode = 1
+			result.FailureType = model.FailureExit
+		}
+		return result
+	})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "trivy_scan_failed") {
+		t.Fatalf("unexpected Trivy failure outcome: %#v", outcome)
+	}
+	if hasCommand(calls, "k3d", "create") || !hasCommand(calls, "docker", "rm") {
+		t.Fatalf("Trivy failure lifecycle is incorrect: %#v", calls)
+	}
+}
+
+func TestMalformedTrivyOutputIsExecutionError(t *testing.T) {
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		if request.Name == "trivy" {
+			result.Stdout = "{"
+		}
+		return result
+	})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	if outcome.ExitCode != 2 || !hasDiagnosticCode(outcome.Run.Diagnostics, "trivy_output_invalid") {
+		t.Fatalf("unexpected malformed scan outcome: %#v", outcome)
+	}
+}
+
+func TestVulnerabilityFindingProducesWarningWithoutExecutionFailure(t *testing.T) {
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		if request.Name == "trivy" {
+			result.Stdout = `{"Results":[{"Target":"image (alpine 3.23)","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libc","InstalledVersion":"1","Severity":"HIGH"}]}]}`
+		}
+		if request.Name == "kubectl" && containsArgument(request.Args, "pods") {
+			result.Stdout = readyPodList
+		}
+		return result
+	})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	if outcome.ExitCode != 0 || outcome.Run.Status != model.StatusWarn {
+		t.Fatalf("vulnerability should be a warning, not an execution failure: %#v", outcome)
+	}
+	if finding := findingByID(outcome.Run.Findings, "security.trivy.cve-2026-0001.libc"); finding == nil || finding.Severity != model.SeverityHigh {
+		t.Fatalf("missing normalized vulnerability: %#v", outcome.Run.Findings)
+	}
+}
+
 func TestReadinessFailureStillCleansUp(t *testing.T) {
 	var calls []command.Request
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		calls = append(calls, request)
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		if request.Name == "trivy" {
+			result.Stdout = `{"Results":[]}`
+		}
 		if request.Name == "kubectl" && containsArgument(request.Args, "rollout") {
 			result.ExitCode = 1
 			result.FailureType = model.FailureTimeout
@@ -101,6 +161,9 @@ func TestClusterCreateFailureUsesFreshCleanupContext(t *testing.T) {
 	var cleanupContextError error
 	runner := runnerFunc(func(callCtx context.Context, request command.Request) model.CommandResult {
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		if request.Name == "trivy" {
+			result.Stdout = `{"Results":[]}`
+		}
 		if request.Name == "k3d" && containsArgument(request.Args, "create") {
 			cancel()
 			result.ExitCode = -1
@@ -127,6 +190,9 @@ func TestKeepEnvironmentSkipsDelete(t *testing.T) {
 			deleted = true
 		}
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		if request.Name == "trivy" {
+			result.Stdout = `{"Results":[]}`
+		}
 		if request.Name == "kubectl" && containsArgument(request.Args, "pods") {
 			result.Stdout = readyPodList
 		}
@@ -189,6 +255,24 @@ func hasCommand(calls []command.Request, name, argument string) bool {
 		}
 	}
 	return false
+}
+
+func hasDiagnosticCode(values []model.Diagnostic, code string) bool {
+	for _, item := range values {
+		if item.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func findingByID(values []model.Finding, id string) *model.Finding {
+	for index := range values {
+		if values[index].ID == id {
+			return &values[index]
+		}
+	}
+	return nil
 }
 
 func clock(values ...time.Time) func() time.Time {

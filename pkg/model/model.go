@@ -156,7 +156,34 @@ type AnalysisResult struct {
 	Status        Status       `json:"status"`
 	Supported     bool         `json:"supported"`
 	Application   Application  `json:"application"`
+	Findings      []Finding    `json:"findings,omitempty"`
 	Diagnostics   []Diagnostic `json:"diagnostics,omitempty"`
+}
+
+// Severity communicates a finding's urgency independently from its outcome.
+type Severity string
+
+// Supported finding severities.
+const (
+	SeverityInfo     Severity = "info"
+	SeverityLow      Severity = "low"
+	SeverityMedium   Severity = "medium"
+	SeverityHigh     Severity = "high"
+	SeverityCritical Severity = "critical"
+)
+
+// Finding is one normalized static or runtime observation.
+type Finding struct {
+	ID          string           `json:"id"`
+	Category    string           `json:"category"`
+	Status      Status           `json:"status"`
+	Severity    Severity         `json:"severity"`
+	Summary     string           `json:"summary"`
+	Observed    string           `json:"observed,omitempty"`
+	Expected    string           `json:"expected,omitempty"`
+	Remediation string           `json:"remediation,omitempty"`
+	DurationMS  int64            `json:"duration_ms,omitempty"`
+	Source      *SourceReference `json:"source,omitempty"`
 }
 
 // FailureType classifies command execution failures.
@@ -235,6 +262,7 @@ type VerificationRun struct {
 	StartedAt     string                  `json:"started_at"`
 	DurationMS    int64                   `json:"duration_ms"`
 	Environment   VerificationEnvironment `json:"environment"`
+	Findings      []Finding               `json:"findings,omitempty"`
 	Evidence      []Evidence              `json:"evidence"`
 	Diagnostics   []Diagnostic            `json:"diagnostics,omitempty"`
 }

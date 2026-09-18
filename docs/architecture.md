@@ -10,7 +10,8 @@ The implemented slice contains:
 - `internal/analyzer`: bounded repository traversal and structured parsers
 - `internal/command`: the only subprocess execution boundary
 - `internal/doctor`: local prerequisite checks
-- `internal/executor`: Docker, k3d, and kubectl command adapters
+- `internal/executor`: Docker, k3d, kubectl, and Trivy command adapters
+- `internal/findings`: deterministic container and Kubernetes configuration checks
 - `internal/verification`: generated workload planning and lifecycle orchestration
 - `internal/render`: text and JSON serialization
 - `pkg/model`: versioned output contracts
@@ -27,7 +28,9 @@ flowchart LR
     CLI --> Verification
     Doctor --> Runner[Command runner]
     Verification --> Analyzer
-    Verification --> Executor[Docker / k3d / kubectl]
+    Verification --> Executor[Docker / k3d / kubectl / Trivy]
+    Analyzer --> Findings[Normalized findings]
+    Executor --> Findings
     Executor --> Runner
     Analyzer --> Model[Versioned models]
     Doctor --> Model
