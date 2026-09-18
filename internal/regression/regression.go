@@ -4,6 +4,7 @@ package regression
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,9 +16,13 @@ import (
 	"strings"
 
 	"github.com/noor15102002/cloud-forge/pkg/model"
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 const maxBaselineBytes = 4 << 20
+
+//go:embed verification.v1alpha1.schema.json
+var verificationSchema []byte
 
 type direction int
 
@@ -74,6 +79,18 @@ func Load(path string) (model.VerificationRun, error) {
 	if len(data) > maxBaselineBytes {
 		return model.VerificationRun{}, fmt.Errorf("baseline %q exceeds the %d-byte limit", path, maxBaselineBytes)
 	}
+	var identity struct {
+		SchemaVersion string `json:"schema_version"`
+	}
+	if err := json.Unmarshal(data, &identity); err != nil {
+		return model.VerificationRun{}, fmt.Errorf("decode baseline %q: %w", path, err)
+	}
+	if identity.SchemaVersion != model.SchemaVersion {
+		return model.VerificationRun{}, fmt.Errorf("baseline schema version %q is unsupported; expected %q", identity.SchemaVersion, model.SchemaVersion)
+	}
+	if err := validateSchema(data); err != nil {
+		return model.VerificationRun{}, fmt.Errorf("baseline %q does not satisfy the %s schema: %w", path, model.SchemaVersion, err)
+	}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -83,9 +100,6 @@ func Load(path string) (model.VerificationRun, error) {
 	}
 	if err := requireJSONEnd(decoder); err != nil {
 		return model.VerificationRun{}, fmt.Errorf("decode baseline %q: %w", path, err)
-	}
-	if baseline.SchemaVersion != model.SchemaVersion {
-		return model.VerificationRun{}, fmt.Errorf("baseline schema version %q is unsupported; expected %q", baseline.SchemaVersion, model.SchemaVersion)
 	}
 	if baseline.RunID == "" || baseline.Evidence == nil {
 		return model.VerificationRun{}, errors.New("baseline is missing required run_id or evidence fields")
@@ -97,6 +111,27 @@ func Load(path string) (model.VerificationRun, error) {
 		return model.VerificationRun{}, fmt.Errorf("baseline is invalid: %w", err)
 	}
 	return baseline, nil
+}
+
+func validateSchema(data []byte) error {
+	var schemaDocument any
+	if err := json.Unmarshal(verificationSchema, &schemaDocument); err != nil {
+		return fmt.Errorf("load embedded schema: %w", err)
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	if err := compiler.AddResource("verification.v1alpha1.schema.json", schemaDocument); err != nil {
+		return fmt.Errorf("load embedded schema: %w", err)
+	}
+	compiled, err := compiler.Compile("verification.v1alpha1.schema.json")
+	if err != nil {
+		return fmt.Errorf("compile embedded schema: %w", err)
+	}
+	var document any
+	if err := json.Unmarshal(data, &document); err != nil {
+		return err
+	}
+	return compiled.Validate(document)
 }
 
 func requireJSONEnd(decoder *json.Decoder) error {
@@ -172,6 +207,9 @@ func Compare(current, baseline model.VerificationRun) model.BaselineComparison {
 
 func compareStatus(comparison *model.BaselineComparison, current, baseline model.Evidence) {
 	if current.Status == baseline.Status {
+		if current.Status == model.StatusSkipped {
+			comparison.Unavailable = append(comparison.Unavailable, unavailable(current.ExperimentID, model.ComparisonStatus, "", "both baseline and current experiments were skipped"))
+		}
 		return
 	}
 	currentRank, currentComparable := statusRank(current.Status)

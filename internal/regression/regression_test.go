@@ -1,6 +1,7 @@
 package regression
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +63,15 @@ func TestSkippedStatusIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestEqualSkippedStatusesAreUnavailable(t *testing.T) {
+	baseline := verificationRun("baseline", []model.Evidence{{ExperimentID: "hpa", Title: "HPA", Status: model.StatusSkipped, Summary: "No HPA"}})
+	current := verificationRun("current", []model.Evidence{{ExperimentID: "hpa", Title: "HPA", Status: model.StatusSkipped, Summary: "No HPA"}})
+	comparison := Compare(current, baseline)
+	if comparison.Status != model.StatusWarn || len(comparison.Unavailable) != 1 || comparison.Unavailable[0].Reason != "both baseline and current experiments were skipped" {
+		t.Fatalf("equal skipped evidence was treated as comparable: %#v", comparison)
+	}
+}
+
 func TestContinuousMeasurementChangesWithinTenPercentAreIgnored(t *testing.T) {
 	baseline := verificationRun("baseline", []model.Evidence{{ExperimentID: "load", Status: model.StatusPass, Measurements: []model.Measurement{{Name: "latency_p95_ms", Value: "100", Unit: "ms"}, {Name: "throughput_rps", Value: "100", Unit: "requests/second"}}}})
 	current := verificationRun("current", []model.Evidence{{ExperimentID: "load", Status: model.StatusPass, Measurements: []model.Measurement{{Name: "latency_p95_ms", Value: "109", Unit: "ms"}, {Name: "throughput_rps", Value: "91", Unit: "requests/second"}}}})
@@ -102,7 +112,8 @@ func TestLoadRejectsSchemaMismatchUnknownFieldsAndDuplicateMetrics(t *testing.T)
 	tests := map[string]string{
 		"schema":    `{"schema_version":"v2","run_id":"baseline","evidence":[]}`,
 		"unknown":   `{"schema_version":"v1alpha1","run_id":"baseline","evidence":[],"secret":"value"}`,
-		"duplicate": `{"schema_version":"v1alpha1","run_id":"baseline","evidence":[{"experiment_id":"load","title":"Load","status":"pass","summary":"ok","duration_ms":1,"measurements":[{"name":"error_rate","value":"0"},{"name":"error_rate","value":"1"}]}]}`,
+		"duplicate": `{"schema_version":"v1alpha1","run_id":"baseline","status":"pass","started_at":"2026-09-18T12:00:00Z","duration_ms":1,"environment":{"backend":"k3d","kept":false},"evidence":[{"experiment_id":"load","title":"Load","status":"pass","summary":"ok","duration_ms":1,"measurements":[{"name":"error_rate","value":"0"},{"name":"error_rate","value":"1"}]}]}`,
+		"required":  `{"schema_version":"v1alpha1","run_id":"baseline","status":"pass","evidence":[]}`,
 	}
 	for name, document := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -110,7 +121,22 @@ func TestLoadRejectsSchemaMismatchUnknownFieldsAndDuplicateMetrics(t *testing.T)
 			if err == nil {
 				t.Fatal("expected baseline error")
 			}
+			if name == "schema" && !strings.Contains(err.Error(), `expected "v1alpha1"`) {
+				t.Fatalf("schema mismatch was not actionable: %v", err)
+			}
 		})
+	}
+}
+
+func TestEmbeddedSchemaMatchesPublicContract(t *testing.T) {
+	publicPath := filepath.Join("..", "..", "schemas", "verification.v1alpha1.schema.json")
+	// #nosec G304 -- the path is a fixed repository contract checked by this test.
+	publicSchema, err := os.ReadFile(publicPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(verificationSchema, publicSchema) {
+		t.Fatal("embedded baseline schema differs from the public verification schema")
 	}
 }
 

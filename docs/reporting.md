@@ -22,10 +22,13 @@ cloudforge verify . --baseline baseline.json --format json > current.json
 ```
 
 The baseline must be a regular `v1alpha1` JSON file no larger than 4 MiB.
-CloudForge rejects incompatible schema versions, unknown fields, duplicate
-experiment IDs, and duplicate measurement names before building or executing
-the application. This keeps artifact selection and authentication outside the
-core engine, so a local command or CI workflow can download the intended file.
+CloudForge validates the complete document against the embedded public schema
+and rejects incompatible versions, missing required fields, unknown fields,
+duplicate experiment IDs, and duplicate measurement names before building or
+executing the application. The embedded and public schema copies are checked
+for exact equality in tests. This keeps artifact selection and authentication
+outside the core engine, so a local command or CI workflow can download the
+intended file.
 
 The optional `comparison` object records the baseline run ID, its own status,
 regressions, improvements, and unavailable comparisons. The current run's
