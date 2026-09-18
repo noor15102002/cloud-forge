@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -15,6 +16,13 @@ import (
 
 // Client deploys and observes workloads through kubectl.
 type Client struct{ runner command.Runner }
+
+// PodState contains the safe pod identity and readiness data needed by experiments.
+type PodState struct {
+	Name     string
+	Ready    bool
+	Restarts int32
+}
 
 // New creates a kubectl adapter.
 func New(runner command.Runner) *Client { return &Client{runner: runner} }
@@ -37,28 +45,52 @@ func (c *Client) WaitAvailable(ctx context.Context, cluster, namespace, deployme
 
 // ReadyPods returns ready pod count, total pod count, and restart count.
 func (c *Client) ReadyPods(ctx context.Context, cluster, namespace, selector string) (int, int, int32, model.CommandResult, error) {
+	pods, result, err := c.ObservePods(ctx, cluster, namespace, selector)
+	if err != nil || result.FailureType != model.FailureNone || result.ExitCode != 0 {
+		return 0, 0, 0, result, err
+	}
+	ready := 0
+	var restarts int32
+	for _, pod := range pods {
+		if pod.Ready {
+			ready++
+		}
+		restarts += pod.Restarts
+	}
+	return ready, len(pods), restarts, result, nil
+}
+
+// ObservePods returns sorted pod identity and readiness without retaining logs or environment data.
+func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector string) ([]PodState, model.CommandResult, error) {
 	result := c.runner.Run(ctx, command.Request{
 		Name: "kubectl", Args: []string{"--context", "k3d-" + cluster, "--namespace", namespace, "get", "pods", "--selector", selector, "--output", "json"},
 		Timeout: 30 * time.Second, OutputLimit: 256 * 1024,
 	})
-	if result.FailureType != model.FailureNone {
-		return 0, 0, 0, result, nil
+	if result.FailureType != model.FailureNone || result.ExitCode != 0 {
+		return nil, result, nil
 	}
 	var pods corev1.PodList
 	if err := json.Unmarshal([]byte(result.Stdout), &pods); err != nil {
-		return 0, 0, 0, result, fmt.Errorf("decode pod state: %w", err)
+		return nil, result, fmt.Errorf("decode pod state: %w", err)
 	}
-	ready := 0
-	var restarts int32
+	states := make([]PodState, 0, len(pods.Items))
 	for _, pod := range pods.Items {
-		if podReady(pod) {
-			ready++
-		}
+		state := PodState{Name: pod.Name, Ready: podReady(pod)}
 		for _, status := range pod.Status.ContainerStatuses {
-			restarts += status.RestartCount
+			state.Restarts += status.RestartCount
 		}
+		states = append(states, state)
 	}
-	return ready, len(pods.Items), restarts, result, nil
+	sort.Slice(states, func(i, j int) bool { return states[i].Name < states[j].Name })
+	return states, result, nil
+}
+
+// DeletePod removes one application pod and waits until that object is gone.
+func (c *Client) DeletePod(ctx context.Context, cluster, namespace, name string) model.CommandResult {
+	return c.runner.Run(ctx, command.Request{
+		Name: "kubectl", Args: []string{"--context", "k3d-" + cluster, "--namespace", namespace, "delete", "pod", name, "--wait=true", "--timeout=30s"},
+		Timeout: 40 * time.Second, OutputLimit: 128 * 1024,
+	})
 }
 
 func podReady(pod corev1.Pod) bool {

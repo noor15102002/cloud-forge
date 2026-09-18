@@ -14,3 +14,4 @@ Versioning once releases begin.
 - Cleanup guarantees for successful, failed, timed out, and canceled verification runs.
 - Deterministic container and Kubernetes configuration findings with remediation and provenance.
 - Bounded Trivy image scanning with normalized vulnerability findings.
+- HTTP startup/readiness measurements and controlled pod recovery under continuous traffic.

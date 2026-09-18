@@ -10,7 +10,8 @@ as evidence, compare runs, and report regressions locally and on pull requests.
 The current release slice provides deterministic analysis, normalized
 container, Kubernetes, and Trivy findings, environment diagnostics, and
 measured container-build and Deployment-readiness evidence in an isolated k3d
-cluster. Additional runtime risks and comparison remain on the roadmap.
+cluster. It also measures HTTP readiness and pod replacement under continuous
+traffic. Additional runtime risks and comparison remain on the roadmap.
 
 CloudForge is not a deployment platform, CI system, static Kubernetes linter,
 generic security scanner, hosted dashboard, or AI decision engine.

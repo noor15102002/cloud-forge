@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,7 +32,15 @@ import (
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
-const namespace = "cloudforge"
+const (
+	namespace       = "cloudforge"
+	nodePort        = 30080
+	httpTimeout     = 2 * time.Second
+	readinessWindow = 2 * time.Minute
+	recoveryWindow  = 2 * time.Minute
+)
+
+type probeFunc func(context.Context, string) (int, error)
 
 // Options controls one verification run.
 type Options struct {
@@ -45,14 +55,22 @@ type Outcome struct {
 
 // Service runs verification through injected command execution.
 type Service struct {
-	runner command.Runner
-	now    func() time.Time
-	newID  func() (string, error)
+	runner           command.Runner
+	now              func() time.Time
+	newID            func() (string, error)
+	probe            probeFunc
+	poll             time.Duration
+	readinessTimeout time.Duration
+	recoveryTimeout  time.Duration
 }
 
 // New creates a verification service.
 func New(runner command.Runner) *Service {
-	return &Service{runner: runner, now: time.Now, newID: randomID}
+	return &Service{
+		runner: runner, now: time.Now, newID: randomID,
+		probe: httpProbe(directHTTPClient()),
+		poll:  200 * time.Millisecond, readinessTimeout: readinessWindow, recoveryTimeout: recoveryWindow,
+	}
 }
 
 // Run builds an image, deploys it to an isolated k3d cluster, observes
@@ -113,6 +131,12 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	out.Run.Application = analysis.Application.Name
 	out.Run.Findings = append(out.Run.Findings, analysis.Findings...)
 	out.Run.Environment.ClusterName = plan.clusterName
+	if plan.httpSkipReason != "" {
+		out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
+			Code: "http_experiment_skipped", Status: model.StatusWarn,
+			Message: "One or more HTTP probe measurements were limited.", Guidance: plan.httpSkipReason,
+		})
+	}
 
 	temporary, err := os.MkdirTemp("", "cloudforge-verify-")
 	if err != nil {
@@ -201,9 +225,19 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	})
 
 	clusterAttempted = true
-	if result := k3dClient.Create(ctx, plan.clusterName); failed(result) {
+	if result := k3dClient.Create(ctx, plan.clusterName, nodePort); failed(result) {
 		out.addCommandDiagnostic("cluster_create_failed", "k3d could not create the verification cluster.", result)
 		return out
+	}
+	if plan.readinessPath != "" {
+		hostPort, portResult, portErr := dockerClient.PublishedPort(ctx, plan.clusterName, nodePort)
+		if portErr != nil || failed(portResult) {
+			out.addError("published_port_failed", "CloudForge could not resolve the loopback verification port.", commandGuidance(portResult, portErr))
+			return out
+		}
+		plan.readinessURL = localEndpointURL(plan.readinessScheme, plan.readinessPath, hostPort)
+		plan.healthURL = localEndpointURL(plan.healthScheme, plan.healthPath, hostPort)
+		out.Run.Environment.Endpoint = plan.readinessURL
 	}
 	if result := k3dClient.ImportImage(ctx, plan.clusterName, plan.image); failed(result) {
 		out.addCommandDiagnostic("image_import_failed", "k3d could not import the application image.", result)
@@ -214,7 +248,23 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 
+	var httpResultChannel chan httpObservation
+	var stopHTTP context.CancelFunc
+	if plan.readinessURL != "" {
+		httpContext, cancel := context.WithTimeout(ctx, s.readinessTimeout)
+		stopHTTP = cancel
+		httpResultChannel = make(chan httpObservation, 1)
+		go func() { httpResultChannel <- s.waitForHTTP(httpContext, plan.readinessURL) }()
+	}
 	waitResult := kubernetesClient.WaitAvailable(ctx, plan.clusterName, namespace, plan.workloadName)
+	if failed(waitResult) && stopHTTP != nil {
+		stopHTTP()
+	}
+	httpResult := httpObservation{}
+	if httpResultChannel != nil {
+		httpResult = <-httpResultChannel
+		stopHTTP()
+	}
 	ready, total, restarts, podResult, podErr := kubernetesClient.ReadyPods(ctx, plan.clusterName, namespace, "app.kubernetes.io/name="+plan.workloadName)
 	readinessStatus := model.StatusPass
 	readinessSummary := "Deployment became available."
@@ -222,18 +272,32 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		readinessStatus = model.StatusFail
 		readinessSummary = "Deployment did not become available before the deadline."
 	}
+	if plan.readinessURL != "" && !httpResult.Success {
+		readinessStatus = model.StatusFail
+		readinessSummary = "The readiness endpoint did not return a successful HTTP status."
+	}
 	if podErr != nil || failed(podResult) {
 		out.addError("pod_observation_failed", "CloudForge could not decode the deployed pod state.", commandGuidance(podResult, podErr))
 		return out
 	}
+	readinessMeasurements := []model.Measurement{
+		{Name: "ready_pods", Value: strconv.Itoa(ready), Unit: "pods"},
+		{Name: "total_pods", Value: strconv.Itoa(total), Unit: "pods"},
+		{Name: "container_restarts", Value: strconv.FormatInt(int64(restarts), 10), Unit: "restarts"},
+		{Name: "readiness_duration_ms", Value: strconv.FormatInt(waitResult.DurationMS, 10), Unit: "ms"},
+	}
+	if plan.readinessURL != "" {
+		readinessMeasurements = append(readinessMeasurements,
+			model.Measurement{Name: "startup_duration_ms", Value: strconv.FormatInt(httpResult.DurationMS, 10), Unit: "ms"},
+			model.Measurement{Name: "readiness_http_status", Value: strconv.Itoa(httpResult.Status)},
+			model.Measurement{Name: "readiness_attempts", Value: strconv.Itoa(httpResult.Attempts), Unit: "requests"},
+			model.Measurement{Name: "gated_attempts", Value: strconv.Itoa(httpResult.Failures), Unit: "requests"},
+		)
+	}
 	out.Run.Evidence = append(out.Run.Evidence, model.Evidence{
 		ExperimentID: "deployment-readiness", Title: "Deployment readiness", Status: readinessStatus,
-		Summary: readinessSummary, DurationMS: waitResult.DurationMS,
-		Measurements: []model.Measurement{
-			{Name: "ready_pods", Value: strconv.Itoa(ready), Unit: "pods"},
-			{Name: "total_pods", Value: strconv.Itoa(total), Unit: "pods"},
-			{Name: "container_restarts", Value: strconv.FormatInt(int64(restarts), 10), Unit: "restarts"},
-		},
+		Summary: readinessSummary, DurationMS: maxInt64(waitResult.DurationMS, httpResult.DurationMS),
+		Measurements: readinessMeasurements,
 	})
 	if readinessStatus == model.StatusPass && (ready != int(plan.desiredReplicas) || total != int(plan.desiredReplicas)) {
 		readinessStatus = model.StatusFail
@@ -252,6 +316,11 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.ExitCode = 1
 		if failed(waitResult) {
 			out.addCommandDiagnostic("readiness_failed", readinessSummary, waitResult)
+		} else if plan.readinessURL != "" && !httpResult.Success {
+			out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
+				Code: "readiness_http_failed", Status: model.StatusFail, Message: readinessSummary,
+				Guidance: fmt.Sprintf("Observed HTTP status %d after %d attempts; verify the readiness path and Service port.", httpResult.Status, httpResult.Attempts),
+			})
 		} else {
 			out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
 				Code: "readiness_failed", Status: model.StatusFail, Message: readinessSummary,
@@ -266,6 +335,32 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		Summary: "The application started with all requested replicas ready.", Observed: fmt.Sprintf("%d/%d pods ready", ready, total),
 		Expected: "all requested replicas become ready", DurationMS: waitResult.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
 	})
+	if plan.readinessURL == "" {
+		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{
+			ExperimentID: "pod-recovery", Title: "Pod recovery under traffic", Status: model.StatusSkipped,
+			Summary: "Pod recovery traffic requires an explicit HTTP readiness endpoint.",
+		})
+	} else {
+		recovery := s.runPodRecovery(ctx, kubernetesClient, plan)
+		if recovery.Evidence.ExperimentID != "" {
+			out.Run.Evidence = append(out.Run.Evidence, recovery.Evidence)
+		}
+		if recovery.Finding != nil {
+			out.Run.Findings = append(out.Run.Findings, *recovery.Finding)
+		}
+		if recovery.Diagnostic != nil {
+			out.Run.Diagnostics = append(out.Run.Diagnostics, *recovery.Diagnostic)
+		}
+		if recovery.ExitCode != 0 {
+			out.ExitCode = recovery.ExitCode
+			if recovery.ExitCode == 1 {
+				out.Run.Status = model.StatusFail
+			} else {
+				out.Run.Status = model.StatusError
+			}
+			return out
+		}
+	}
 	out.Run.Status, out.ExitCode = outcomeForFindings(out.Run.Findings)
 	return out
 }
@@ -275,6 +370,13 @@ type plan struct {
 	workloadName    string
 	image           string
 	desiredReplicas int32
+	readinessScheme string
+	readinessPath   string
+	healthScheme    string
+	healthPath      string
+	readinessURL    string
+	healthURL       string
+	httpSkipReason  string
 	manifest        []byte
 }
 
@@ -301,6 +403,9 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 	replicas := int32(1)
 	resources := corev1.ResourceRequirements{}
 	var readinessProbe, livenessProbe *corev1.Probe
+	readinessScheme, readinessPath := "", ""
+	healthScheme, healthPath := "", ""
+	httpSkipReason := ""
 	if len(application.Kubernetes.Deployments) == 1 {
 		deployment := application.Kubernetes.Deployments[0]
 		if deployment.Replicas != nil && *deployment.Replicas > 0 {
@@ -317,9 +422,36 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 		}
 		readinessProbe = probeFor(deployment.Endpoints, "readiness", port, portName)
 		livenessProbe = probeFor(deployment.Endpoints, "liveness", port, portName)
+		readinessScheme, readinessPath, err = endpointRoute(deployment.Endpoints, "readiness", port, portName)
+		if err != nil {
+			return plan{}, err
+		}
+		healthScheme, healthPath, err = endpointRoute(deployment.Endpoints, "liveness", port, portName)
+		if err != nil {
+			return plan{}, err
+		}
+		if healthPath == "" {
+			healthScheme, healthPath, err = endpointRoute(deployment.Endpoints, "startup", port, portName)
+			if err != nil {
+				return plan{}, err
+			}
+		}
 	}
 	if readinessProbe == nil {
 		readinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}}
+	}
+	if strings.EqualFold(readinessScheme, "https") {
+		httpSkipReason = "HTTPS application probes are not measured in this release because CloudForge does not bypass certificate validation."
+		readinessScheme, readinessPath = "", ""
+	}
+	if strings.EqualFold(healthScheme, "https") {
+		healthScheme, healthPath = readinessScheme, readinessPath
+		if httpSkipReason == "" {
+			httpSkipReason = "The HTTPS health probe was not used; final health falls back to the HTTP readiness endpoint."
+		}
+	}
+	if healthPath == "" {
+		healthScheme, healthPath = readinessScheme, readinessPath
 	}
 
 	labels := map[string]string{"app.kubernetes.io/name": workloadName, "app.kubernetes.io/managed-by": "cloudforge"}
@@ -340,14 +472,18 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 		&corev1.Service{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
 			ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: namespace, Labels: labels},
-			Spec:       corev1.ServiceSpec{Selector: labels, Ports: []corev1.ServicePort{{Name: portName, Port: port, TargetPort: intstr.FromString(portName), Protocol: corev1.ProtocolTCP}}},
+			Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeNodePort, Selector: labels, Ports: []corev1.ServicePort{{Name: portName, Port: port, TargetPort: intstr.FromString(portName), NodePort: nodePort, Protocol: corev1.ProtocolTCP}}},
 		},
 	}
 	manifest, err := marshalDocuments(objects)
 	if err != nil {
 		return plan{}, fmt.Errorf("encode generated Kubernetes resources: %w", err)
 	}
-	return plan{clusterName: clusterName, workloadName: workloadName, image: image, desiredReplicas: replicas, manifest: manifest}, nil
+	return plan{
+		clusterName: clusterName, workloadName: workloadName, image: image, desiredReplicas: replicas,
+		readinessScheme: readinessScheme, readinessPath: readinessPath, healthScheme: healthScheme, healthPath: healthPath,
+		httpSkipReason: httpSkipReason, manifest: manifest,
+	}, nil
 }
 
 func selectPort(application model.Application) (int32, string, error) {
@@ -402,6 +538,33 @@ func probeFor(endpoints []model.Endpoint, purpose string, port int32, portName s
 		return &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: endpoint.Path, Port: probePort, Scheme: scheme}}}
 	}
 	return nil
+}
+
+func endpointRoute(endpoints []model.Endpoint, purpose string, selectedPort int32, portName string) (string, string, error) {
+	for _, endpoint := range endpoints {
+		if endpoint.Purpose != purpose || endpoint.Path == "" {
+			continue
+		}
+		if endpoint.Port != "" {
+			if numeric, err := strconv.ParseInt(endpoint.Port, 10, 32); err == nil {
+				if int32(numeric) != selectedPort {
+					return "", "", fmt.Errorf("%s probe uses port %s, but verification selected port %d", purpose, endpoint.Port, selectedPort)
+				}
+			} else if endpoint.Port != portName {
+				return "", "", fmt.Errorf("%s probe uses named port %q, but verification selected %q", purpose, endpoint.Port, portName)
+			}
+		}
+		scheme := "http"
+		if strings.EqualFold(endpoint.Protocol, "https") {
+			scheme = "https"
+		}
+		path := endpoint.Path
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+		return scheme, path, nil
+	}
+	return "", "", nil
 }
 
 func kubernetesResources(value model.ResourceRequirements) (corev1.ResourceRequirements, error) {
@@ -460,6 +623,38 @@ func randomID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value), nil
+}
+
+func localEndpointURL(scheme, path string, hostPort int) string {
+	if scheme == "" || path == "" || hostPort == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s://127.0.0.1:%d%s", scheme, hostPort, path)
+}
+
+func directHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	return &http.Client{
+		Transport: transport, Timeout: httpTimeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+func httpProbe(client *http.Client) probeFunc {
+	return func(ctx context.Context, url string) (int, error) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return 0, err
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			return 0, err
+		}
+		defer func() { _ = response.Body.Close() }()
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1024))
+		return response.StatusCode, nil
+	}
 }
 
 func dnsName(value string) string {

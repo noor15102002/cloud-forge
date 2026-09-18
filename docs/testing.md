@@ -15,3 +15,7 @@ evidence and Trivy scan output, and fails if a CloudForge cluster remains. Unit 
 command runner to cover build, readiness, cluster creation, cancellation, and
 retained-environment paths without requiring local runtime tools. Parser tests
 cover normalized and malformed Trivy output.
+
+Runtime tests also cover readiness HTTP retries, successful replacement after
+a temporary unready state, request failures during deletion, recovery timeout,
+final health, and cancellation-safe cleanup.

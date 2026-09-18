@@ -63,7 +63,10 @@ repeatable output; consumers must not depend on JSON object key ordering.
 
 `verify` builds the root Dockerfile, creates a uniquely named k3d cluster,
 imports the image, deploys a generated Namespace, Deployment, and Service, and
-records build and readiness evidence. It deletes the cluster after success,
+records build and readiness evidence. When an HTTP readiness endpoint is
+declared, it measures startup and readiness status, then deletes one ready pod
+while sending continuous traffic and records replacement time, failed requests,
+downtime, restarts, and final health. It deletes the cluster after success,
 failure, timeout, or cancellation. Use `--keep-environment` only when you need
 to inspect the cluster manually. Verification executes Dockerfile instructions
 and application code, and scans the built image with Trivy. Use it only with
@@ -75,8 +78,7 @@ later regression and reporting work.
 
 ## Planned verification experiments
 
-- Deeper health and readiness behavior
-- Pod recovery and graceful shutdown
+- Graceful shutdown and rolling deployment behavior
 - Rolling deployments under continuous traffic
 - Deterministic k6 load profiles
 - HPA behavior when autoscaling is configured
@@ -89,7 +91,7 @@ comment. It is not included in the current slice.
 
 Analysis reads bounded metadata files, skips generated directories and
 symbolic links, and does not load environment files or return Secret values.
-Future verification will build and run repository code, which must be treated
+Verification builds and runs repository code, which must be treated
 as untrusted outside an isolated environment. See [SECURITY.md](SECURITY.md)
 and [docs/security.md](docs/security.md).
 
