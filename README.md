@@ -60,7 +60,7 @@ yet. It reports source-linked findings for container users and ports, probes,
 replicas, resources, Service ports, and HPA ranges. It does not execute
 repository code.
 
-JSON output is the canonical report and uses the versioned `v1alpha1` schema
+Verification JSON is the canonical report and uses the versioned `v1alpha1` schema
 defined in [`schemas/verification.v1alpha1.schema.json`](schemas/verification.v1alpha1.schema.json).
 Collections are sorted for repeatable output; consumers must not depend on JSON
 object key ordering. Verification also supports concise terminal output and a

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/noor15102002/cloud-forge/pkg/model"
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 func TestVerificationReportsMatchGoldenContracts(t *testing.T) {
@@ -27,7 +28,7 @@ func TestVerificationReportsMatchGoldenContracts(t *testing.T) {
 	assertGoldenBytes(t, "verification.txt", textOutput.Bytes())
 	assertGoldenBytes(t, "verification.md", markdownOutput.Bytes())
 	assertGoldenJSON(t, "verification.json", jsonOutput.Bytes())
-	if strings.Contains(markdownOutput.String(), "<script>") || !strings.Contains(markdownOutput.String(), "&lt;script&gt;") || !strings.Contains(markdownOutput.String(), `checkout\|api`) {
+	if strings.Contains(markdownOutput.String(), "<script>") || !strings.Contains(markdownOutput.String(), "&lt;script&gt;") || !strings.Contains(markdownOutput.String(), `checkout&#124;api`) {
 		t.Fatalf("Markdown did not escape untrusted report text:\n%s", markdownOutput.String())
 	}
 	if strings.Contains(textOutput.String(), "threshold.\nInvestigate") {
@@ -36,8 +37,8 @@ func TestVerificationReportsMatchGoldenContracts(t *testing.T) {
 }
 
 func TestMarkdownTextNeutralizesCommentMarkup(t *testing.T) {
-	got := markdownText("@team [link](https://example.test) # heading")
-	for _, unsafe := range []string{"@team", "[link]", "# heading"} {
+	got := markdownText(`@team [link](https://example.test) # heading \| split`)
+	for _, unsafe := range []string{"@team", "[link]", "https://", "# heading", `\|`} {
 		if strings.Contains(got, unsafe) {
 			t.Fatalf("Markdown text retained unsafe construct %q: %s", unsafe, got)
 		}
@@ -81,6 +82,26 @@ func TestVerificationSchemaIsVersionedJSON(t *testing.T) {
 	}
 	if schema["$schema"] != "https://json-schema.org/draft/2020-12/schema" || schema["title"] != "CloudForge Verification Report v1alpha1" {
 		t.Fatalf("unexpected schema identity: %#v", schema)
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	if err := compiler.AddResource("verification.v1alpha1.schema.json", schema); err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := compiler.Compile("verification.v1alpha1.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := JSON(&output, reportFixture()); err != nil {
+		t.Fatal(err)
+	}
+	var report any
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if err := compiled.Validate(report); err != nil {
+		t.Fatalf("verification JSON does not satisfy its schema: %v", err)
 	}
 }
 

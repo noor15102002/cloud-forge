@@ -22,7 +22,7 @@ available in JSON and Markdown so interactive output stays concise.
 Use `--format markdown` to produce a self-contained report suitable for a pull
 request comment. It begins with the stable
 `cloudforge-verification-report:v1alpha1` marker, summarizes every experiment,
-and places measurements and full findings in collapsible sections. Dynamic text
+and places measurements and up to 25 detailed findings in collapsible sections. Dynamic text
 is escaped to prevent repository metadata from introducing links, mentions, or
 HTML into the rendered comment. Markdown shows at most 25 findings and directs
 readers to the canonical JSON when more exist; terminal output shows at most 10

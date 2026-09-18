@@ -326,10 +326,10 @@ func markdownText(value string) string {
 	value = truncateRunes(value, displayRuneLimit)
 	value = html.EscapeString(value)
 	value = strings.NewReplacer(
-		"`", "&#96;", "@", "&#64;", "[", "&#91;", "]", "&#93;", "(", "&#40;", ")", "&#41;",
-		"*", "&#42;", "_", "&#95;", "#", "&#35;",
+		"\\", "&#92;", "|", "&#124;", "`", "&#96;", "@", "&#64;", "[", "&#91;", "]", "&#93;",
+		"(", "&#40;", ")", "&#41;", "*", "&#42;", "_", "&#95;", "#", "&#35;", ":", "&#58;", ".", "&#46;",
 	).Replace(value)
-	return strings.ReplaceAll(value, "|", "\\|")
+	return value
 }
 
 func findingsText(w io.Writer, findings []model.Finding) error {
