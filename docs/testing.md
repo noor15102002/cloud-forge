@@ -30,3 +30,9 @@ broken shutdown and rollout fixtures, and cancellation-safe cleanup.
 The k6 adapter tests valid and malformed summary exports. HPA tests use official
 Kubernetes status types and injected runners to cover metrics availability,
 replica observations, bounded scale-up, and explicit skip behavior.
+
+Renderer golden files lock terminal and Markdown presentation. The JSON golden
+test compares decoded values rather than raw bytes, so object key order is not
+part of the contract; a separate repeatability test shuffles every collection
+and expects identical canonical serialization. The versioned verification JSON
+Schema is also parsed during tests.

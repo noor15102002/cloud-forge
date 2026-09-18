@@ -1,0 +1,92 @@
+{
+  "schema_version": "v1alpha1",
+  "run_id": "run-123",
+  "status": "warn",
+  "application": "checkout|api <script>",
+  "started_at": "2026-09-18T12:00:00Z",
+  "duration_ms": 1250,
+  "environment": {
+    "backend": "k3d",
+    "cluster_name": "cloudforge-run-123",
+    "namespace": "cloudforge",
+    "endpoint": "http://127.0.0.1:18080/ready",
+    "kept": false
+  },
+  "findings": [
+    {
+      "id": "container.startup",
+      "category": "container",
+      "status": "pass",
+      "severity": "info",
+      "summary": "Application started.",
+      "observed": "2/2 ready",
+      "expected": "all replicas ready",
+      "remediation": "",
+      "duration_ms": 400,
+      "source": null
+    },
+    {
+      "id": "runtime.load-profile",
+      "category": "reliability",
+      "status": "warn",
+      "severity": "medium",
+      "summary": "Latency exceeded the expected threshold.\nInvestigate.",
+      "observed": "120 ms",
+      "expected": "below 100 ms",
+      "remediation": "Tune `worker` count.",
+      "duration_ms": 800,
+      "source": {
+        "path": "deploy|app.yaml",
+        "document": 2,
+        "field": "spec.template"
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "experiment_id": "container-build",
+      "title": "Container build",
+      "status": "pass",
+      "summary": "Image built.",
+      "duration_ms": 400
+    },
+    {
+      "experiment_id": "horizontal-autoscaling",
+      "title": "Horizontal autoscaling",
+      "status": "skipped",
+      "summary": "No HPA configured.",
+      "duration_ms": 0
+    },
+    {
+      "experiment_id": "load-profile",
+      "title": "Bounded load",
+      "status": "warn",
+      "summary": "Latency crossed | target",
+      "duration_ms": 800,
+      "measurements": [
+        {
+          "name": "latency_p95_ms",
+          "value": "120.000",
+          "unit": "ms"
+        },
+        {
+          "name": "request_count",
+          "value": "200",
+          "unit": "requests"
+        }
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "hpa_metrics_unavailable",
+      "status": "warn",
+      "message": "CPU metrics unavailable.",
+      "guidance": "Check metrics-server.",
+      "source": {
+        "path": "deploy|app.yaml",
+        "document": 2
+      }
+    }
+  ]
+}

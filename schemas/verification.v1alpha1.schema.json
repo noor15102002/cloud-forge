@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/noor15102002/cloud-forge/schemas/verification.v1alpha1.schema.json",
+  "title": "CloudForge Verification Report v1alpha1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "status", "started_at", "duration_ms", "environment", "evidence"],
+  "properties": {
+    "schema_version": {"const": "v1alpha1"},
+    "run_id": {"type": "string"},
+    "status": {"$ref": "#/$defs/status"},
+    "application": {"type": "string"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "duration_ms": {"type": "integer", "minimum": 0},
+    "environment": {"$ref": "#/$defs/environment"},
+    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+    "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+    "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+  },
+  "$defs": {
+    "status": {"enum": ["pass", "warn", "fail", "skipped", "error"]},
+    "severity": {"enum": ["info", "low", "medium", "high", "critical"]},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": {"type": "string"},
+        "document": {"type": "integer", "minimum": 0},
+        "field": {"type": "string"}
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "status", "message"],
+      "properties": {
+        "code": {"type": "string"},
+        "status": {"$ref": "#/$defs/status"},
+        "message": {"type": "string"},
+        "guidance": {"type": "string"},
+        "source": {"$ref": "#/$defs/source"}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "category", "status", "severity", "summary", "observed", "expected", "remediation", "duration_ms", "source"],
+      "properties": {
+        "id": {"type": "string"},
+        "category": {"type": "string"},
+        "status": {"$ref": "#/$defs/status"},
+        "severity": {"$ref": "#/$defs/severity"},
+        "summary": {"type": "string"},
+        "observed": {"type": "string"},
+        "expected": {"type": "string"},
+        "remediation": {"type": "string"},
+        "duration_ms": {"type": "integer", "minimum": 0},
+        "source": {"oneOf": [{"$ref": "#/$defs/source"}, {"type": "null"}]}
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {"type": "string"},
+        "value": {"type": "string"},
+        "unit": {"type": "string"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["experiment_id", "title", "status", "summary", "duration_ms"],
+      "properties": {
+        "experiment_id": {"type": "string"},
+        "title": {"type": "string"},
+        "status": {"$ref": "#/$defs/status"},
+        "summary": {"type": "string"},
+        "duration_ms": {"type": "integer", "minimum": 0},
+        "measurements": {"type": "array", "items": {"$ref": "#/$defs/measurement"}}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend", "kept"],
+      "properties": {
+        "backend": {"type": "string"},
+        "cluster_name": {"type": "string"},
+        "namespace": {"type": "string"},
+        "endpoint": {"type": "string"},
+        "kept": {"type": "boolean"}
+      }
+    }
+  }
+}
