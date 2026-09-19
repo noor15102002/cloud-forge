@@ -152,3 +152,23 @@ func (c *readinessChecker) evidence(duration int64) model.Evidence {
 	}
 	return model.Evidence{ExperimentID: "semantic-readiness", Title: "Configured HTTP readiness acceptance", Status: status, Summary: "Readiness acceptance: " + last.Reason + "; response values omitted.", DurationMS: duration, Measurements: measurements}
 }
+
+// blockUnobservedReadiness qualifies attempts that produced no HTTP response
+// when the test environment itself could not establish the prerequisite. A
+// response that actually satisfied or violated the contract remains evidence.
+func blockUnobservedReadiness(out *Outcome, reason string) {
+	for i := range out.Run.Evidence {
+		evidence := &out.Run.Evidence[i]
+		if evidence.ExperimentID != "semantic-readiness" {
+			continue
+		}
+		for _, measurement := range evidence.Measurements {
+			if measurement.Name == "http_transport_available" && measurement.Value == "false" {
+				evidence.Status = model.StatusBlocked
+				evidence.Summary = "Semantic readiness was blocked: " + reason + " No HTTP response was observed; attempted-probe measurements are retained."
+				evidence.Execution = &model.ExperimentExecution{Executed: true}
+				break
+			}
+		}
+	}
+}
