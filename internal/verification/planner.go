@@ -118,6 +118,10 @@ func capabilityPlan(analysis model.AnalysisResult, current plan, config model.Ru
 		"Baseline restoration validates deployment state and health, not business-data equivalence.",
 		"No PodDisruptionBudget or production topology is inferred.",
 		"Service availability probes open new connections; persistent-client session continuity is not inferred.",
+		"Minimum ready pod counts are sampled observations, excluding terminating pods; transitions between samples may be missed.",
+	}
+	if config.Topology != nil {
+		result.Limitations = append(result.Limitations, "Replica count and rollout policy come from explicit test configuration; they are not source or production topology. Source probes and per-pod resources remain in effect.")
 	}
 	for i := range result.Capabilities {
 		c := &result.Capabilities[i]

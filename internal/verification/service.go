@@ -655,7 +655,14 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 }
 
 func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.RuntimeConfiguration) (plan, error) {
+	if err := validateTopology(config); err != nil {
+		return plan{}, err
+	}
+	config.Topology = effectiveTopology(config.Topology)
 	application := analysis.Application
+	if config.Topology != nil && len(application.Kubernetes.HorizontalPodScalers) > 0 {
+		return plan{}, errors.New("fixed test topology cannot be combined with a source HPA; autoscaling would change the controlled replica count")
+	}
 	dockerfile := "Dockerfile"
 	if config.Build != nil {
 		if analysis.Build == nil || *analysis.Build != *config.Build {
@@ -708,7 +715,7 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 			strategy = *deployment.Strategy.DeepCopy()
 		}
 		minReady, progressDeadline = deployment.MinReadySeconds, deployment.ProgressDeadlineSeconds
-		if deployment.Replicas != nil && (*deployment.Replicas < 1 || *deployment.Replicas > 5) {
+		if config.Topology == nil && deployment.Replicas != nil && (*deployment.Replicas < 1 || *deployment.Replicas > 5) {
 			return plan{}, errors.New("deployment replicas must be between 1 and 5; excessive replicas are rejected before execution")
 		}
 		if deployment.Replicas != nil && *deployment.Replicas > 0 {
@@ -769,6 +776,10 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 				return plan{}, err
 			}
 		}
+	}
+	if config.Topology != nil {
+		replicas = config.Topology.Replicas
+		strategy = topologyStrategy(config.Topology)
 	}
 	if config.Endpoints.Readiness != "" {
 		if strings.EqualFold(readinessScheme, "https") {

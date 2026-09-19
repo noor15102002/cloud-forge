@@ -17,7 +17,7 @@ snapshot = lambda: {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hex
 before = snapshot()
 expected = {"app": "apps/http", "dockerfile": "apps/http/Containerfile.release", "context": "."}
 report = json.loads(args.report.read_text())
-assert report["schema_version"] == "v1alpha4"
+assert report["schema_version"] == "v1alpha5"
 assert report["plan"]["build"] == expected
 assert report["fingerprint"]["configuration"]["build"] == expected
 assert report["plan"]["topology"]["origin"] == "source"

@@ -2,7 +2,7 @@ package model
 
 // VerificationSchemaVersion adds explicit single-workload build selection.
 // Analysis and legacy reports retain their original v1alpha1 contract.
-const VerificationSchemaVersion = "v1alpha4"
+const VerificationSchemaVersion = "v1alpha5"
 
 // DependencySpec explicitly opts a dependency into the isolated test run.
 type DependencySpec struct {

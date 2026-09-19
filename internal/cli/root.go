@@ -221,7 +221,7 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 	cmd.Flags().StringVar(&configPath, "config", "", "strict verification configuration (default: application/cloudforge.yaml)")
 	cmd.Flags().BoolVar(&planOnly, "plan", false, "inspect capabilities without builds, subprocesses or runtime resources")
 	cmd.Flags().BoolVar(&keepEnvironment, "keep-environment", false, "keep the k3d cluster after verification")
-	cmd.Flags().StringVar(&baselinePath, "baseline", "", "compare with an explicit v1alpha1, v1alpha2, v1alpha3 or v1alpha4 verification JSON file")
+	cmd.Flags().StringVar(&baselinePath, "baseline", "", "compare with an explicit v1alpha1, v1alpha2, v1alpha3, v1alpha4 or v1alpha5 verification JSON file")
 	return cmd
 }
 

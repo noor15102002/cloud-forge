@@ -40,7 +40,7 @@ jobs:
           CLOUDFORGE_REPORT: ${{ steps.cloudforge.outputs.report-json }}
         run: |
           jq --exit-status '
-            .schema_version == "v1alpha4" and
+            .schema_version == "v1alpha5" and
             (.status == "pass" or .status == "warn") and
             any(.evidence[]; .experiment_id == "container-build" and .status == "pass") and
             any(.evidence[]; .experiment_id == "container-scan" and (.status == "pass" or .status == "warn")) and

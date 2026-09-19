@@ -3,6 +3,7 @@ package model
 // RuntimeConfiguration is the explicit, bounded verification contract.
 type RuntimeConfiguration struct {
 	Build         *BuildSelection               `json:"build,omitempty"`
+	Topology      *TopologySettings             `json:"topology,omitempty"`
 	Dependencies  map[string]DependencySpec     `json:"dependencies,omitempty"`
 	Environment   map[string]EnvironmentBinding `json:"environment,omitempty"`
 	Readiness     *ReadinessAcceptance          `json:"readiness,omitempty"`
@@ -11,6 +12,21 @@ type RuntimeConfiguration struct {
 	Endpoints     EndpointSettings              `json:"endpoints"`
 	Load          LoadSettings                  `json:"load"`
 	Experiments   ExperimentSettings            `json:"experiments"`
+}
+
+// TopologySettings replaces only the replica count and rollout policy for a
+// bounded test. It never describes the application's production topology.
+type TopologySettings struct {
+	Replicas int32            `json:"replicas"`
+	Rollout  *RolloutSettings `json:"rollout,omitempty"`
+}
+
+// RolloutSettings accepts integer counts only. Omitted fields default to
+// rolling_update, zero unavailable pods and one surge pod.
+type RolloutSettings struct {
+	Strategy       string `json:"strategy,omitempty"`
+	MaxUnavailable *int32 `json:"max_unavailable,omitempty"`
+	MaxSurge       *int32 `json:"max_surge,omitempty"`
 }
 
 // BuildSelection uses repository-relative paths, never shell expressions or URLs.
