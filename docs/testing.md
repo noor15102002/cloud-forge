@@ -91,3 +91,6 @@ The private application pilot happens only after generic integration validation
 and protected-main merge. Private source and evidence must not enter public
 workflow artifacts. Dependency-loss disruption and richer HTTP workloads remain
 unsupported rather than being claimed as tested.
+
+Validated dependency-runtime results and downloadable artifacts are recorded in
+[dependency verification evidence](dependency-verification-evidence.md).
