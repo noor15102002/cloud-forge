@@ -74,8 +74,12 @@ No new provider, workload category or private application pilot is included.
 - [x] Select app metadata, custom Dockerfile and build context within one repository boundary.
 - [x] Preserve deterministic plans, source provenance, A/B consistency and old configuration/report behavior.
 - [x] Add generic workspace fixtures and safety/contract regression tests.
-- [ ] Validate the packaged Action, shared-package runtime, wrong context and cancellation on disposable runners.
-- [ ] Run one private HTTP monorepo pilot and evaluate the observed product boundary.
+- [x] Validate the packaged Action, shared-package runtime, wrong context and cancellation on disposable runners.
+
+Controlled private pilot execution and application-specific decisions are tracked
+in the private pilot repository; source and detailed results are not published here.
+
+See the [acceptance record, including the retained failed observation](build-selection-evidence.md).
 
 Deeper backend dependencies require a deliberate follow-up decision. New providers,
 richer HTTP workloads and prerelease packaging remain separate work.
