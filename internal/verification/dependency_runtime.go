@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/noor15102002/cloud-forge/internal/dependency"
@@ -69,12 +70,18 @@ func (s *Service) startRedis(ctx context.Context, client *kubernetes.Client, cur
 		return false
 	}
 	if failed(result) {
-		if result.FailureType == model.FailureNotFound || result.FailureType == model.FailureExecution {
-			out.addError("dependency_execution_failed", "Dependency readiness could not be executed.", "Check kubectl availability.")
+		// Only a bounded wait or Kubernetes' fixed rollout-failure messages
+		// establish a dependency failure. Authorization/API/tool errors do not.
+		rolloutFailure := result.FailureType == model.FailureTimeout ||
+			(result.FailureType == model.FailureExit &&
+				(strings.Contains(result.Stderr, "timed out waiting for the condition") ||
+					strings.Contains(result.Stderr, "exceeded its progress deadline")))
+		if !rolloutFailure {
+			out.addError("dependency_execution_failed", "Dependency readiness could not be observed reliably.", "Check kubectl availability and isolated cluster API access.")
 			return false
 		}
 		evidence.Status = model.StatusFail
-		evidence.Reason = "Redis did not become ready before its startup deadline; application verification was blocked."
+		evidence.Reason = "Redis did not complete its bounded startup rollout; application verification was blocked."
 		out.Run.Status = model.StatusBlocked
 		out.ExitCode = 1
 		out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{Code: "dependency_startup_failed", Status: model.StatusBlocked, Message: evidence.Reason, Guidance: "Inspect the isolated dependency image availability, node capacity and startup configuration."})

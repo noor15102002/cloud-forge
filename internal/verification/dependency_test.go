@@ -132,7 +132,7 @@ func TestRedisCountsAgainstAggregateBudget(t *testing.T) {
 }
 
 func TestRedisStartupOutcomesCleanupAndApplicationOrdering(t *testing.T) {
-	for _, mode := range []string{"ready", "unavailable", "timeout", "cancel"} {
+	for _, mode := range []string{"ready", "unavailable", "timeout", "cancel", "forbidden", "missing-tool"} {
 		t.Run(mode, func(t *testing.T) {
 			root := dependencyTestRoot(t, "dependencies: {redis: {enabled: true}}\nenvironment: {REDIS_URL: {from: dependency.redis.url}}")
 			ctx, cancel := context.WithCancel(context.Background())
@@ -159,6 +159,14 @@ func TestRedisStartupOutcomesCleanupAndApplicationOrdering(t *testing.T) {
 					case "unavailable":
 						result.ExitCode = 1
 						result.FailureType = model.FailureExit
+						result.Stderr = "error: deployment exceeded its progress deadline"
+					case "forbidden":
+						result.ExitCode = 1
+						result.FailureType = model.FailureExit
+						result.Stderr = "Error from server (Forbidden): private identity must not appear in report"
+					case "missing-tool":
+						result.ExitCode = -1
+						result.FailureType = model.FailureNotFound
 					case "timeout":
 						result.ExitCode = -1
 						result.FailureType = model.FailureTimeout
@@ -183,7 +191,7 @@ func TestRedisStartupOutcomesCleanupAndApplicationOrdering(t *testing.T) {
 			if mode == "unavailable" || mode == "timeout" {
 				expected = model.StatusBlocked
 			}
-			if mode == "cancel" {
+			if mode == "cancel" || mode == "forbidden" || mode == "missing-tool" {
 				expected = model.StatusError
 			}
 			if out.Run.Status != expected {
