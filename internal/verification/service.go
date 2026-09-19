@@ -357,6 +357,17 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addError("cluster_not_ready", "The isolated cluster did not become ready before application deployment.", "Cluster condition: "+reason+"; inspect Docker capacity and cluster health before retrying.")
 		return out
 	}
+	if result, reason := kubernetesClient.CompatibleClientServer(ctx, plan.clusterName); failed(result) {
+		if reason == "" {
+			reason = "kubectl_version_unavailable"
+		}
+		message := "CloudForge could not confirm kubectl is compatible with the isolated cluster."
+		if reason == "kubectl_version_skew" {
+			message = "The bundled kubectl client is outside Kubernetes' supported version-skew range for this cluster."
+		}
+		out.addError(reason, message, "Cluster condition: "+reason+"; align kubectl with the k3d Kubernetes minor before retrying.")
+		return out
+	}
 	if result := k3dClient.ImportImage(ctx, plan.clusterName, plan.image); failed(result) {
 		out.addCommandDiagnostic("image_import_failed", "The application image could not be confirmed in the isolated node after import.", result)
 		return out

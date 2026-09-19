@@ -5,6 +5,7 @@ Versioning once releases begin.
 
 ## Unreleased
 
+- Align bundled kubectl with the k3d Kubernetes minor and reject client/server version skew as an execution error.
 - Added explicit Redis dependency provisioning with a digest-pinned internal-only image, shared resource budgeting and dependency startup evidence.
 - Added restricted test environment bindings, optional bounded flat JSON readiness assertions and a read-only `verify --plan` capability report.
 - Added v1alpha2 reports/config extensions, BLOCKED outcomes, dependency fingerprints and legacy v1alpha1 report/config compatibility.

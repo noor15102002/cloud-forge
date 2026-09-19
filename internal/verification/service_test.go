@@ -114,6 +114,31 @@ func TestBuildFailureDoesNotCreateCluster(t *testing.T) {
 	}
 }
 
+func TestKubectlVersionSkewIsExecutionErrorAndCleansUp(t *testing.T) {
+	var calls []command.Request
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		calls = append(calls, request)
+		result := successfulCommand(request)
+		if request.Name == "kubectl" && containsArgument(request.Args, "version") {
+			result.Stdout = `{"clientVersion":{"gitVersion":"v1.37.0"},"serverVersion":{"gitVersion":"v1.35.5+k3s1"}}`
+		}
+		return result
+	})
+	out := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	if out.ExitCode != 2 || out.Run.Status != model.StatusError || !hasDiagnosticCode(out.Run.Diagnostics, "kubectl_version_skew") {
+		t.Fatalf("version skew was not an execution error: %#v", out)
+	}
+	if hasCommand(calls, "kubectl", "apply") {
+		t.Fatal("application deployed despite kubectl version skew")
+	}
+	if findingByID(out.Run.Findings, "container.startup") != nil {
+		t.Fatal("tooling mismatch attributed to application")
+	}
+	if !hasCommand(calls, "k3d", "delete") || !hasCommand(calls, "docker", "rm") {
+		t.Fatal("cleanup missing")
+	}
+}
+
 func TestInterruptedBuildIsExecutionErrorAndUsesFreshCleanupContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var calls []command.Request
@@ -839,6 +864,9 @@ func successfulCommand(request command.Request) model.CommandResult {
 	}
 	if request.Name == "kubectl" && containsArgument(request.Args, "pods") {
 		result.Stdout = readyPodList
+	}
+	if request.Name == "kubectl" && containsArgument(request.Args, "version") {
+		result.Stdout = `{"clientVersion":{"gitVersion":"v1.35.5"},"serverVersion":{"gitVersion":"v1.35.5+k3s1"}}`
 	}
 	return result
 }
