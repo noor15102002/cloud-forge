@@ -49,7 +49,11 @@ func (s *Service) waitForHTTP(ctx context.Context, url string) httpObservation {
 	for {
 		status, err := s.probe(ctx, url)
 		result.Attempts++
-		result.Status = status
+		// Retain the last HTTP response. A final canceled transport attempt has
+		// no HTTP status and must not erase an observed 200/degraded response.
+		if status > 0 {
+			result.Status = status
+		}
 		if err == nil && status >= 200 && status < 300 {
 			result.Success = true
 			result.DurationMS = elapsedMilliseconds(time.Since(started))

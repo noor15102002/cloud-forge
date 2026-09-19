@@ -3,6 +3,7 @@ package verification
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -276,5 +277,24 @@ func TestExplicitSemanticReadinessPlanRequiresHTTP(t *testing.T) {
 	out := service.Run(context.Background(), root, Options{})
 	if out.Run.Status != model.StatusBlocked || out.ExitCode != 1 {
 		t.Fatal("semantic contract without HTTP endpoint was not blocked")
+	}
+}
+
+func TestReadinessDeadlineRetainsLastHTTPResponseWithoutPassing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service := fixedService(successRunner())
+	calls := 0
+	service.probe = func(context.Context, string) (int, error) {
+		calls++
+		if calls == 1 {
+			return 200, errors.New("semantic assertion mismatch")
+		}
+		cancel()
+		return 0, context.Canceled
+	}
+	observed := service.waitForHTTP(ctx, "http://127.0.0.1/ready")
+	if observed.Success || observed.Status != 200 || observed.Failures != 2 {
+		t.Fatalf("lost observed response or accepted degraded readiness: %#v", observed)
 	}
 }
