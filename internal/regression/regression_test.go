@@ -121,7 +121,7 @@ func TestLoadRejectsSchemaMismatchUnknownFieldsAndDuplicateMetrics(t *testing.T)
 			if err == nil {
 				t.Fatal("expected baseline error")
 			}
-			if name == "schema" && !strings.Contains(err.Error(), `expected v1alpha1, v1alpha2, v1alpha3 or "v1alpha4"`) {
+			if name == "schema" && !strings.Contains(err.Error(), `expected v1alpha1, v1alpha2, v1alpha3, v1alpha4 or "v1alpha5"`) {
 				t.Fatalf("schema mismatch was not actionable: %v", err)
 			}
 		})
@@ -213,5 +213,15 @@ func TestBuildSchemaMatchesPublishedContract(t *testing.T) {
 	}
 	if !bytes.Equal(published, buildVerificationSchema) {
 		t.Fatal("published build schema differs from embedded loader contract")
+	}
+}
+
+func TestTopologySchemaMatchesPublishedContract(t *testing.T) {
+	published, err := os.ReadFile(filepath.Join("..", "..", "schemas", "verification.v1alpha5.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(published, topologyVerificationSchema) {
+		t.Fatal("published topology schema differs from loader contract")
 	}
 }

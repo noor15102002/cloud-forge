@@ -5,6 +5,10 @@ Versioning once releases begin.
 
 ## Unreleased
 
+- Add bounded explicit test topology with replica/rollout provenance, resource-budget checks and fixed-topology/HPA exclusion.
+- Sample Ready pod counts during deletion and recovery; retain original failures and restored baselines in paired topology evidence.
+- Add runtime configuration v1alpha4 and plan/report v1alpha5; preserve historical report loading and update the trusted Action reporter.
+
 - Add single-workload monorepo selection: independent app root, custom Dockerfile and build context with repository-relative provenance and safe path validation.
 - Apply the same selection to images A/B, capability plans and environment fingerprints; add `analyze --config` and Action `config-path`.
 - Add v1alpha3 configuration, v1alpha2 selected analysis and v1alpha4 plan/report contracts while retaining historical report loading.

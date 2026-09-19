@@ -1,6 +1,7 @@
 package verification
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -8,7 +9,54 @@ import (
 	"github.com/noor15102002/cloud-forge/pkg/model"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
+
+func effectiveTopology(value *model.TopologySettings) *model.TopologySettings {
+	if value == nil {
+		return nil
+	}
+	unavailable, surge := int32(0), int32(1)
+	strategy := "rolling_update"
+	if value.Rollout != nil {
+		if value.Rollout.Strategy != "" {
+			strategy = value.Rollout.Strategy
+		}
+		if value.Rollout.MaxUnavailable != nil {
+			unavailable = *value.Rollout.MaxUnavailable
+		}
+		if value.Rollout.MaxSurge != nil {
+			surge = *value.Rollout.MaxSurge
+		}
+	}
+	return &model.TopologySettings{Replicas: value.Replicas, Rollout: &model.RolloutSettings{Strategy: strategy, MaxUnavailable: &unavailable, MaxSurge: &surge}}
+}
+
+func validateTopology(config model.RuntimeConfiguration) error {
+	value := effectiveTopology(config.Topology)
+	if value == nil {
+		return nil
+	}
+	if config.SchemaVersion != "v1alpha4" {
+		return errors.New("explicit test topology requires configuration schema_version v1alpha4")
+	}
+	if value.Replicas < 1 || value.Replicas > safetyBudget().MaxReplicas {
+		return errors.New("topology.replicas must be between 1 and 5")
+	}
+	r := value.Rollout
+	if r.Strategy != "rolling_update" {
+		return errors.New("test topology supports only the rolling_update strategy")
+	}
+	if *r.MaxUnavailable < 0 || *r.MaxUnavailable > value.Replicas || *r.MaxSurge < 0 || *r.MaxSurge > safetyBudget().MaxReplicas || (*r.MaxUnavailable == 0 && *r.MaxSurge == 0) {
+		return errors.New("test rollout requires integer max_unavailable between 0 and replicas and max_surge between 0 and 5; both cannot be zero")
+	}
+	return nil
+}
+
+func topologyStrategy(value *model.TopologySettings) appsv1.DeploymentStrategy {
+	unavailable, surge := intstr.FromInt32(*value.Rollout.MaxUnavailable), intstr.FromInt32(*value.Rollout.MaxSurge)
+	return appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType, RollingUpdate: &appsv1.RollingUpdateDeployment{MaxUnavailable: &unavailable, MaxSurge: &surge}}
+}
 
 func testTopology(application model.Application, replicas int32, strategy appsv1.DeploymentStrategy, grace *int64, minReady int32, probes []*corev1.Probe, config model.RuntimeConfiguration) *model.TestTopology {
 	result := &model.TestTopology{ConnectionPolicy: "new_connection_per_probe", Origin: "generated", ReplicaOrigin: "generated", StrategyOrigin: "kubernetes_default", ReadinessOrigin: "generated", Replicas: replicas, Strategy: "rolling_update", TerminationGraceSeconds: 30, MinReadySeconds: minReady, Probes: []model.Probe{}, ReadinessPath: config.Endpoints.Readiness, ReadinessAcceptance: config.Readiness}
@@ -54,6 +102,11 @@ func testTopology(application model.Application, replicas int32, strategy appsv1
 		}
 		result.MaxSurge = &surge
 		result.MaxUnavailable = &unavailable
+	}
+	if config.Topology != nil {
+		result.Origin = "explicit_test_configuration"
+		result.ReplicaOrigin = "explicit_test_configuration"
+		result.StrategyOrigin = "explicit_test_configuration"
 	}
 	for i, p := range probes {
 		if p != nil {
@@ -138,10 +191,7 @@ func qualifyTopology(outcome *recoveryOutcome, current plan) {
 		summary += fmt.Sprintf(" %s/%s probes failed; %s ms observed downtime.", failedRequests, total, downtime)
 	}
 	if current.topology != nil {
-		origin := "source"
-		if current.topology.Origin == "generated" {
-			origin = "generated"
-		}
+		origin := strings.ReplaceAll(current.topology.Origin, "_", " ")
 		summary += fmt.Sprintf(" Test topology: %s, %d replica(s), %s.", origin, replicas, current.topology.Strategy)
 	}
 	if id == "graceful-shutdown" {

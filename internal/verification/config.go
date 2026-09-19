@@ -49,9 +49,23 @@ func LoadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 	if yaml.UnmarshalStrict(data, &supplied) != nil {
 		return config, errors.New("invalid configuration object")
 	}
-	for _, key := range []string{"build", "runtime", "load", "endpoints", "experiments", "dependencies", "environment", "readiness"} {
+	for _, key := range []string{"build", "topology", "runtime", "load", "endpoints", "experiments", "dependencies", "environment", "readiness"} {
 		if string(supplied[key]) == "null" {
 			return config, errors.New("configuration sections cannot be null")
+		}
+	}
+	var topologyFields map[string]json.RawMessage
+	_ = json.Unmarshal(supplied["topology"], &topologyFields)
+	var rolloutFields map[string]json.RawMessage
+	_ = json.Unmarshal(topologyFields["rollout"], &rolloutFields)
+	if string(rolloutFields["strategy"]) == `""` {
+		return config, errors.New("explicit rollout.strategy must be rolling_update")
+	}
+	for _, fields := range []map[string]json.RawMessage{topologyFields, rolloutFields} {
+		for _, value := range fields {
+			if string(value) == "null" {
+				return config, errors.New("topology settings cannot be null")
+			}
 		}
 	}
 	var runtimeFields map[string]json.RawMessage
@@ -91,16 +105,19 @@ func validateConfiguration(config model.RuntimeConfiguration) error {
 	if err := validateExtensions(config); err != nil {
 		return err
 	}
-	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != "v1alpha2" && config.SchemaVersion != "v1alpha3" {
-		return errors.New("configuration schema_version must be v1alpha1, v1alpha2 or v1alpha3")
+	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != "v1alpha2" && config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" {
+		return errors.New("configuration schema_version must be v1alpha1, v1alpha2, v1alpha3 or v1alpha4")
 	}
 	if config.Build != nil {
-		if config.SchemaVersion != "v1alpha3" {
-			return errors.New("build selection requires configuration schema_version v1alpha3")
+		if config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" {
+			return errors.New("build selection requires configuration schema_version v1alpha3 or v1alpha4")
 		}
 		if err := selection.Validate(*config.Build); err != nil {
 			return err
 		}
+	}
+	if err := validateTopology(config); err != nil {
+		return err
 	}
 	if config.Runtime.Port < 0 || config.Runtime.Port > 65535 {
 		return errors.New("runtime.port must be between 1 and 65535 when supplied")

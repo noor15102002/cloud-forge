@@ -105,8 +105,14 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_canceled", "Graceful shutdown was canceled before an in-flight request started.", ctx.Err().Error(), traffic)
 	}
 	mutated = true
-	deleteResult := client.DeletePod(ctx, current.clusterName, namespace, podName)
+	minimumReady, _, _ := summarizePods(pods)
+	deleteResult, minimumReady, observationErr := s.deletePodObserved(ctx, client, current, selector, podName, minimumReady)
 	terminationCompleted := time.Now()
+	if observationErr != nil {
+		stopTraffic()
+		traffic := <-trafficDone
+		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_recovery_observation_failed", "CloudForge could not observe ready pods during termination.", observationErr.Error(), traffic)
+	}
 	if failed(deleteResult) {
 		stopTraffic()
 		traffic := <-trafficDone
@@ -129,6 +135,7 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 			return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_recovery_observation_failed", "CloudForge could not inspect the replacement pod after SIGTERM.", commandGuidance(result, observeErr), traffic)
 		}
 		ready, total, restarts = summarizePods(observed)
+		minimumReady = min(minimumReady, ready)
 		if ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) {
 			recovered = true
 			break
@@ -161,6 +168,7 @@ shutdownComplete:
 		{Name: "termination_duration_ms", Value: strconv.FormatInt(elapsedMilliseconds(terminationCompleted.Sub(terminationStarted)), 10), Unit: "ms"},
 		{Name: "replacement_duration_ms", Value: strconv.FormatInt(duration, 10), Unit: "ms"},
 		{Name: "ready_pods", Value: strconv.Itoa(ready), Unit: "pods"},
+		{Name: "minimum_ready_pods", Value: strconv.Itoa(minimumReady), Unit: "pods"},
 		{Name: "total_pods", Value: strconv.Itoa(total), Unit: "pods"},
 		{Name: "container_restarts", Value: strconv.FormatInt(int64(restarts), 10), Unit: "restarts"},
 		{Name: "final_http_status", Value: strconv.Itoa(finalStatus)},
@@ -301,7 +309,7 @@ func (s *Service) runPodRecovery(ctx context.Context, client *kubernetes.Client,
 	}
 	podName := ""
 	for _, pod := range pods {
-		if pod.Ready {
+		if pod.Ready && !pod.Terminating {
 			podName = pod.Name
 			break
 		}
@@ -324,7 +332,13 @@ func (s *Service) runPodRecovery(ctx context.Context, client *kubernetes.Client,
 
 	recoveryStarted := time.Now()
 	mutated = true
-	deleteResult := client.DeletePod(ctx, current.clusterName, namespace, podName)
+	minimumReady, _, _ := summarizePods(pods)
+	deleteResult, minimumReady, observationErr := s.deletePodObserved(ctx, client, current, selector, podName, minimumReady)
+	if observationErr != nil {
+		stopTraffic()
+		traffic := <-trafficDone
+		return recoveryExecutionError("pod_recovery_observation_failed", "CloudForge could not observe ready pods during deletion.", observationErr.Error(), traffic)
+	}
 	if failed(deleteResult) {
 		stopTraffic()
 		traffic := <-trafficDone
@@ -361,6 +375,7 @@ trafficContinued:
 			return recoveryExecutionError("pod_recovery_observation_failed", "CloudForge could not inspect the replacement pod.", commandGuidance(result, observeErr), traffic)
 		}
 		ready, total, restarts = summarizePods(observed)
+		minimumReady = min(minimumReady, ready)
 		if ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) {
 			recovered = true
 			break
@@ -399,6 +414,7 @@ complete:
 			{Name: "replacement_duration_ms", Value: strconv.FormatInt(replacementDuration, 10), Unit: "ms"},
 			{Name: "final_http_status", Value: strconv.Itoa(finalStatus)},
 			{Name: "ready_pods", Value: strconv.Itoa(ready), Unit: "pods"},
+			{Name: "minimum_ready_pods", Value: strconv.Itoa(minimumReady), Unit: "pods"},
 			{Name: "total_pods", Value: strconv.Itoa(total), Unit: "pods"},
 			{Name: "container_restarts", Value: strconv.FormatInt(int64(restarts), 10), Unit: "restarts"},
 		},
@@ -589,7 +605,7 @@ func summarizePods(pods []kubernetes.PodState) (int, int, int32) {
 	ready := 0
 	var restarts int32
 	for _, pod := range pods {
-		if pod.Ready {
+		if pod.Ready && !pod.Terminating {
 			ready++
 		}
 		restarts += pod.Restarts

@@ -124,3 +124,10 @@ Runtime configuration `v1alpha3` adds optional `build.app`, `build.dockerfile`
 and `build.context`. All three paths are relative to the positional repository
 boundary. See [single-workload selection](build-selection.md). Existing v1alpha1
 and v1alpha2 configurations keep their original behavior.
+
+## Explicit test topology
+
+Runtime configuration `v1alpha4` adds bounded replica and rollout overrides.
+They are labeled as explicit test configuration, preserving supported source
+probes and per-pod resources. See [controlled topology comparison](controlled-topology.md)
+for defaults, safety limits, HPA exclusions and interpretation of paired evidence.

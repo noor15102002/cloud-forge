@@ -161,7 +161,7 @@ func TestBuildSelectionChangesCompatibility(t *testing.T) {
 }
 
 func TestSelectedAndHistoricalReportsPreserveEvidence(t *testing.T) {
-	for _, version := range []string{"v1alpha4", "v1alpha3"} {
+	for _, version := range []string{"v1alpha5", "v1alpha4", "v1alpha3"} {
 		root := selectedFixture(t)
 		if version == "v1alpha3" {
 			root = fixturePath(t)
@@ -211,7 +211,7 @@ func TestPublishedSelectionConfigurationAndPlanSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, data := range map[string][]byte{"runtime.v1alpha3": config, "plan.v1alpha4": planned} {
+	for name, data := range map[string][]byte{"runtime.v1alpha3": config, "plan.v1alpha5": planned} {
 		var document any
 		if err := json.Unmarshal(data, &document); err != nil {
 			t.Fatal(err)

@@ -1,5 +1,12 @@
 # Testing
 
+The `explicit-topology` reliability job compares the unchanged monorepo fixture
+under one and two configured replicas. Application PASS/FAIL remains measured;
+the gate requires complete evidence, restoration, source integrity and cleanup.
+Unit tests cover invalid/null/unknown fields, old-version rejection, source
+preservation, HPA conflict, surge budgets, deterministic plans, versioned schemas,
+baseline incompatibility and joined cancellation during readiness observation.
+
 Fast tests cover repository detection, structured parsing, deterministic
 serialization, command failure classification, output limits, timeouts,
 doctor status, CLI streams, and exit codes.

@@ -90,3 +90,7 @@ test('accepts v1alpha3 reliability reports', () => {
 test('accepts v1alpha4 selected workload reports', () => {
   validateBody('<!-- cloudforge-verification-report:v1alpha4 -->\nBuild app=apps/http context=.')
 })
+
+test('accepts v1alpha5 explicit test topology reports', () => {
+  validateBody('<!-- cloudforge-verification-report:v1alpha5 -->\nTopology origin: explicit test configuration')
+})

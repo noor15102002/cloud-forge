@@ -12,7 +12,7 @@ regression reporting.
 > HPA scaling evidence, stable terminal, JSON, and Markdown reports, explicit
 > baseline regression comparison, and a trust-separated GitHub Action with
 > artifact and pull-request reporting. Explicit isolated Redis dependencies,
-> semantic HTTP readiness assertions, read-only capability planning and single-workload monorepo build selection are implemented.
+> semantic HTTP readiness assertions, read-only capability planning, single-workload monorepo build selection and [bounded explicit test topology](docs/controlled-topology.md) are implemented.
 
 ## Why CloudForge
 
@@ -80,8 +80,8 @@ Both `analyze . --config pilot.yaml` and `verify . --plan --config pilot.yaml`
 inspect that selection without executing code. `verify . --config pilot.yaml`
 uses the same build inputs for both lifecycle images.
 
-Verification JSON is the canonical report and uses the versioned `v1alpha4` schema
-defined in [`schemas/verification.v1alpha4.schema.json`](schemas/verification.v1alpha4.schema.json).
+Verification JSON is the canonical report and uses the versioned `v1alpha5` schema
+defined in [`schemas/verification.v1alpha5.schema.json`](schemas/verification.v1alpha5.schema.json).
 Collections are sorted for repeatable output; consumers must not depend on JSON
 object key ordering. Verification also supports concise terminal output and a
 Markdown report suitable for a pull-request comment.
@@ -94,7 +94,7 @@ relative regressions. A detected regression exits with status `1`; missing,
 skipped, nonnumeric, or unit-incompatible evidence is reported as unavailable
 instead of being treated as a regression. Environment and effective workload
 fingerprints must also be complete and compatible. Baselines are read before repository
-code executes and must be strict, bounded `v1alpha1`, `v1alpha2`, `v1alpha3` or `v1alpha4` JSON files.
+code executes and must be strict, bounded `v1alpha1`, `v1alpha2`, `v1alpha3`, `v1alpha4` or `v1alpha5` JSON files.
 
 `verify` builds the root Dockerfile (or the explicit selected Dockerfile/context), creates a uniquely named k3d cluster,
 imports the image, provisions and waits for any explicitly enabled Redis dependency,

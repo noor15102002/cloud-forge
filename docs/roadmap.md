@@ -84,6 +84,18 @@ See the [acceptance record, including the retained failed observation](build-sel
 Deeper backend dependencies require a deliberate follow-up decision. New providers,
 richer HTTP workloads and prerelease packaging remain separate work.
 
+## Release qualification: controlled topology
+
+Tracking: [#42](https://github.com/noor15102002/cloud-forge/issues/42), [milestone 9](https://github.com/noor15102002/cloud-forge/milestone/9).
+
+- [x] Implement bounded explicit test topology and provenance.
+- [x] Add safety, source-preservation, schema and deterministic planning tests.
+- [ ] Complete disposable generic comparison and cancellation acceptance.
+- [ ] Freeze the private same-revision one/two-replica comparison evidence.
+- [ ] Refine the backend boot/readiness contract before deciding on PostgreSQL/pgvector.
+
+See [the controlled protocol](controlled-topology.md). No new provider is included.
+
 ## v1.0 — Public V1
 
 - [x] Validate representative healthy and intentionally broken fixtures.
