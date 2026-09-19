@@ -59,4 +59,5 @@ PostgreSQL, dependency-loss experiments and authenticated POST loads remain defe
 - [x] Test several external repositories without repository-specific behavior.
 - [x] Harden cleanup, diagnostics, interruption, and unsupported-stack behavior.
 - [ ] [Calibrate performance-regression thresholds](https://github.com/noor15102002/cloud-forge/issues/31) across repeated compatible runner environments; the current 10% timing heuristic is not statistical significance.
+- [ ] [Align the bundled kubectl/Kubernetes version pair](https://github.com/noor15102002/cloud-forge/issues/35) before expanding pilots.
 - [ ] Produce reproducible release binaries and checksums.

@@ -74,3 +74,7 @@ It retained an observed availability failure and explicitly skipped unsupported
 or unexecuted experiments. Source immutability, versioned report validation,
 owned cleanup and unrelated-state checks passed. Private application results
 are not a public benchmark or a claim of production readiness.
+
+The installed kubectl client was v1.37.0 while k3d reported Kubernetes
+v1.35.5+k3s1. The exercised commands passed, but this two-minor skew is outside
+the supported client/server range. [Issue #35](https://github.com/noor15102002/cloud-forge/issues/35) tracks aligning the bundled tool versions before expanding pilots.
