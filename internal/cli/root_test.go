@@ -181,7 +181,7 @@ func cliTestRunner(vulnerable bool) cliRunnerFunc {
 			result.Stdout = "version 1.2.3"
 		}
 		if request.Name == "kubectl" && slices.Contains(request.Args, "--output=json") {
-			result.Stdout = `{"serverVersion":{"gitVersion":"v1.34.0"}}`
+			result.Stdout = `{"clientVersion":{"gitVersion":"v1.34.0"},"serverVersion":{"gitVersion":"v1.34.0"}}`
 		}
 		if request.Name == "docker" && slices.Contains(request.Args, "inspect") {
 			result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" []`
