@@ -1,7 +1,7 @@
 CloudForge Verification
 Status: WARN  Application: checkout|api <script>  Duration: 1250 ms
 Run: run-123
-Evidence: 1 passed, 1 warned, 0 failed, 1 skipped, 0 errors
+Evidence: 1 passed, 1 warned, 0 failed, 0 blocked, 1 skipped, 0 errors
 PASS    Container build              Image built. (400 ms)
 SKIPPED Horizontal autoscaling       No HPA configured. (0 ms)
 WARN    Bounded load                 Latency crossed | target (800 ms)

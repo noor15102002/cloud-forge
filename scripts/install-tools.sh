@@ -29,8 +29,8 @@ test -n "$k3d_checksum"
 echo "$k3d_checksum  k3d-linux-amd64" | sha256sum --check
 install -m 0755 k3d-linux-amd64 "$bin_dir/k3d"
 
-download "https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl" kubectl
-download "https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl.sha256" kubectl.sha256
+download "https://dl.k8s.io/release/v1.35.5/bin/linux/amd64/kubectl" kubectl
+download "https://dl.k8s.io/release/v1.35.5/bin/linux/amd64/kubectl.sha256" kubectl.sha256
 echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
 install -m 0755 kubectl "$bin_dir/kubectl"
 

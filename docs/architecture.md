@@ -68,7 +68,7 @@ CloudForge waits for metrics-server to report CPU utilization, then runs a
 bounded k6 profile against the loopback endpoint. It normalizes request count,
 throughput, error rate, and P50/P95/P99 latency, while the Kubernetes adapter
 decodes official HPA status types to record starting and peak replicas. Missing
-metrics remain explicit skipped evidence with a diagnostic cause.
+required metrics block the HPA assertion with a diagnostic cause; insufficient demand remains an explicit skip.
 
 Verification JSON is canonicalized on a copy of the result before encoding:
 evidence, measurements, findings, diagnostics, and comparison collections use
@@ -102,3 +102,13 @@ assertions to the readiness endpoint, including lifecycle traffic observations.
 The same cluster ownership and independent cleanup contexts remove dependency
 resources. v1alpha2 adds capability/dependency sections and fingerprints; the
 legacy v1alpha1 schema remains readable. See [ADR 007](adr/007-explicit-dependency-runtime.md).
+
+## Evidence reliability
+
+The existing verifier performs a pure capability plan, compatibility preflight,
+and sequential experiments around a shared validated baseline. Mutation attempts
+trigger explicit restoration; controller revision, pods, dependencies and HTTP
+readiness gate later siblings. Recovery evidence is attached to the original
+experiment without replacing its status. v1alpha3 adds those records and
+topology/producer identity; older report schemas remain immutable. See
+[evidence reliability](evidence-reliability.md).

@@ -1,8 +1,8 @@
 package model
 
-// VerificationSchemaVersion adds dependency evidence and capability planning.
+// VerificationSchemaVersion adds compatibility, topology and recovery evidence.
 // Analysis and legacy reports retain their original v1alpha1 contract.
-const VerificationSchemaVersion = "v1alpha2"
+const VerificationSchemaVersion = "v1alpha3"
 
 // DependencySpec explicitly opts a dependency into the isolated test run.
 type DependencySpec struct {
@@ -25,18 +25,25 @@ type ReadinessAcceptance struct {
 
 // Capability records intent before execution; supported is never an observed pass.
 type Capability struct {
-	Name        string `json:"name"`
-	Disposition string `json:"disposition"`
-	Reason      string `json:"reason"`
+	Prerequisites    []string `json:"prerequisites,omitempty"`
+	Mutation         string   `json:"mutation,omitempty"`
+	RecoveryStrategy string   `json:"recovery_strategy,omitempty"`
+	Limitations      []string `json:"limitations,omitempty"`
+	Name             string   `json:"name"`
+	Disposition      string   `json:"disposition"`
+	Reason           string   `json:"reason"`
 }
 
 // VerificationPlan exposes safe execution intent without generated credentials.
 type VerificationPlan struct {
-	SchemaVersion string       `json:"schema_version"`
-	Status        Status       `json:"status"`
-	Port          int32        `json:"port,omitempty"`
-	Capabilities  []Capability `json:"capabilities"`
-	Budget        SafetyBudget `json:"budget"`
+	Detected      []string      `json:"detected,omitempty"`
+	Topology      *TestTopology `json:"topology,omitempty"`
+	Limitations   []string      `json:"limitations,omitempty"`
+	SchemaVersion string        `json:"schema_version"`
+	Status        Status        `json:"status"`
+	Port          int32         `json:"port,omitempty"`
+	Capabilities  []Capability  `json:"capabilities"`
+	Budget        SafetyBudget  `json:"budget"`
 }
 
 // DependencyEvidence keeps dependency infrastructure separate from application failures.

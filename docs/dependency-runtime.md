@@ -111,14 +111,14 @@ protocol. Dependency-loss disruption is explicitly SKIPPED in this release.
 
 ## Reports and migration
 
-Verification now emits `v1alpha2`; analysis and doctor retain `v1alpha1`.
+Verification now emits `v1alpha3`; analysis and doctor retain `v1alpha1`.
 Existing `v1alpha1` runtime config remains accepted without the new fields.
-Dependency/environment/readiness extensions require `v1alpha2` config. Both
+Dependency/environment/readiness extensions require `v1alpha2` config. All three
 verification report versions remain readable through `cloudforge report` and
 the trusted GitHub reporter. Old schemas are retained unchanged.
 
 BLOCKED means a required capability prevents meaningful verification (exit 1).
-SKIPPED means a particular experiment was not executed. FAIL is an observed
+SKIPPED means an experiment/assertion was inapplicable or intentionally excluded; execution flags separately record any observations performed. FAIL is an observed
 application/policy failure, or explicitly labeled dependency failure. ERROR
 indicates a CloudForge/environment execution problem or cancellation (exit 2).
 Dependency startup FAIL is reported in the dependency section with the run

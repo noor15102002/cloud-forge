@@ -35,10 +35,11 @@ type trafficSample struct {
 }
 
 type recoveryOutcome struct {
-	Evidence   model.Evidence
-	Finding    *model.Finding
-	Diagnostic *model.Diagnostic
-	ExitCode   int
+	MutationAttempted bool
+	Evidence          model.Evidence
+	Finding           *model.Finding
+	Diagnostic        *model.Diagnostic
+	ExitCode          int
 }
 
 func (s *Service) waitForHTTP(ctx context.Context, url string) httpObservation {
@@ -69,7 +70,9 @@ func (s *Service) waitForHTTP(ctx context.Context, url string) httpObservation {
 	}
 }
 
-func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Client, current plan) recoveryOutcome {
+func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Client, current plan) (outcome recoveryOutcome) {
+	mutated := false
+	defer func() { outcome.MutationAttempted = mutated; qualifyTopology(&outcome, current) }()
 	parent := ctx
 	ctx, cancelExperiment := context.WithTimeout(ctx, s.recoveryTimeout)
 	defer cancelExperiment()
@@ -80,7 +83,7 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 	}
 	podName := firstReadyPod(pods)
 	if podName == "" {
-		return lifecycleFailure("graceful-shutdown", "Graceful shutdown under traffic", "runtime.graceful-shutdown", "No ready application pod was available for controlled termination.", "Verify that the Deployment has a ready replica before testing shutdown behavior.", 0, trafficObservation{}, nil)
+		return lifecycleBlocked("graceful-shutdown", "Graceful shutdown under traffic", "No ready application pod was available for controlled termination.")
 	}
 
 	trafficCtx, stopTraffic := context.WithCancel(ctx)
@@ -101,6 +104,7 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 		traffic := <-trafficDone
 		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_canceled", "Graceful shutdown was canceled before an in-flight request started.", ctx.Err().Error(), traffic)
 	}
+	mutated = true
 	deleteResult := client.DeletePod(ctx, current.clusterName, namespace, podName)
 	terminationCompleted := time.Now()
 	if failed(deleteResult) {
@@ -167,7 +171,9 @@ shutdownComplete:
 	return lifecycleSuccess("graceful-shutdown", "Graceful shutdown under traffic", "runtime.graceful-shutdown", "The application remained healthy while Kubernetes terminated and replaced a pod.", duration, fmt.Sprintf("%d requests overlapping deletion, %d dropped requests", inFlight, traffic.Failures), measurements)
 }
 
-func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Client, client *kubernetes.Client, current plan, buildResult model.CommandResult) recoveryOutcome {
+func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Client, client *kubernetes.Client, current plan, buildResult model.CommandResult) (outcome recoveryOutcome) {
+	mutated := false
+	defer func() { outcome.MutationAttempted = mutated; qualifyTopology(&outcome, current) }()
 	parent := ctx
 	ctx, cancelExperiment := context.WithTimeout(ctx, s.rolloutTimeout)
 	defer cancelExperiment()
@@ -199,6 +205,7 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 	}
 
 	rolloutStarted := time.Now()
+	mutated = true
 	setResult := client.SetImage(ctx, current.clusterName, namespace, current.workloadName, "application", current.rolloutImage)
 	if failed(setResult) {
 		stopTraffic()
@@ -281,7 +288,9 @@ rolloutComplete:
 	return lifecycleSuccess("rolling-deployment", title, "runtime.rolling-deployment", "Version B became ready without interrupting application traffic.", duration, fmt.Sprintf("%d/%d version B pods ready with %d failed requests", targetReady, total, traffic.Failures), measurements)
 }
 
-func (s *Service) runPodRecovery(ctx context.Context, client *kubernetes.Client, current plan) recoveryOutcome {
+func (s *Service) runPodRecovery(ctx context.Context, client *kubernetes.Client, current plan) (outcome recoveryOutcome) {
+	mutated := false
+	defer func() { outcome.MutationAttempted = mutated; qualifyTopology(&outcome, current) }()
 	parent := ctx
 	ctx, cancelExperiment := context.WithTimeout(ctx, s.recoveryTimeout)
 	defer cancelExperiment()
@@ -298,7 +307,7 @@ func (s *Service) runPodRecovery(ctx context.Context, client *kubernetes.Client,
 		}
 	}
 	if podName == "" {
-		return recoveryFailure("No ready application pod was available for controlled deletion.", "Verify that the Deployment has at least one ready replica before running recovery.", 0, trafficObservation{}, 0, 0, 0)
+		return lifecycleBlocked("pod-recovery", "Pod recovery under traffic", "No ready application pod was available for controlled deletion.")
 	}
 
 	trafficCtx, stopTraffic := context.WithCancel(ctx)
@@ -314,6 +323,7 @@ func (s *Service) runPodRecovery(ctx context.Context, client *kubernetes.Client,
 	}
 
 	recoveryStarted := time.Now()
+	mutated = true
 	deleteResult := client.DeletePod(ctx, current.clusterName, namespace, podName)
 	if failed(deleteResult) {
 		stopTraffic()
@@ -398,7 +408,7 @@ complete:
 		Summary: summary, Observed: fmt.Sprintf("%d failed requests, %d ms downtime, HTTP %d", traffic.Failures, traffic.MaxDowntimeMS, finalStatus),
 		Expected: "zero failed requests, zero downtime, and a healthy replacement pod", DurationMS: replacementDuration,
 	}
-	outcome := recoveryOutcome{Evidence: evidence, Finding: &finding}
+	outcome = recoveryOutcome{Evidence: evidence, Finding: &finding}
 	if status == model.StatusFail {
 		outcome.ExitCode = 1
 		outcome.Diagnostic = &model.Diagnostic{
@@ -587,23 +597,6 @@ func summarizePods(pods []kubernetes.PodState) (int, int, int32) {
 	return ready, len(pods), restarts
 }
 
-func recoveryFailure(summary, guidance string, duration int64, traffic trafficObservation, ready, total int, restarts int32) recoveryOutcome {
-	evidence := model.Evidence{
-		ExperimentID: "pod-recovery", Title: "Pod recovery under traffic", Status: model.StatusFail, Summary: summary, DurationMS: duration,
-		Measurements: []model.Measurement{
-			{Name: "request_count", Value: strconv.Itoa(traffic.Requests), Unit: "requests"},
-			{Name: "failed_requests", Value: strconv.Itoa(traffic.Failures), Unit: "requests"},
-			{Name: "downtime_ms", Value: strconv.FormatInt(traffic.MaxDowntimeMS, 10), Unit: "ms"},
-			{Name: "ready_pods", Value: strconv.Itoa(ready), Unit: "pods"},
-			{Name: "total_pods", Value: strconv.Itoa(total), Unit: "pods"},
-			{Name: "container_restarts", Value: strconv.FormatInt(int64(restarts), 10), Unit: "restarts"},
-		},
-	}
-	finding := model.Finding{ID: "runtime.pod-recovery", Category: "reliability", Status: model.StatusFail, Severity: model.SeverityHigh, Summary: summary, Expected: "a healthy replacement pod", Remediation: guidance, DurationMS: duration}
-	diagnostic := model.Diagnostic{Code: "pod_recovery_failed", Status: model.StatusFail, Message: summary, Guidance: guidance}
-	return recoveryOutcome{Evidence: evidence, Finding: &finding, Diagnostic: &diagnostic, ExitCode: 1}
-}
-
 func recoveryExecutionError(code, summary, guidance string, traffic ...trafficObservation) recoveryOutcome {
 	observed := trafficObservation{}
 	if len(traffic) > 0 {
@@ -626,4 +619,8 @@ func maxInt64(left, right int64) int64 {
 		return left
 	}
 	return right
+}
+
+func lifecycleBlocked(id, title, reason string) recoveryOutcome {
+	return recoveryOutcome{Evidence: model.Evidence{ExperimentID: id, Title: title, Status: model.StatusBlocked, Summary: reason}, ExitCode: 1}
 }

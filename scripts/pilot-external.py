@@ -47,10 +47,14 @@ for name, url, revision, subdirectory, port in apps:
             measurements = {item["name"]: item["value"] for item in failure.get("measurements", [])}
             assert int(measurements.get("dropped_requests", measurements.get("failed_requests", "0"))) > 0, failure
             assert 200 <= int(measurements.get("final_http_status", "0")) < 300, failure
-        if not failures:
-            assert any(item["experiment_id"] == "load-profile" and item["status"] == "pass" for item in report["evidence"]), report
-        else:
-            print(f"{name}: observed application traffic failure in {failures[0]['experiment_id']}; report retained, later experiments not claimed", flush=True)
+        for experiment in ["graceful-shutdown", "pod-recovery", "rolling-deployment", "load-profile"]:
+            assert any(item["experiment_id"] == experiment and item["execution"]["executed"] for item in report["evidence"]), report
+        assert any(item["experiment_id"] == "load-profile" and item["status"] == "pass" for item in report["evidence"]), report
+        for item in report["evidence"]:
+            if item["execution"]["mutation_attempted"]:
+                assert item["recovery"]["status"] == "pass", item
+        if failures:
+            print(f"{name}: original traffic failures retained alongside later experiment evidence", flush=True)
         assert report["fingerprint"]["source_commit"] == revision
         assert report["fingerprint"]["image_id"]
         assert "cloudforge-" not in subprocess.check_output(["k3d", "cluster", "list", "--no-headers"], text=True)

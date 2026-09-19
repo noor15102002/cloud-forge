@@ -60,7 +60,9 @@ func controlledSkip(id, title string) recoveryOutcome {
 	return recoveryOutcome{Evidence: model.Evidence{ExperimentID: id, Title: title, Status: model.StatusSkipped, Summary: "Requires explicit experiments.control_path implementing the documented pilot protocol; no behavioral proof is inferred."}}
 }
 
-func (s *Service) runReadinessGating(ctx context.Context, client *kubernetes.Client, current plan) recoveryOutcome {
+func (s *Service) runReadinessGating(ctx context.Context, client *kubernetes.Client, current plan) (outcome recoveryOutcome) {
+	mutated := false
+	defer func() { outcome.MutationAttempted = mutated; qualifyTopology(&outcome, current) }()
 	const id, title = "readiness-gating", "Service readiness gating"
 	base := current.config.Experiments.ControlPath
 	if base == "" || current.desiredReplicas < 2 {
@@ -74,7 +76,7 @@ func (s *Service) runReadinessGating(ctx context.Context, client *kubernetes.Cli
 	}
 	target := firstReadyPod(pods)
 	if target == "" {
-		return controlError(id, title, "No ready pod was available for readiness control.")
+		return lifecycleBlocked(id, title, "No ready pod was available for readiness control.")
 	}
 	state, err := controlResult(client.PodProxy(ctx, current.clusterName, namespace, target, current.config.Runtime.Port, base+"/identity"))
 	if err != nil || state.Pod != target {
@@ -103,11 +105,7 @@ func (s *Service) runReadinessGating(ctx context.Context, client *kubernetes.Cli
 		outcome.Evidence.Summary = "The Service did not route to the selected ready pod during the bounded precondition window; readiness-gating evidence is unavailable."
 		return outcome
 	}
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = client.PodProxy(cleanupCtx, current.clusterName, namespace, target, current.config.Runtime.Port, base+"/ready")
-	}()
+	mutated = true
 	state, err = controlResult(client.PodProxy(ctx, current.clusterName, namespace, target, current.config.Runtime.Port, base+"/unready"))
 	if err != nil || state.Pod != target || state.Ready {
 		return controlError(id, title, "The selected pod did not acknowledge its controlled unready state.")
@@ -179,7 +177,9 @@ func (s *Service) runReadinessGating(ctx context.Context, client *kubernetes.Cli
 	return lifecycleFailure(id, title, "runtime."+id, "Service routing did not resume to the restored pod before the deadline.", "Inspect readiness recovery and Service routing.", 0, trafficObservation{}, measurements)
 }
 
-func (s *Service) runInFlightShutdown(ctx context.Context, client *kubernetes.Client, current plan) recoveryOutcome {
+func (s *Service) runInFlightShutdown(ctx context.Context, client *kubernetes.Client, current plan) (outcome recoveryOutcome) {
+	mutated := false
+	defer func() { outcome.MutationAttempted = mutated; qualifyTopology(&outcome, current) }()
 	const id, title = "inflight-shutdown", "Targeted in-flight shutdown"
 	base := current.config.Experiments.ControlPath
 	if base == "" {
@@ -193,7 +193,7 @@ func (s *Service) runInFlightShutdown(ctx context.Context, client *kubernetes.Cl
 	}
 	target := firstReadyPod(pods)
 	if target == "" {
-		return controlError(id, title, "No ready pod was available for the targeted request.")
+		return lifecycleBlocked(id, title, "No ready pod was available for the targeted request.")
 	}
 	requestID := strings.TrimPrefix(current.clusterName, "cloudforge-") + "-shutdown"
 	type completedRequest struct {
@@ -239,6 +239,7 @@ func (s *Service) runInFlightShutdown(ctx context.Context, client *kubernetes.Cl
 		return controlError(id, title, "The controlled request finished before termination began.")
 	default:
 	}
+	mutated = true
 	if result := client.BeginDeletePod(ctx, current.clusterName, namespace, target); failed(result) {
 		return controlError(id, title, "Could not request graceful termination of the selected pod.")
 	}

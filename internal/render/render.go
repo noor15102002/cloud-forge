@@ -28,6 +28,9 @@ func JSON(w io.Writer, value any) error {
 	} else if run, ok := value.(*model.VerificationRun); ok && run != nil {
 		value = canonicalVerification(*run)
 	}
+	if plan, ok := value.(model.VerificationPlan); ok {
+		value = canonicalPlan(plan)
+	}
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
@@ -104,6 +107,9 @@ func VerificationText(w io.Writer, run model.VerificationRun) error {
 	if _, err := fmt.Fprintf(w, "Status: %s  Application: %s  Duration: %d ms\nRun: %s\n", strings.ToUpper(string(run.Status)), terminalText(displayValue(run.Application)), run.DurationMS, terminalText(run.RunID)); err != nil {
 		return err
 	}
+	if err := reliabilityText(w, run); err != nil {
+		return err
+	}
 	if run.Plan != nil {
 		if err := PlanText(w, *run.Plan); err != nil {
 			return err
@@ -113,11 +119,14 @@ func VerificationText(w io.Writer, run model.VerificationRun) error {
 		return err
 	}
 	counts := countStatuses(run.Evidence)
-	if _, err := fmt.Fprintf(w, "Evidence: %d passed, %d warned, %d failed, %d skipped, %d errors\n", counts[model.StatusPass], counts[model.StatusWarn], counts[model.StatusFail], counts[model.StatusSkipped], counts[model.StatusError]); err != nil {
+	if _, err := fmt.Fprintf(w, "Evidence: %d passed, %d warned, %d failed, %d blocked, %d skipped, %d errors\n", counts[model.StatusPass], counts[model.StatusWarn], counts[model.StatusFail], counts[model.StatusBlocked], counts[model.StatusSkipped], counts[model.StatusError]); err != nil {
 		return err
 	}
 	for _, evidence := range run.Evidence {
 		if _, err := fmt.Fprintf(w, "%-7s %-28s %s (%d ms)\n", strings.ToUpper(string(evidence.Status)), terminalText(evidence.Title), terminalText(evidence.Summary), evidence.DurationMS); err != nil {
+			return err
+		}
+		if err := recoveryText(w, evidence); err != nil {
 			return err
 		}
 	}
@@ -192,20 +201,22 @@ func VerificationMarkdown(w io.Writer, run model.VerificationRun) error {
 			return err
 		}
 	}
+	if err := reliabilityMarkdown(w, run); err != nil {
+		return err
+	}
 	if run.Plan != nil {
-		if _, err := fmt.Fprintln(w, "\n### Capability plan\n\n| Capability | Disposition | Reason |\n|---|---|---|"); err != nil {
+		if _, err := fmt.Fprintln(w); err != nil {
 			return err
 		}
-		for _, capability := range run.Plan.Capabilities {
-			if _, err := fmt.Fprintf(w, "| %s | %s | %s |\n", markdownText(capability.Name), strings.ToUpper(capability.Disposition), markdownText(capability.Reason)); err != nil {
-				return err
-			}
+		if err := PlanMarkdown(w, *run.Plan); err != nil {
+			return err
 		}
 	}
+
 	if err := dependenciesMarkdown(w, run); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(w, "\n| Experiment | Status | Duration | Result |"); err != nil {
+	if _, err := fmt.Fprintln(w, "\n### Completed evidence\n\n| Experiment | Status | Duration | Result |"); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(w, "|---|---:|---:|---|"); err != nil {
@@ -216,6 +227,24 @@ func VerificationMarkdown(w io.Writer, run model.VerificationRun) error {
 		measurementCount += len(evidence.Measurements)
 		if _, err := fmt.Fprintf(w, "| %s | **%s** | %d ms | %s |\n", markdownText(evidence.Title), strings.ToUpper(string(evidence.Status)), evidence.DurationMS, markdownText(evidence.Summary)); err != nil {
 			return err
+		}
+	}
+
+	for _, e := range run.Evidence {
+		if e.Execution != nil {
+			if _, err := fmt.Fprintf(w, "\n- %s: executed=%t; mutation attempted=%t", markdownText(e.ExperimentID), e.Execution.Executed, e.Execution.MutationAttempted); err != nil {
+				return err
+			}
+		}
+		if e.Recovery != nil {
+			if _, err := fmt.Fprintf(w, "; baseline **%s** — %s", strings.ToUpper(string(e.Recovery.Status)), markdownText(e.Recovery.Summary)); err != nil {
+				return err
+			}
+		}
+		if e.Execution != nil || e.Recovery != nil {
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
 		}
 	}
 	if measurementCount > 0 {
@@ -302,11 +331,16 @@ func canonicalVerification(run model.VerificationRun) model.VerificationRun {
 	result.Dependencies = append([]model.DependencyEvidence(nil), run.Dependencies...)
 	sort.Slice(result.Dependencies, func(i, j int) bool { return result.Dependencies[i].Name < result.Dependencies[j].Name })
 	if run.Plan != nil {
-		value := *run.Plan
-		value.Capabilities = append([]model.Capability(nil), value.Capabilities...)
-		sort.Slice(value.Capabilities, func(i, j int) bool { return value.Capabilities[i].Name < value.Capabilities[j].Name })
+		value := canonicalPlan(*run.Plan)
 		result.Plan = &value
 	}
+	if run.Compatibility != nil {
+		value := *run.Compatibility
+		value.Checks = append([]model.CompatibilityCheck(nil), value.Checks...)
+		sort.Slice(value.Checks, func(i, j int) bool { return value.Checks[i].Name < value.Checks[j].Name })
+		result.Compatibility = &value
+	}
+
 	if run.Fingerprint != nil {
 		fingerprint := *run.Fingerprint
 		fingerprint.Tools = append([]model.ToolVersion{}, run.Fingerprint.Tools...)
@@ -316,7 +350,17 @@ func canonicalVerification(run model.VerificationRun) model.VerificationRun {
 	result.Evidence = append([]model.Evidence{}, run.Evidence...)
 	result.Findings = append([]model.Finding(nil), run.Findings...)
 	result.Diagnostics = append([]model.Diagnostic(nil), run.Diagnostics...)
+
 	for index := range result.Evidence {
+		e := &result.Evidence[index]
+		e.Topology = canonicalTopology(e.Topology)
+		if e.Recovery != nil {
+			recovery := *e.Recovery
+			recovery.Checks = append([]model.BaselineCheck{}, recovery.Checks...)
+			sort.Slice(recovery.Checks, func(i, j int) bool { return recovery.Checks[i].Name < recovery.Checks[j].Name })
+			e.Recovery = &recovery
+		}
+
 		result.Evidence[index].Measurements = append([]model.Measurement(nil), result.Evidence[index].Measurements...)
 		sort.SliceStable(result.Evidence[index].Measurements, func(i, j int) bool {
 			left, right := result.Evidence[index].Measurements[i], result.Evidence[index].Measurements[j]
@@ -324,7 +368,7 @@ func canonicalVerification(run model.VerificationRun) model.VerificationRun {
 		})
 	}
 	sort.SliceStable(result.Evidence, func(i, j int) bool {
-		return canonicalSortKey(result.Evidence[i]) < canonicalSortKey(result.Evidence[j])
+		return result.Evidence[i].ExperimentID < result.Evidence[j].ExperimentID
 	})
 	sort.SliceStable(result.Findings, func(i, j int) bool {
 		return canonicalSortKey(result.Findings[i]) < canonicalSortKey(result.Findings[j])
@@ -545,4 +589,33 @@ func truncateRunes(value string, limit int) string {
 		return value
 	}
 	return string(runes[:limit-1]) + "…"
+}
+
+func sortedStrings(values []string) []string {
+	result := append([]string(nil), values...)
+	sort.Strings(result)
+	return result
+}
+func canonicalTopology(value *model.TestTopology) *model.TestTopology {
+	if value == nil {
+		return nil
+	}
+	result := *value
+	result.Probes = append([]model.Probe{}, value.Probes...)
+	sort.Slice(result.Probes, func(i, j int) bool { return result.Probes[i].Purpose < result.Probes[j].Purpose })
+	return &result
+}
+func canonicalPlan(plan model.VerificationPlan) model.VerificationPlan {
+	result := plan
+	result.Detected = sortedStrings(plan.Detected)
+	result.Limitations = sortedStrings(plan.Limitations)
+	result.Topology = canonicalTopology(plan.Topology)
+	result.Capabilities = append([]model.Capability{}, plan.Capabilities...)
+	for i := range result.Capabilities {
+		c := &result.Capabilities[i]
+		c.Prerequisites = sortedStrings(c.Prerequisites)
+		c.Limitations = sortedStrings(c.Limitations)
+	}
+	sort.Slice(result.Capabilities, func(i, j int) bool { return result.Capabilities[i].Name < result.Capabilities[j].Name })
+	return result
 }

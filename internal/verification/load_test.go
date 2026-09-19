@@ -26,7 +26,7 @@ func TestLoadWithoutHPAProducesMetricsAndExplicitSkip(t *testing.T) {
 	}
 }
 
-func TestUnavailableHPAMetricsAreExplicitlySkipped(t *testing.T) {
+func TestUnavailableHPAMetricsBlockRequiredAssertion(t *testing.T) {
 	hpa := `{"status":{"currentReplicas":2,"desiredReplicas":2,"conditions":[{"type":"ScalingActive","status":"False","reason":"FailedGetResourceMetric"}]}}`
 	runner := loadRunner(`{"metrics":{"http_reqs":{"values":{"count":20,"rate":10}},"http_req_failed":{"values":{"rate":0}},"http_req_duration":{"values":{"p(50)":1,"p(95)":2,"p(99)":3}}}}`, hpa)
 	service := New(runner)
@@ -35,12 +35,33 @@ func TestUnavailableHPAMetricsAreExplicitlySkipped(t *testing.T) {
 	service.loadProfile = k6executor.Profile{VirtualUsers: 2, Duration: time.Second}
 	current := plan{clusterName: "test", workloadName: "api", loadURL: "http://127.0.0.1:8080/ready", hpaName: "api", hpaTargetCPU: 70}
 	load, autoscaling := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), current, t.TempDir(), "hpa.yaml")
-	if load.Evidence.Status != model.StatusPass || autoscaling.Evidence.Status != model.StatusSkipped || autoscaling.Diagnostic == nil || autoscaling.Diagnostic.Code != "hpa_metrics_unavailable" || !strings.Contains(autoscaling.Diagnostic.Guidance, "FailedGetResourceMetric") || !strings.Contains(autoscaling.Diagnostic.Guidance, "metrics-server") {
+	if load.Evidence.Status != model.StatusPass || autoscaling.Evidence.Status != model.StatusBlocked || autoscaling.Diagnostic == nil || autoscaling.Diagnostic.Code != "hpa_metrics_unavailable" || !strings.Contains(autoscaling.Diagnostic.Guidance, "FailedGetResourceMetric") || !strings.Contains(autoscaling.Diagnostic.Guidance, "metrics-server") {
 		t.Fatalf("unexpected unavailable metrics outcome: load=%#v autoscaling=%#v", load, autoscaling)
 	}
 }
 
-func TestHPAMetricsDeadlineBecomesExplicitSkip(t *testing.T) {
+func TestHPASetupFailureBlocksUnstartedLoad(t *testing.T) {
+	for _, stage := range []string{"apply", "observation"} {
+		t.Run(stage, func(t *testing.T) {
+			loadStarted := false
+			runner := runnerFunc(func(_ context.Context, req command.Request) model.CommandResult {
+				if req.Name == "k6" {
+					loadStarted = true
+				}
+				if req.Name == "kubectl" && (stage == "apply" && containsArgument(req.Args, "apply") || stage == "observation" && containsArgument(req.Args, "horizontalpodautoscaler")) {
+					return model.CommandResult{ExitCode: 1, FailureType: model.FailureExit}
+				}
+				return model.CommandResult{}
+			})
+			load, hpa := New(runner).runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), plan{loadURL: "http://127.0.0.1:8000/work"}, t.TempDir(), "hpa.yaml")
+			if loadStarted || load.Evidence.Status != model.StatusBlocked || hpa.Evidence.Status != model.StatusError || !hpa.MutationAttempted {
+				t.Fatalf("incorrect prerequisite classification: load=%+v hpa=%+v", load, hpa)
+			}
+		})
+	}
+}
+
+func TestHPAMetricsDeadlineBlocksRequiredAssertion(t *testing.T) {
 	runner := runnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
 		if request.Name == "kubectl" && containsArgument(request.Args, "horizontalpodautoscaler") {
@@ -59,8 +80,8 @@ func TestHPAMetricsDeadlineBecomesExplicitSkip(t *testing.T) {
 	service.loadProfile = k6executor.Profile{VirtualUsers: 2, Duration: time.Second}
 	current := plan{clusterName: "test", workloadName: "api", loadURL: "http://127.0.0.1:8080/ready", hpaName: "api", hpaTargetCPU: 70}
 	load, autoscaling := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), current, t.TempDir(), "hpa.yaml")
-	if load.Evidence.Status != model.StatusPass || autoscaling.Evidence.Status != model.StatusSkipped || autoscaling.Diagnostic == nil || autoscaling.Diagnostic.Code != "hpa_metrics_unavailable" {
-		t.Fatalf("deadline should be a metrics skip: load=%#v autoscaling=%#v", load, autoscaling)
+	if load.Evidence.Status != model.StatusPass || autoscaling.Evidence.Status != model.StatusBlocked || autoscaling.Diagnostic == nil || autoscaling.Diagnostic.Code != "hpa_metrics_unavailable" {
+		t.Fatalf("deadline should block the metrics prerequisite: load=%#v autoscaling=%#v", load, autoscaling)
 	}
 }
 
@@ -127,15 +148,15 @@ func TestHPAObservationFailureAfterLoadCompletionDoesNotHang(t *testing.T) {
 	})
 	service := New(runner)
 	service.poll = 50 * time.Millisecond
-	done := make(chan recoveryOutcome, 1)
+	done := make(chan [2]recoveryOutcome, 1)
 	go func() {
-		_, outcome := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), plan{loadURL: "http://127.0.0.1:8000/work", hpaTargetCPU: 70}, t.TempDir(), "hpa.yaml")
-		done <- outcome
+		load, outcome := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), plan{loadURL: "http://127.0.0.1:8000/work", hpaTargetCPU: 70}, t.TempDir(), "hpa.yaml")
+		done <- [2]recoveryOutcome{load, outcome}
 	}()
 	select {
-	case outcome := <-done:
-		if outcome.ExitCode != 2 {
-			t.Fatalf("unexpected outcome: %#v", outcome)
+	case outcomes := <-done:
+		if outcomes[1].ExitCode != 2 || outcomes[0].Evidence.Status != model.StatusPass || measurementValue(outcomes[0].Evidence.Measurements, "request_count") != "20" {
+			t.Fatalf("HPA error discarded the completed load observation: %#v", outcomes)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("joined an already-consumed load result")

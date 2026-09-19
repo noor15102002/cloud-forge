@@ -5,6 +5,11 @@ Versioning once releases begin.
 
 ## Unreleased
 
+- Add v1alpha3 evidence reliability: checked tool/server compatibility and verifier identity, effective test topology, preserved failures with bounded baseline restoration and continuation, and explicit plan versus execution reporting.
+- Align kubectl 1.35.5 with the explicitly selected k3s 1.35.5 runtime; fingerprint both client and server.
+- Keep v1alpha1/v1alpha2 reports readable and runtime configuration unchanged.
+
+
 - Added explicit Redis dependency provisioning with a digest-pinned internal-only image, shared resource budgeting and dependency startup evidence.
 - Added restricted test environment bindings, optional bounded flat JSON readiness assertions and a read-only `verify --plan` capability report.
 - Added v1alpha2 reports/config extensions, BLOCKED outcomes, dependency fingerprints and legacy v1alpha1 report/config compatibility.

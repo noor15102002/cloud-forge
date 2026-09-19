@@ -84,7 +84,7 @@ func validateConfiguration(config model.RuntimeConfiguration) error {
 	if err := validateExtensions(config); err != nil {
 		return err
 	}
-	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != model.VerificationSchemaVersion {
+	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != "v1alpha2" {
 		return errors.New("configuration schema_version must be v1alpha1 or v1alpha2")
 	}
 	if config.Runtime.Port < 0 || config.Runtime.Port > 65535 {

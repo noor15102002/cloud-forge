@@ -17,7 +17,6 @@ import (
 
 	"github.com/noor15102002/cloud-forge/internal/command"
 	"github.com/noor15102002/cloud-forge/internal/dependency"
-	"github.com/noor15102002/cloud-forge/internal/doctor"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -72,50 +71,6 @@ func fingerprintImage(ctx context.Context, runner command.Runner, image string, 
 				break
 			}
 		}
-	}
-}
-
-func fingerprintTools(ctx context.Context, runner command.Runner, current plan, fingerprint *model.RunFingerprint) {
-	specs := []struct {
-		name, command string
-		args          []string
-	}{
-		{"docker", "docker", []string{"info", "--format", "{{.ServerVersion}}"}},
-		{"k3d", "k3d", []string{"version"}}, {"k6", "k6", []string{"version"}}, {"trivy", "trivy", []string{"--version"}},
-		{"kubernetes", "kubectl", []string{"--context", "k3d-" + current.clusterName, "version", "--output=json"}},
-	}
-	complete := commitPattern.MatchString(fingerprint.CloudForgeCommit) &&
-		imagePattern.MatchString(fingerprint.ImageID) && fingerprint.WorkloadHash != ""
-	for _, spec := range specs {
-		result := runner.Run(ctx, command.Request{Name: spec.command, Args: spec.args, Timeout: 10 * time.Second})
-		version := ""
-		if !failed(result) && !result.Truncated {
-			if spec.name == "kubernetes" {
-				var versions struct {
-					ServerVersion struct {
-						GitVersion string `json:"gitVersion"`
-					} `json:"serverVersion"`
-				}
-				if json.Unmarshal([]byte(result.Stdout), &versions) == nil {
-					version = doctor.ParsedVersion(versions.ServerVersion.GitVersion)
-				}
-			} else {
-				version = doctor.ParsedVersion(result.Stdout)
-			}
-		}
-		if version == "" {
-			complete = false
-			version = "unknown"
-		}
-		fingerprint.Tools = append(fingerprint.Tools, model.ToolVersion{Name: spec.name, Version: version})
-	}
-	sort.Slice(fingerprint.Tools, func(i, j int) bool { return fingerprint.Tools[i].Name < fingerprint.Tools[j].Name })
-	if complete {
-		comparison := *fingerprint
-		comparison.SourceCommit, comparison.ImageID, comparison.ImageDigest = "", "", ""
-		comparison.SourceDirty = false
-		data, _ := json.Marshal(comparison)
-		fingerprint.CompatibilityKey = hashBytes(data)
 	}
 }
 

@@ -65,8 +65,8 @@ yet. It reports source-linked findings for container users and ports, probes,
 replicas, resources, Service ports, and HPA ranges. It does not execute
 repository code.
 
-Verification JSON is the canonical report and uses the versioned `v1alpha2` schema
-defined in [`schemas/verification.v1alpha2.schema.json`](schemas/verification.v1alpha2.schema.json).
+Verification JSON is the canonical report and uses the versioned `v1alpha3` schema
+defined in [`schemas/verification.v1alpha3.schema.json`](schemas/verification.v1alpha3.schema.json).
 Collections are sorted for repeatable output; consumers must not depend on JSON
 object key ordering. Verification also supports concise terminal output and a
 Markdown report suitable for a pull-request comment.
@@ -79,7 +79,7 @@ relative regressions. A detected regression exits with status `1`; missing,
 skipped, nonnumeric, or unit-incompatible evidence is reported as unavailable
 instead of being treated as a regression. Environment and effective workload
 fingerprints must also be complete and compatible. Baselines are read before repository
-code executes and must be strict, bounded `v1alpha1` or `v1alpha2` JSON files.
+code executes and must be strict, bounded `v1alpha1`, `v1alpha2` or `v1alpha3` JSON files.
 
 `verify` builds the root Dockerfile, creates a uniquely named k3d cluster,
 imports the image, provisions and waits for any explicitly enabled Redis dependency,
@@ -109,7 +109,7 @@ When an analyzed HPA safely targets the selected Deployment, verification
 applies a generated autoscaler after the lifecycle experiments. It waits for
 CPU metrics, runs the explicitly configured bounded k6 profile, and records request
 count, throughput, error rate, P50/P95/P99 latency, starting and peak replicas,
-and scale-up duration. HPAs above five replicas are rejected before execution. Missing metrics or insufficient scaling demand produce explicit skipped evidence.
+and scale-up duration. HPAs above five replicas are rejected before execution. Missing required metrics block the HPA assertion; insufficient scaling demand produces explicit skipped evidence.
 
 The packaged GitHub Action installs pinned runtime tools, uploads JSON and
 Markdown reports, supports explicitly selected baseline artifacts, and updates
@@ -143,3 +143,8 @@ or unsupported dependencies are BLOCKED before execution. Optional absent
 experiments are SKIPPED. Redis remains internal to the owned cluster, and its
 resources count against the workload budget. Semantic assertions distinguish
 HTTP 200 from configured readiness without copying response bodies into reports.
+
+Current verification includes [evidence reliability](docs/evidence-reliability.md):
+explicit runtime compatibility, topology-qualified availability results, bounded
+baseline restoration and continuation, and planned capabilities separated from
+completed evidence. Runtime builds require version and commit identity.

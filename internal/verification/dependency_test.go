@@ -187,7 +187,7 @@ func TestRedisStartupOutcomesCleanupAndApplicationOrdering(t *testing.T) {
 				}
 				return result
 			})
-			out := fixedService(runner).Run(ctx, root, Options{})
+			out := fixedService(runner).Run(ctx, root, testOptions())
 			expected := model.StatusPass
 			if mode == "unavailable" || mode == "timeout" {
 				expected = model.StatusBlocked
@@ -233,14 +233,14 @@ func TestDependencyFingerprintOmitsLiteralAndChangesCompatibility(t *testing.T) 
 		t.Fatal(err)
 	}
 	runner := runnerFunc(func(_ context.Context, r command.Request) model.CommandResult { return successfulCommand(r) })
-	fp := newFingerprint(context.Background(), runner, t.TempDir(), current, Options{})
+	fp := newFingerprint(context.Background(), runner, t.TempDir(), current, testOptions())
 	data, _ := json.Marshal(fp)
 	if strings.Contains(string(data), value) || len(fp.Dependencies) != 1 || fp.EnvironmentHash == "" {
 		t.Fatal("unsafe or incomplete fingerprint")
 	}
 	old := fp.EnvironmentHash
 	value = "another-test-value"
-	next := newFingerprint(context.Background(), runner, t.TempDir(), current, Options{})
+	next := newFingerprint(context.Background(), runner, t.TempDir(), current, testOptions())
 	if next.EnvironmentHash == old {
 		t.Fatal("literal changes silently compatible")
 	}
@@ -274,7 +274,7 @@ func TestExplicitSemanticReadinessPlanRequiresHTTP(t *testing.T) {
 		t.Fatal("blocked contract executed command")
 		return model.CommandResult{}
 	}))
-	out := service.Run(context.Background(), root, Options{})
+	out := service.Run(context.Background(), root, testOptions())
 	if out.Run.Status != model.StatusBlocked || out.ExitCode != 1 {
 		t.Fatal("semantic contract without HTTP endpoint was not blocked")
 	}
