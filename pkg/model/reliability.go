@@ -24,6 +24,7 @@ type RuntimeCompatibility struct {
 // TestTopology describes the effective test deployment, including defaults.
 // It is evidence context, not a claim about the application's production topology.
 type TestTopology struct {
+	ConnectionPolicy        string               `json:"availability_probe_connection_policy"`
 	Origin                  string               `json:"origin"`
 	Source                  *SourceReference     `json:"source,omitempty"`
 	Replicas                int32                `json:"replicas"`

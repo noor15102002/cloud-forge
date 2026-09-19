@@ -68,7 +68,7 @@ CloudForge waits for metrics-server to report CPU utilization, then runs a
 bounded k6 profile against the loopback endpoint. It normalizes request count,
 throughput, error rate, and P50/P95/P99 latency, while the Kubernetes adapter
 decodes official HPA status types to record starting and peak replicas. Missing
-metrics remain explicit skipped evidence with a diagnostic cause.
+required metrics block the HPA assertion with a diagnostic cause; insufficient demand remains an explicit skip.
 
 Verification JSON is canonicalized on a copy of the result before encoding:
 evidence, measurements, findings, diagnostics, and comparison collections use

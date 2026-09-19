@@ -1037,6 +1037,7 @@ func httpProbe(client *http.Client) probeFunc {
 		if err != nil {
 			return 0, err
 		}
+		request.Close = true // Sample new Service connections, not a previously selected backend.
 		response, err := client.Do(request)
 		if err != nil {
 			return 0, err

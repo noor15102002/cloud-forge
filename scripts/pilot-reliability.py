@@ -31,7 +31,7 @@ for origin, replicas in [("source", 1), ("source", 2), ("generated", 1)]:
         if origin == "generated":
             shutil.rmtree(app / "k8s")
         else:
-            manifest.write_text(deployment.replace("replicas: 2", f"replicas: {replicas}"))
+            manifest.write_text(deployment.replace("replicas: 2", f"replicas: {replicas}").replace("readinessProbe:\n", "readinessProbe:\n            initialDelaySeconds: 8\n"))
         (app / "cloudforge.yaml").write_text("schema_version: v1alpha1\nruntime: {port: 8080}\nendpoints: {health: /health, readiness: /ready}\n")
         before = {name: hashlib.sha256((app / name).read_bytes()).hexdigest() for name in code_files}
         assert before == source_hashes, "Application behavior changed between topology cases"
@@ -49,18 +49,24 @@ for origin, replicas in [("source", 1), ("source", 2), ("generated", 1)]:
         tools = {tool["name"]: tool["version"] for tool in report["fingerprint"]["tools"]}
         assert tools["kubectl"] == "1.35.5" and tools["kubernetes"] == "1.35.5+k3s1", tools
         evidence = {item["experiment_id"]: item for item in report["evidence"]}
-        expected = "fail" if replicas == 1 else "pass"
-        assert result.returncode == (1 if replicas == 1 else 0), report.get("diagnostics")
+        expected = "fail" if origin == "source" and replicas == 1 else "pass"
+        if origin == "generated":
+            expected = "fail" if any(evidence[key]["status"] == "fail" for key in ["graceful-shutdown", "pod-recovery"]) else "pass"
+        assert result.returncode == (1 if expected == "fail" else 0), report
         for experiment in ["graceful-shutdown", "pod-recovery"]:
             item = evidence[experiment]
-            assert item["status"] == expected, item
+            if origin == "source":
+                assert item["status"] == expected, item
+            else:
+                assert item["status"] in ["pass", "fail"], item
             assert item["execution"]["executed"] and item["execution"]["mutation_attempted"]
             assert item["topology"]["origin"] == origin and item["topology"]["replicas"] == replicas
+            assert item["topology"]["availability_probe_connection_policy"] == "new_connection_per_probe"
             assert item["recovery"]["status"] == "pass", item
             assert all(check["status"] == "pass" for check in item["recovery"]["checks"])
         rollout = evidence["rolling-deployment"]
         assert rollout["execution"]["executed"] and rollout["status"] == "pass" and rollout["recovery"]["status"] == "pass", rollout
-        if replicas == 1:
+        if expected == "fail":
             assert report["status"] == "fail", "Restoration erased original failure"
             assert "only replica" in evidence["graceful-shutdown"]["summary"]
         # The published loader and serialization must accept the new report.

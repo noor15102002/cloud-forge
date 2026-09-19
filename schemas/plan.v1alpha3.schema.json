@@ -243,6 +243,9 @@
         },
         "readiness_acceptance": {
           "$ref": "#/$defs/readinessAcceptance"
+        },
+        "availability_probe_connection_policy": {
+          "const": "new_connection_per_probe"
         }
       },
       "required": [
@@ -256,7 +259,8 @@
         "termination_grace_seconds",
         "min_ready_seconds",
         "probes",
-        "readiness_origin"
+        "readiness_origin",
+        "availability_probe_connection_policy"
       ]
     },
     "probe": {

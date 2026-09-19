@@ -11,7 +11,7 @@ import (
 )
 
 func testTopology(application model.Application, replicas int32, strategy appsv1.DeploymentStrategy, grace *int64, minReady int32, probes []*corev1.Probe, config model.RuntimeConfiguration) *model.TestTopology {
-	result := &model.TestTopology{Origin: "generated", ReplicaOrigin: "generated", StrategyOrigin: "kubernetes_default", ReadinessOrigin: "generated", Replicas: replicas, Strategy: "rolling_update", TerminationGraceSeconds: 30, MinReadySeconds: minReady, Probes: []model.Probe{}, ReadinessPath: config.Endpoints.Readiness, ReadinessAcceptance: config.Readiness}
+	result := &model.TestTopology{ConnectionPolicy: "new_connection_per_probe", Origin: "generated", ReplicaOrigin: "generated", StrategyOrigin: "kubernetes_default", ReadinessOrigin: "generated", Replicas: replicas, Strategy: "rolling_update", TerminationGraceSeconds: 30, MinReadySeconds: minReady, Probes: []model.Probe{}, ReadinessPath: config.Endpoints.Readiness, ReadinessAcceptance: config.Readiness}
 	if result.ReadinessPath != "" {
 		result.ReadinessScheme = "http"
 	}

@@ -52,6 +52,7 @@ func (c *readinessChecker) check(ctx context.Context, url string) readinessCheck
 	if err != nil {
 		return result
 	}
+	request.Close = true // Semantic availability uses the same fresh-connection policy.
 	response, err := c.client.Do(request)
 	if err != nil {
 		return result

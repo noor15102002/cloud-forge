@@ -50,6 +50,9 @@ while the application correctly handles SIGTERM. Service traffic alone cannot
 establish whether a particular in-flight request survived termination. Only
 the explicit targeted control experiment can establish that narrower claim.
 Generated test topology is not presented as a production deployment defect.
+Service availability probes use a new connection for each request, recorded in
+`topology.availability_probe_connection_policy`. Earlier keep-alive observations remain valid for
+the traffic they measured; neither policy proves arbitrary client workloads.
 HPA evidence records the fixed starting topology and separately measures actual
 replica changes; no PodDisruptionBudget is inferred or provisioned.
 
@@ -116,8 +119,12 @@ observation errors, cancellation, compatibility policy, and report loading.
 
 The disposable `Evidence reliability` workflow runs the same healthy Node
 application code under one and two source-derived replicas, plus a generated
-single-replica topology. Application/Dockerfile hashes must match across cases.
-Single-replica availability failures must remain in the report while later
+single-replica topology. Application/Dockerfile hashes must match across cases. Both source-derived
+cases use the same eight-second initial readiness delay, creating a controlled
+replacement gap after the old process exits; replicas are the only difference.
+The generated case records its actual outcome without forcing a failure solely
+because it has one replica.
+Observed single-replica availability failures must remain in the report while later
 pod-recovery and rollout evidence are collected. Two replicas must maintain
 availability in the exercised case. Both topologies use the same application
 behavior; these results do not establish universal zero-downtime guarantees.

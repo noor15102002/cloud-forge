@@ -107,6 +107,8 @@ func checkRuntimeServer(ctx context.Context, runner command.Runner, current plan
 	result := runner.Run(ctx, command.Request{Name: "kubectl", Args: []string{"--context", "k3d-" + current.clusterName, "version", "--output=json"}, Timeout: 10 * time.Second, OutputLimit: 16 * 1024})
 	client, server := kubernetesVersions(result.Stdout)
 	if failed(result) || result.Truncated || client == "" || server == "" {
+		addCompatibility(out.Run.Compatibility, "kubectl-observed-server", "not_validated", "The actual client/server versions could not be observed reliably.")
+		out.Run.Fingerprint.Tools = append(out.Run.Fingerprint.Tools, model.ToolVersion{Name: "kubernetes", Version: "unknown"})
 		out.addError("runtime_version_unavailable", "CloudForge could not observe the isolated Kubernetes client/server versions.", "No application deployment was attempted; inspect the isolated API and retry.")
 		return false
 	}

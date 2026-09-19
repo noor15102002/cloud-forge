@@ -107,6 +107,7 @@ func capabilityPlan(analysis model.AnalysisResult, current plan, config model.Ru
 		"Runtime compatibility and verifier identity are checked during execution, not by this read-only plan.",
 		"Baseline restoration validates deployment state and health, not business-data equivalence.",
 		"No PodDisruptionBudget or production topology is inferred.",
+		"Service availability probes open new connections; persistent-client session continuity is not inferred.",
 	}
 	for i := range result.Capabilities {
 		c := &result.Capabilities[i]

@@ -73,7 +73,7 @@ metricsComplete:
 		if reason == "" {
 			reason = "CPU metrics did not become available before the bounded observation deadline."
 		}
-		return loadOutcome, skippedAutoscalingWithDiagnostic(reason)
+		return loadOutcome, blockedAutoscalingWithDiagnostic(reason)
 	}
 
 	loadStarted := time.Now()
@@ -240,7 +240,7 @@ func skippedLoad(reason string) recoveryOutcome {
 func skippedAutoscaling(reason string) recoveryOutcome {
 	return recoveryOutcome{Evidence: model.Evidence{ExperimentID: "horizontal-autoscaling", Title: "Horizontal autoscaling under load", Status: model.StatusSkipped, Summary: reason}}
 }
-func skippedAutoscalingWithDiagnostic(reason string) recoveryOutcome {
+func blockedAutoscalingWithDiagnostic(reason string) recoveryOutcome {
 	result := lifecycleBlocked("horizontal-autoscaling", "Horizontal autoscaling under load", "The required CPU metrics prerequisite was unavailable; the HPA scale assertion was blocked.")
 	result.Diagnostic = &model.Diagnostic{Code: "hpa_metrics_unavailable", Status: model.StatusBlocked, Message: result.Evidence.Summary, Guidance: "Observed cause: " + reason + " Check that metrics-server is healthy and that the Deployment declares CPU requests."}
 	return result

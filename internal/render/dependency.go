@@ -115,7 +115,7 @@ func topologyDescription(t *model.TestTopology) string {
 	if t.MaxUnavailable != nil {
 		unavailable = *t.MaxUnavailable
 	}
-	return fmt.Sprintf("%s topology; %d replicas (%s); %s strategy (%s); maxUnavailable=%s; maxSurge=%s; readiness=%s %s (%s).", t.Origin, t.Replicas, t.ReplicaOrigin, t.Strategy, t.StrategyOrigin, unavailable, surge, t.ReadinessScheme, t.ReadinessPath, t.ReadinessOrigin)
+	return fmt.Sprintf("%s topology; %d replicas (%s); %s strategy (%s); maxUnavailable=%s; maxSurge=%s; readiness=%s %s (%s); availability probe connections=%s.", t.Origin, t.Replicas, t.ReplicaOrigin, t.Strategy, t.StrategyOrigin, unavailable, surge, t.ReadinessScheme, t.ReadinessPath, t.ReadinessOrigin, t.ConnectionPolicy)
 }
 
 func reliabilityText(w io.Writer, run model.VerificationRun) error {

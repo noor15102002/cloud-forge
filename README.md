@@ -109,7 +109,7 @@ When an analyzed HPA safely targets the selected Deployment, verification
 applies a generated autoscaler after the lifecycle experiments. It waits for
 CPU metrics, runs the explicitly configured bounded k6 profile, and records request
 count, throughput, error rate, P50/P95/P99 latency, starting and peak replicas,
-and scale-up duration. HPAs above five replicas are rejected before execution. Missing metrics or insufficient scaling demand produce explicit skipped evidence.
+and scale-up duration. HPAs above five replicas are rejected before execution. Missing required metrics block the HPA assertion; insufficient scaling demand produces explicit skipped evidence.
 
 The packaged GitHub Action installs pinned runtime tools, uploads JSON and
 Markdown reports, supports explicitly selected baseline artifacts, and updates

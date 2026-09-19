@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -340,5 +343,33 @@ func TestTopologyPreservesDefaultsAndSameEvidenceMeaning(t *testing.T) {
 	}
 	if current.topology.Origin != "generated" || current.topology.Replicas != 1 || current.topology.ReadinessOrigin != "generated" {
 		t.Fatal("generated topology undisclosed")
+	}
+}
+
+func TestAvailabilityAndSemanticProbesUseFreshConnections(t *testing.T) {
+	var mu sync.Mutex
+	addresses := map[string]bool{}
+	allClosed := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		addresses[r.RemoteAddr] = true
+		allClosed = allClosed && r.Close
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"status":"ready"}`))
+	}))
+	defer server.Close()
+	probes := []probeFunc{httpProbe(directHTTPClient()), newReadinessChecker(directHTTPClient(), model.ReadinessAcceptance{Status: 200, JSON: map[string]string{"status": "ready"}}).probe}
+	for _, probe := range probes {
+		for range 2 {
+			status, err := probe(context.Background(), server.URL)
+			if err != nil || status != 200 {
+				t.Fatalf("probe failed: %d %v", status, err)
+			}
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(addresses) != 4 || !allClosed {
+		t.Fatal("Service availability reused a previously selected backend connection")
 	}
 }
