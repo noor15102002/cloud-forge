@@ -60,12 +60,13 @@ Tracking: [#37](https://github.com/noor15102002/cloud-forge/issues/37),
 
 Scope is frozen to [four reliability improvements](evidence-reliability.md):
 
-- [ ] Runtime/tool compatibility, explicit supported/unsupported/not_validated policy, and verifier identity.
-- [ ] Topology-aware availability evidence with source/generated provenance.
-- [ ] Bounded baseline restoration and continuation without erasing failed evidence.
-- [ ] Planner explanations separated from completed evidence.
-- [ ] Final full runtime, same-code topology and cancellation/cleanup matrix.
+- [x] Runtime/tool compatibility, explicit supported/unsupported/not_validated policy, and verifier identity.
+- [x] Topology-aware availability evidence with source/generated provenance.
+- [x] Bounded baseline restoration and continuation without erasing failed evidence.
+- [x] Planner explanations separated from completed evidence.
+- [x] Final full runtime, same-code topology and cancellation/cleanup matrix.
 
+See the [validated acceptance record](evidence-reliability-evidence.md).
 No new provider, workload category or private application pilot is included.
 
 ## v1.0 — Public V1
@@ -74,5 +75,5 @@ No new provider, workload category or private application pilot is included.
 - [x] Test several external repositories without repository-specific behavior.
 - [x] Harden cleanup, diagnostics, interruption, and unsupported-stack behavior.
 - [ ] [Calibrate performance-regression thresholds](https://github.com/noor15102002/cloud-forge/issues/31) across repeated compatible runner environments; the current 10% timing heuristic is not statistical significance.
-- [ ] [Align the bundled kubectl/Kubernetes version pair](https://github.com/noor15102002/cloud-forge/issues/35) before expanding pilots.
+- [x] [Align the bundled kubectl/Kubernetes version pair](https://github.com/noor15102002/cloud-forge/issues/35) before expanding pilots.
 - [ ] Produce reproducible release binaries and checksums.

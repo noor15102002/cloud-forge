@@ -134,9 +134,10 @@ pod-recovery and rollout evidence are collected. Two replicas must maintain
 availability in the exercised case. Both topologies use the same application
 behavior; these results do not establish universal zero-downtime guarantees.
 
-The full reference, Redis, public stateless application, packaged Action and
-real cancellation/cleanup matrix must also pass on the final implementation
-commit. Validation run links are recorded after those jobs complete.
+The final reference, Redis, public stateless application, packaged Action and
+real cancellation/cleanup matrix passed. See the [validated acceptance record](evidence-reliability-evidence.md)
+for run links, measured topology differences, the retained API-observation error
+and successful unchanged retry, and the remaining limits.
 
 ## Frozen follow-up order
 
