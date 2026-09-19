@@ -269,12 +269,15 @@ type Measurement struct {
 
 // Evidence records measured behavior for one verification experiment.
 type Evidence struct {
-	ExperimentID string        `json:"experiment_id"`
-	Title        string        `json:"title"`
-	Status       Status        `json:"status"`
-	Summary      string        `json:"summary"`
-	DurationMS   int64         `json:"duration_ms"`
-	Measurements []Measurement `json:"measurements,omitempty"`
+	Topology     *TestTopology        `json:"topology,omitempty"`
+	Execution    *ExperimentExecution `json:"execution,omitempty"`
+	Recovery     *RecoveryEvidence    `json:"recovery,omitempty"`
+	ExperimentID string               `json:"experiment_id"`
+	Title        string               `json:"title"`
+	Status       Status               `json:"status"`
+	Summary      string               `json:"summary"`
+	DurationMS   int64                `json:"duration_ms"`
+	Measurements []Measurement        `json:"measurements,omitempty"`
 }
 
 // ComparisonKind identifies the field compared with a baseline report.
@@ -325,6 +328,8 @@ type VerificationEnvironment struct {
 
 // VerificationRun is the versioned result of a CloudForge verification.
 type VerificationRun struct {
+	Producer      *BuildIdentity          `json:"producer,omitempty"`
+	Compatibility *RuntimeCompatibility   `json:"compatibility,omitempty"`
 	Plan          *VerificationPlan       `json:"plan,omitempty"`
 	Dependencies  []DependencyEvidence    `json:"dependencies,omitempty"`
 	Fingerprint   *RunFingerprint         `json:"fingerprint,omitempty"`

@@ -10,6 +10,12 @@ import (
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
+// KubernetesVersion is the explicit server selected for disposable runs.
+const KubernetesVersion = "1.35.5+k3s1"
+
+// NodeImage fixes the runtime independently of a local k3d default.
+const NodeImage = "rancher/k3s:v1.35.5-k3s1"
+
 // Client manages one-run k3d clusters.
 type Client struct{ runner command.Runner }
 
@@ -20,7 +26,7 @@ func New(runner command.Runner) *Client { return &Client{runner: runner} }
 func (c *Client) Create(ctx context.Context, name string, nodePort int) model.CommandResult {
 	portMapping := "127.0.0.1:0:" + strconv.Itoa(nodePort) + "@server:0"
 	return c.runner.Run(ctx, command.Request{
-		Name: "k3d", Args: []string{"cluster", "create", name, "--servers-memory", "4g", "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false", "--runtime-label", "cloudforge.dev/owned=true@all", "--servers", "1", "--agents", "0", "--port", portMapping, "--wait", "--timeout", "90s"},
+		Name: "k3d", Args: []string{"cluster", "create", name, "--image", NodeImage, "--servers-memory", "4g", "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false", "--runtime-label", "cloudforge.dev/owned=true@all", "--servers", "1", "--agents", "0", "--port", portMapping, "--wait", "--timeout", "90s"},
 		Timeout: 2 * time.Minute, OutputLimit: 128 * 1024,
 	})
 }

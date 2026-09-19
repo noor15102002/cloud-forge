@@ -12,7 +12,9 @@ import (
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
-func (s *Service) runLoadAndAutoscaling(ctx context.Context, loadClient *k6executor.Client, client *kubernetes.Client, current plan, workspace, hpaManifestPath string) (recoveryOutcome, recoveryOutcome) {
+func (s *Service) runLoadAndAutoscaling(ctx context.Context, loadClient *k6executor.Client, client *kubernetes.Client, current plan, workspace, hpaManifestPath string) (loadResult, autoscalingResult recoveryOutcome) {
+	mutationAttempted := false
+	defer func() { autoscalingResult.MutationAttempted = mutationAttempted }()
 	ctx, cancelExperiment := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancelExperiment()
 	loadURL := current.loadURL
@@ -24,6 +26,7 @@ func (s *Service) runLoadAndAutoscaling(ctx context.Context, loadClient *k6execu
 	metricsReady := false
 	metricsReason := ""
 	if hpaManifestPath != "" {
+		mutationAttempted = true
 		if result := client.Apply(ctx, current.clusterName, hpaManifestPath); failed(result) {
 			failure := lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_apply_failed", "CloudForge could not apply the generated HPA.", commandGuidance(result, nil), trafficObservation{})
 			return skippedLoad("The load profile was not started because the HPA could not be applied."), failure
@@ -238,8 +241,8 @@ func skippedAutoscaling(reason string) recoveryOutcome {
 	return recoveryOutcome{Evidence: model.Evidence{ExperimentID: "horizontal-autoscaling", Title: "Horizontal autoscaling under load", Status: model.StatusSkipped, Summary: reason}}
 }
 func skippedAutoscalingWithDiagnostic(reason string) recoveryOutcome {
-	result := skippedAutoscaling("CPU metrics were unavailable, so CloudForge skipped the HPA scale assertion.")
-	result.Diagnostic = &model.Diagnostic{Code: "hpa_metrics_unavailable", Status: model.StatusWarn, Message: result.Evidence.Summary, Guidance: "Observed cause: " + reason + " Check that metrics-server is healthy and that the Deployment declares CPU requests."}
+	result := lifecycleBlocked("horizontal-autoscaling", "Horizontal autoscaling under load", "The required CPU metrics prerequisite was unavailable; the HPA scale assertion was blocked.")
+	result.Diagnostic = &model.Diagnostic{Code: "hpa_metrics_unavailable", Status: model.StatusBlocked, Message: result.Evidence.Summary, Guidance: "Observed cause: " + reason + " Check that metrics-server is healthy and that the Deployment declares CPU requests."}
 	return result
 }
 func failedRequests(summary k6executor.Summary) int64 {

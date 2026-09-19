@@ -8,11 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
+
+func TestMain(m *testing.M) { Commit = strings.Repeat("a", 40); os.Exit(m.Run()) }
 
 func TestAnalyzeJSONContract(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -89,7 +92,7 @@ func TestVerifyMarkdownReport(t *testing.T) {
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("verify failed: %v stderr=%q", err, stderr.String())
 	}
-	if !bytes.Contains(stdout.Bytes(), []byte("<!-- cloudforge-verification-report:v1alpha2 -->")) || !bytes.Contains(stdout.Bytes(), []byte("## CloudForge verification")) {
+	if !bytes.Contains(stdout.Bytes(), []byte("<!-- cloudforge-verification-report:v1alpha3 -->")) || !bytes.Contains(stdout.Bytes(), []byte("## CloudForge verification")) {
 		t.Fatalf("unexpected Markdown report:\n%s", stdout.String())
 	}
 }
@@ -178,10 +181,10 @@ func cliTestRunner(vulnerable bool) cliRunnerFunc {
 			result.Stdout = `{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
 		}
 		if request.Name == "k3d" || request.Name == "k6" || (request.Name == "trivy" && len(request.Args) == 1) || (request.Name == "docker" && len(request.Args) > 0 && request.Args[0] == "info") {
-			result.Stdout = "version 1.2.3"
+			result.Stdout = map[string]string{"k3d": "5.9.0", "k6": "2.2.0", "trivy": "0.74.0", "docker": "28.0.4"}[request.Name]
 		}
 		if request.Name == "kubectl" && slices.Contains(request.Args, "--output=json") {
-			result.Stdout = `{"serverVersion":{"gitVersion":"v1.34.0"}}`
+			result.Stdout = `{"clientVersion":{"gitVersion":"v1.35.5"},"serverVersion":{"gitVersion":"v1.35.5+k3s1"}}`
 		}
 		if request.Name == "docker" && slices.Contains(request.Args, "inspect") {
 			result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" []`

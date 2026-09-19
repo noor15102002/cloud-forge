@@ -121,7 +121,7 @@ func TestLoadRejectsSchemaMismatchUnknownFieldsAndDuplicateMetrics(t *testing.T)
 			if err == nil {
 				t.Fatal("expected baseline error")
 			}
-			if name == "schema" && !strings.Contains(err.Error(), `expected v1alpha1 or "v1alpha2"`) {
+			if name == "schema" && !strings.Contains(err.Error(), `expected v1alpha1, v1alpha2 or "v1alpha3"`) {
 				t.Fatalf("schema mismatch was not actionable: %v", err)
 			}
 		})
@@ -193,5 +193,15 @@ func TestLegacyAndDependencyReportsDoNotCompareAcrossSchemas(t *testing.T) {
 	result := Compare(current, old)
 	if len(result.Unavailable) != 1 || len(result.Regressions) != 0 {
 		t.Fatal("different schema environments were compared")
+	}
+}
+
+func TestReliabilitySchemaMatchesPublishedContract(t *testing.T) {
+	published, err := os.ReadFile(filepath.Join("..", "..", "schemas", "verification.v1alpha3.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(published, reliabilityVerificationSchema) {
+		t.Fatal("published reliability schema differs from embedded loader contract")
 	}
 }

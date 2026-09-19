@@ -20,12 +20,13 @@ type Client struct{ runner command.Runner }
 
 // PodState contains the safe pod identity and readiness data needed by experiments.
 type PodState struct {
-	Name        string
-	Terminating bool
-	Ready       bool
-	Restarts    int32
-	Image       string
-	Reason      string
+	ReplicaSetUID string
+	Name          string
+	Terminating   bool
+	Ready         bool
+	Restarts      int32
+	Image         string
+	Reason        string
 }
 
 // HPAState contains safe autoscaler state needed by the load experiment.
@@ -82,6 +83,9 @@ func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector s
 	if result.FailureType != model.FailureNone || result.ExitCode != 0 {
 		return nil, result, nil
 	}
+	if result.Truncated {
+		return nil, result, fmt.Errorf("pod observation exceeded its bound")
+	}
 	var pods corev1.PodList
 	if err := json.Unmarshal([]byte(result.Stdout), &pods); err != nil {
 		return nil, result, fmt.Errorf("decode pod state: %w", err)
@@ -89,6 +93,11 @@ func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector s
 	states := make([]PodState, 0, len(pods.Items))
 	for _, pod := range pods.Items {
 		state := PodState{Name: pod.Name, Ready: podReady(pod), Terminating: pod.DeletionTimestamp != nil, Reason: podReason(pod)}
+		for _, ref := range pod.OwnerReferences {
+			if ref.Kind == "ReplicaSet" && ref.Controller != nil && *ref.Controller {
+				state.ReplicaSetUID = string(ref.UID)
+			}
+		}
 		if len(pod.Spec.Containers) > 0 {
 			state.Image = pod.Spec.Containers[0].Image
 		}

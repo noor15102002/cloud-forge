@@ -115,7 +115,7 @@ func TestPilotPrivateConfigurationAndBuildBounds(t *testing.T) {
 		return successfulCommand(request)
 	})
 	service := fixedService(runner)
-	outcome := service.Run(context.Background(), fixturePath(t), Options{})
+	outcome := service.Run(context.Background(), fixturePath(t), testOptions())
 	if outcome.ExitCode != 0 {
 		t.Fatalf("unexpected result: %#v", outcome)
 	}
@@ -163,23 +163,20 @@ func TestWorkloadFingerprintIgnoresRunIDYAMLQuoting(t *testing.T) {
 }
 
 func TestCompatibilityRequiresKnownCleanCloudForgeAndImageIdentity(t *testing.T) {
-	runner := runnerFunc(func(_ context.Context, req command.Request) model.CommandResult {
-		result := model.CommandResult{Stdout: "version 1.2.3"}
-		if req.Name == "kubectl" {
-			result.Stdout = `{"serverVersion":{"gitVersion":"v1.34.0"}}`
-		}
-		return result
-	})
+	tools := []model.ToolVersion{}
+	for _, name := range []string{"docker", "k3d", "kubectl", "kubernetes", "k6", "trivy"} {
+		tools = append(tools, model.ToolVersion{Name: name, Version: "1.2.3"})
+	}
 	for _, commit := range []string{"unknown", strings.Repeat("a", 40) + "+dirty", strings.Repeat("a", 40)} {
-		fingerprint := &model.RunFingerprint{CloudForgeCommit: commit, ImageID: "sha256:" + strings.Repeat("b", 64), WorkloadHash: "test"}
-		fingerprintTools(context.Background(), runner, plan{}, fingerprint)
-		if (fingerprint.CompatibilityKey != "") != (commit == strings.Repeat("a", 40)) {
+		fp := &model.RunFingerprint{CloudForgeCommit: commit, ImageID: "sha256:" + strings.Repeat("b", 64), WorkloadHash: "test", Tools: tools}
+		completeFingerprint(fp)
+		if (fp.CompatibilityKey != "") != (commit == strings.Repeat("a", 40)) {
 			t.Fatalf("wrong compatibility for build %q", commit)
 		}
 	}
-	fingerprint := &model.RunFingerprint{CloudForgeCommit: strings.Repeat("a", 40), WorkloadHash: "test"}
-	fingerprintTools(context.Background(), runner, plan{}, fingerprint)
-	if fingerprint.CompatibilityKey != "" {
+	fp := &model.RunFingerprint{CloudForgeCommit: strings.Repeat("a", 40), WorkloadHash: "test", Tools: tools}
+	completeFingerprint(fp)
+	if fp.CompatibilityKey != "" {
 		t.Fatal("missing image identity established compatibility")
 	}
 }

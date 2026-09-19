@@ -114,11 +114,20 @@ runs:
       id: build
       shell: bash
       working-directory: ${{ github.action_path }}
+      env:
+        CLOUDFORGE_ACTION_REF: ${{ github.action_ref }}
       run: |
         set -euo pipefail
         install_dir="$(mktemp -d "$RUNNER_TEMP/cloudforge-action.XXXXXX")"
         binary="$install_dir/cloudforge"
-        go build -trimpath -o "$binary" ./cmd/cloudforge
+        build_flags=()
+        if [[ "$CLOUDFORGE_ACTION_REF" =~ ^[0-9a-f]{40}$ ]]; then
+          build_flags=(-ldflags "-X github.com/noor15102002/cloud-forge/internal/cli.Commit=$CLOUDFORGE_ACTION_REF")
+        elif [ "$(git rev-parse --show-toplevel 2>/dev/null || true)" != "$PWD" ]; then
+          echo "Pin the external CloudForge Action to a full commit SHA so runtime evidence identifies the executed verifier." >&2
+          exit 2
+        fi
+        go build -trimpath "${build_flags[@]}" -o "$binary" ./cmd/cloudforge
         echo "binary=$binary" >> "$GITHUB_OUTPUT"
 
     - name: Verify application and render reports

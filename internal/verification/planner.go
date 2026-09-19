@@ -2,6 +2,7 @@ package verification
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
@@ -80,6 +81,69 @@ func capabilityPlan(analysis model.AnalysisResult, current plan, config model.Ru
 		add("horizontal-autoscaling", "supported", "Observe autoscaling only when sufficient demand is established.")
 	}
 	add("dependency-loss", "skipped", "Dependency disruption is outside this release's supported experiments.")
+
+	result.Topology = current.topology
+	detected := map[string]bool{}
+	for _, runtime := range analysis.Application.Runtimes {
+		detected[runtime.Language] = true
+		if runtime.Framework != "" {
+			detected[runtime.Framework] = true
+		}
+	}
+	for _, dep := range analysis.Application.Dependencies {
+		detected[dep.Name] = true
+	}
+	if current.readinessPath != "" {
+		detected["http-service"] = true
+	}
+	for name := range detected {
+		if name != "" {
+			result.Detected = append(result.Detected, name)
+		}
+	}
+	sort.Strings(result.Detected)
+	result.Limitations = []string{
+		"Planned support does not establish execution or a passing observation.",
+		"Runtime compatibility and verifier identity are checked during execution, not by this read-only plan.",
+		"Baseline restoration validates deployment state and health, not business-data equivalence.",
+		"No PodDisruptionBudget or production topology is inferred.",
+	}
+	for i := range result.Capabilities {
+		c := &result.Capabilities[i]
+		switch c.Name {
+		case "readiness-gating", "inflight-shutdown", "graceful-shutdown", "pod-recovery", "rolling-deployment", "load-profile", "horizontal-autoscaling":
+			c.Prerequisites = []string{"dependency-readiness", "intended-image-and-revision", "planned-ready-replicas", "service-readiness"}
+			if config.Readiness != nil {
+				c.Prerequisites = append(c.Prerequisites, "semantic-readiness")
+			}
+			c.RecoveryStrategy = baselineRecoveryStrategy
+			switch c.Name {
+			case "readiness-gating":
+				c.Prerequisites = append(c.Prerequisites, "explicit-control-protocol", "at-least-two-replicas")
+				c.Mutation = "Temporarily mark a selected pod unready; restore readiness through the explicit control protocol."
+			case "inflight-shutdown":
+				c.Prerequisites = append(c.Prerequisites, "explicit-control-protocol")
+				c.Mutation = "Terminate the pod handling an acknowledged request."
+			case "graceful-shutdown", "pod-recovery":
+				c.Mutation = "Delete one application pod and observe its replacement."
+			case "rolling-deployment":
+				c.Mutation = "Build image B and change the Deployment image; restore image A afterwards."
+			case "load-profile":
+				c.Prerequisites = append(c.Prerequisites, "representative-get-endpoint")
+				c.Mutation = "Send bounded GET traffic; application data side effects cannot be restored generically."
+			case "horizontal-autoscaling":
+				c.Prerequisites = append(c.Prerequisites, "supported-hpa", "load-profile", "cpu-metrics")
+				c.Mutation = "Apply the test HPA, observe demand and replicas, then remove it and restore fixed replicas."
+			}
+			if c.Name == "graceful-shutdown" {
+				c.Limitations = []string{"Service availability probes do not prove a specific request's SIGTERM handling."}
+			}
+			if c.Name == "horizontal-autoscaling" {
+				c.Limitations = []string{"Scaling is only required when measured demand establishes that expectation."}
+			}
+			sort.Strings(c.Prerequisites)
+		}
+	}
 	sort.Slice(result.Capabilities, func(i, j int) bool { return result.Capabilities[i].Name < result.Capabilities[j].Name })
 	return result
 }
@@ -92,14 +156,36 @@ func appendUnexecuted(out *Outcome) {
 	for _, e := range out.Run.Evidence {
 		seen[e.ExperimentID] = true
 	}
-	for _, capability := range out.Run.Plan.Capabilities {
-		if seen[capability.Name] || capability.Name == "workload" || len(capability.Name) >= 11 && capability.Name[:11] == "dependency." {
+	canceled := false
+	for _, d := range out.Run.Diagnostics {
+		if strings.Contains(d.Code, "canceled") {
+			canceled = true
+		}
+	}
+	for _, c := range out.Run.Plan.Capabilities {
+		if seen[c.Name] || c.Name == "workload" || strings.HasPrefix(c.Name, "dependency.") {
 			continue
 		}
-		reason := capability.Reason
-		if capability.Disposition == "supported" {
-			reason = "Not executed because verification stopped before this experiment."
+		status, reason := model.StatusSkipped, c.Reason
+		if c.Disposition == "supported" || c.Disposition == "blocked" {
+			status, reason = model.StatusBlocked, "Execution prerequisites were not established before this experiment."
 		}
-		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{ExperimentID: capability.Name, Title: capability.Name, Status: model.StatusSkipped, Summary: reason})
+		if canceled {
+			status, reason = model.StatusSkipped, "Not scheduled after cancellation; previously collected evidence is preserved."
+		}
+		if out.Run.Status == model.StatusSkipped {
+			status, reason = model.StatusSkipped, "Plan-only inspection; no experiment was executed."
+		}
+		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{ExperimentID: c.Name, Title: c.Name, Status: status, Summary: reason, Topology: out.Run.Plan.Topology, Execution: &model.ExperimentExecution{Executed: false}})
+	}
+	for i := range out.Run.Evidence {
+		e := &out.Run.Evidence[i]
+		if e.Execution == nil {
+			e.Execution = &model.ExperimentExecution{Executed: e.Status != model.StatusSkipped && e.Status != model.StatusBlocked}
+		}
+		switch e.ExperimentID {
+		case "deployment-readiness", "semantic-readiness":
+			e.Topology = out.Run.Plan.Topology
+		}
 	}
 }

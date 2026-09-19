@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +14,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	"sigs.k8s.io/yaml"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
 	"github.com/noor15102002/cloud-forge/pkg/model"
@@ -31,7 +35,7 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 		calls = append(calls, request)
 		result := successfulCommand(request)
 		result.DurationMS = 12
-		if request.Name == "trivy" {
+		if request.Name == "trivy" && containsArgument(request.Args, "image") {
 			result.Stdout = `{"Results":[]}`
 		}
 		if request.Name == "docker" && containsArgument(request.Args, "port") {
@@ -51,11 +55,11 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	})
 	service := fixedService(runner)
 
-	outcome := service.Run(context.Background(), fixturePath(t), Options{})
+	outcome := service.Run(context.Background(), fixturePath(t), testOptions())
 	if outcome.ExitCode != 0 || outcome.Run.Status != model.StatusPass {
 		t.Fatalf("unexpected outcome: %#v", outcome)
 	}
-	if len(outcome.Run.Evidence) != 12 || outcome.Run.Evidence[2].Measurements[0].Value != "2" {
+	if len(outcome.Run.Evidence) != 12 || evidenceByID(outcome.Run.Evidence, "deployment-readiness").Measurements[0].Value != "2" {
 		t.Fatalf("missing readiness evidence: %#v", outcome.Run.Evidence)
 	}
 	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
@@ -108,7 +112,7 @@ func TestBuildFailureDoesNotCreateCluster(t *testing.T) {
 		return successfulCommand(request)
 	})
 	service := fixedService(runner)
-	outcome := service.Run(context.Background(), fixturePath(t), Options{})
+	outcome := service.Run(context.Background(), fixturePath(t), testOptions())
 	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || hasCommand(calls, "k3d", "create") || !hasCommand(calls, "docker", "rm") {
 		t.Fatalf("unexpected build failure behavior: outcome=%#v calls=%#v", outcome, calls)
 	}
@@ -130,7 +134,7 @@ func TestInterruptedBuildIsExecutionErrorAndUsesFreshCleanupContext(t *testing.T
 		}
 		return successfulCommand(request)
 	})
-	outcome := fixedService(runner).Run(ctx, fixturePath(t), Options{})
+	outcome := fixedService(runner).Run(ctx, fixturePath(t), testOptions())
 	build := evidenceByID(outcome.Run.Evidence, "container-build")
 	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError || build == nil || build.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "container_build_failed") {
 		t.Fatalf("interrupted build was not an execution error: %#v", outcome)
@@ -166,13 +170,13 @@ func TestTrivyFailureIsExecutionErrorAndRemovesImage(t *testing.T) {
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		calls = append(calls, request)
 		result := successfulCommand(request)
-		if request.Name == "trivy" {
+		if request.Name == "trivy" && containsArgument(request.Args, "image") {
 			result.ExitCode = 1
 			result.FailureType = model.FailureExit
 		}
 		return result
 	})
-	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), testOptions())
 	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "trivy_scan_failed") {
 		t.Fatalf("unexpected Trivy failure outcome: %#v", outcome)
 	}
@@ -184,12 +188,12 @@ func TestTrivyFailureIsExecutionErrorAndRemovesImage(t *testing.T) {
 func TestMalformedTrivyOutputIsExecutionError(t *testing.T) {
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := successfulCommand(request)
-		if request.Name == "trivy" {
+		if request.Name == "trivy" && containsArgument(request.Args, "image") {
 			result.Stdout = "{"
 		}
 		return result
 	})
-	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), testOptions())
 	if outcome.ExitCode != 2 || !hasDiagnosticCode(outcome.Run.Diagnostics, "trivy_output_invalid") {
 		t.Fatalf("unexpected malformed scan outcome: %#v", outcome)
 	}
@@ -198,7 +202,7 @@ func TestMalformedTrivyOutputIsExecutionError(t *testing.T) {
 func TestVulnerabilityFindingProducesWarningWithoutExecutionFailure(t *testing.T) {
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := successfulCommand(request)
-		if request.Name == "trivy" {
+		if request.Name == "trivy" && containsArgument(request.Args, "image") {
 			result.Stdout = `{"Results":[{"Target":"image (alpine 3.23)","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libc","InstalledVersion":"1","Severity":"HIGH"}]}]}`
 		}
 		if request.Name == "docker" && containsArgument(request.Args, "port") {
@@ -209,7 +213,7 @@ func TestVulnerabilityFindingProducesWarningWithoutExecutionFailure(t *testing.T
 		}
 		return result
 	})
-	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), testOptions())
 	if outcome.ExitCode != 0 || outcome.Run.Status != model.StatusWarn {
 		t.Fatalf("vulnerability should be a warning, not an execution failure: %#v", outcome)
 	}
@@ -223,7 +227,7 @@ func TestReadinessFailureStillCleansUp(t *testing.T) {
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		calls = append(calls, request)
 		result := successfulCommand(request)
-		if request.Name == "trivy" {
+		if request.Name == "trivy" && containsArgument(request.Args, "image") {
 			result.Stdout = `{"Results":[]}`
 		}
 		if request.Name == "docker" && containsArgument(request.Args, "port") {
@@ -238,7 +242,7 @@ func TestReadinessFailureStillCleansUp(t *testing.T) {
 		}
 		return result
 	})
-	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), testOptions())
 	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail {
 		t.Fatalf("unexpected readiness outcome: %#v", outcome)
 	}
@@ -259,7 +263,7 @@ func TestReadinessMeasuresHTTPGating(t *testing.T) {
 		}
 		return 200, nil
 	}
-	outcome := service.Run(context.Background(), fixturePath(t), Options{})
+	outcome := service.Run(context.Background(), fixturePath(t), testOptions())
 	if outcome.ExitCode != 0 {
 		t.Fatalf("unexpected outcome: %#v", outcome)
 	}
@@ -267,7 +271,7 @@ func TestReadinessMeasuresHTTPGating(t *testing.T) {
 	if readiness == nil || measurementValue(readiness.Measurements, "readiness_http_status") != "200" || measurementValue(readiness.Measurements, "failed_startup_requests") != "1" {
 		t.Fatalf("readiness gating was not measured: %#v", readiness)
 	}
-	if len(urls) == 0 || !strings.HasSuffix(urls[len(urls)-1], "/health") {
+	if !strings.Contains(strings.Join(urls, ","), "/health") {
 		t.Fatalf("final health check did not use the liveness endpoint: %#v", urls)
 	}
 }
@@ -286,7 +290,7 @@ func TestPodRecoveryWaitsForReplacement(t *testing.T) {
 		}
 		return result
 	})
-	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), testOptions())
 	recovery := evidenceByID(outcome.Run.Evidence, "pod-recovery")
 	if outcome.ExitCode != 0 || recovery == nil || recovery.Status != model.StatusPass || !degradedOnce {
 		t.Fatalf("replacement was not observed: outcome=%#v degraded=%v", outcome, degradedOnce)
@@ -309,7 +313,7 @@ func TestPodRecoveryRecordsTrafficFailure(t *testing.T) {
 		}
 		return 200, nil
 	}
-	outcome := service.Run(context.Background(), fixturePath(t), Options{})
+	outcome := service.Run(context.Background(), fixturePath(t), testOptions())
 	recovery := evidenceByID(outcome.Run.Evidence, "pod-recovery")
 	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || recovery == nil || measurementValue(recovery.Measurements, "failed_requests") != "1" {
 		t.Fatalf("traffic failure was not recorded: %#v", outcome)
@@ -330,7 +334,7 @@ func TestPodRecoveryTimeoutIsApplicationFailure(t *testing.T) {
 	})
 	service := fixedService(runner)
 	service.recoveryTimeout = 5 * time.Millisecond
-	outcome := service.Run(context.Background(), fixturePath(t), Options{})
+	outcome := service.Run(context.Background(), fixturePath(t), testOptions())
 	recovery := evidenceByID(outcome.Run.Evidence, "pod-recovery")
 	if outcome.ExitCode != 1 || recovery == nil || recovery.Status != model.StatusFail {
 		t.Fatalf("recovery timeout should be an observed failure: %#v", outcome)
@@ -357,7 +361,7 @@ func TestGracefulShutdownRecordsDroppedTraffic(t *testing.T) {
 		}
 		return 200, nil
 	}
-	outcome := service.Run(context.Background(), fixtureNamedPath(t, "broken-shutdown"), Options{})
+	outcome := service.Run(context.Background(), fixtureNamedPath(t, "broken-shutdown"), testOptions())
 	shutdown := evidenceByID(outcome.Run.Evidence, "graceful-shutdown")
 	if outcome.ExitCode != 1 || shutdown == nil || shutdown.Status != model.StatusFail || measurementValue(shutdown.Measurements, "dropped_requests") != "1" {
 		t.Fatalf("shutdown traffic failure was not recorded: %#v", outcome)
@@ -378,7 +382,7 @@ func TestRollingDeploymentTimeoutIsApplicationFailure(t *testing.T) {
 	})
 	service := fixedService(runner)
 	service.rolloutTimeout = 5 * time.Millisecond
-	outcome := service.Run(context.Background(), fixtureNamedPath(t, "broken-rollout"), Options{})
+	outcome := service.Run(context.Background(), fixtureNamedPath(t, "broken-rollout"), testOptions())
 	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
 	if outcome.ExitCode != 1 || rollout == nil || rollout.Status != model.StatusFail || measurementValue(rollout.Measurements, "target_ready_pods") != "0" {
 		t.Fatalf("rollout timeout should be an observed application failure: %#v", outcome)
@@ -394,7 +398,7 @@ func TestRollingDeploymentCommandFailureIsExecutionError(t *testing.T) {
 		}
 		return result
 	})
-	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), testOptions())
 	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
 	if outcome.ExitCode != 2 || rollout == nil || rollout.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "rollout_update_failed") {
 		t.Fatalf("rollout command failure should remain an execution error: %#v", outcome)
@@ -411,7 +415,7 @@ func TestRollingImageBuildFailureIsApplicationFailure(t *testing.T) {
 		}
 		return result
 	})
-	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), testOptions())
 	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
 	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || rollout == nil || rollout.Status != model.StatusFail || !hasDiagnosticCode(outcome.Run.Diagnostics, "rollout_image_build_failed") || findingByID(outcome.Run.Findings, "container.rollout-build") == nil {
 		t.Fatalf("version B application build failure was misclassified: %#v", outcome)
@@ -427,7 +431,7 @@ func TestInterruptedRollingImageBuildIsExecutionError(t *testing.T) {
 		}
 		return result
 	})
-	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), testOptions())
 	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
 	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError || rollout == nil || rollout.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "rollout_image_build_failed") {
 		t.Fatalf("interrupted version B build was not an execution error: %#v", outcome)
@@ -447,7 +451,7 @@ func TestPodDeleteErrorPreservesCollectedTraffic(t *testing.T) {
 		}
 		return result
 	})
-	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), testOptions())
 	recovery := evidenceByID(outcome.Run.Evidence, "pod-recovery")
 	if outcome.ExitCode != 2 || recovery == nil || recovery.Status != model.StatusError || measurementValue(recovery.Measurements, "request_count") == "0" {
 		t.Fatalf("pod deletion error should preserve collected traffic: %#v", outcome)
@@ -488,7 +492,7 @@ func TestClusterCreateFailureUsesFreshCleanupContext(t *testing.T) {
 	runner := runnerFunc(func(callCtx context.Context, request command.Request) model.CommandResult {
 		calls = append(calls, request)
 		result := successfulCommand(request)
-		if request.Name == "trivy" {
+		if request.Name == "trivy" && containsArgument(request.Args, "image") {
 			result.Stdout = `{"Results":[]}`
 		}
 		if request.Name == "docker" && containsArgument(request.Args, "port") {
@@ -504,7 +508,7 @@ func TestClusterCreateFailureUsesFreshCleanupContext(t *testing.T) {
 		}
 		return result
 	})
-	outcome := fixedService(runner).Run(ctx, fixturePath(t), Options{KeepEnvironment: true})
+	outcome := fixedService(runner).Run(ctx, fixturePath(t), Options{KeepEnvironment: true, Version: "test", Commit: strings.Repeat("a", 40)})
 	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError {
 		t.Fatalf("unexpected cluster failure outcome: %#v", outcome)
 	}
@@ -539,7 +543,7 @@ func TestCleanupFailuresUseIndependentContextsAndContinue(t *testing.T) {
 	})
 	service := fixedService(runner)
 	service.cleanupTimeout = 5 * time.Millisecond
-	outcome := service.Run(context.Background(), fixturePath(t), Options{})
+	outcome := service.Run(context.Background(), fixturePath(t), testOptions())
 	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "cluster_cleanup_failed") || !hasDiagnosticCode(outcome.Run.Diagnostics, "image_cleanup_failed") {
 		t.Fatalf("cleanup failures were not reported as execution errors: %#v", outcome)
 	}
@@ -560,7 +564,7 @@ func TestKeepEnvironmentSkipsDelete(t *testing.T) {
 			deleted = true
 		}
 		result := successfulCommand(request)
-		if request.Name == "trivy" {
+		if request.Name == "trivy" && containsArgument(request.Args, "image") {
 			result.Stdout = `{"Results":[]}`
 		}
 		if request.Name == "docker" && containsArgument(request.Args, "port") {
@@ -571,7 +575,7 @@ func TestKeepEnvironmentSkipsDelete(t *testing.T) {
 		}
 		return result
 	})
-	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{KeepEnvironment: true})
+	outcome := fixedService(runner).Run(context.Background(), fixturePath(t), Options{KeepEnvironment: true, Version: "test", Commit: strings.Repeat("a", 40)})
 	if outcome.ExitCode != 0 || !outcome.Run.Environment.Kept || deleted {
 		t.Fatalf("unexpected retained environment behavior: %#v deleted=%v", outcome, deleted)
 	}
@@ -590,7 +594,7 @@ func TestAmbiguousPortStopsBeforeExecution(t *testing.T) {
 		called = true
 		return model.CommandResult{Command: request.Name}
 	}))
-	outcome := service.Run(context.Background(), directory, Options{})
+	outcome := service.Run(context.Background(), directory, testOptions())
 	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusBlocked || called {
 		t.Fatalf("ambiguous plan should fail before execution: %#v called=%v", outcome, called)
 	}
@@ -612,7 +616,7 @@ func TestMalformedRepositoryDiagnosticsStopVerificationBeforeExecution(t *testin
 		called = true
 		return successfulCommand(request)
 	}))
-	outcome := service.Run(context.Background(), directory, Options{})
+	outcome := service.Run(context.Background(), directory, testOptions())
 	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || called || !hasDiagnosticCode(outcome.Run.Diagnostics, "kubernetes_invalid") || !hasDiagnosticCode(outcome.Run.Diagnostics, "verification_analysis_incomplete") {
 		t.Fatalf("malformed repository was not rejected safely: outcome=%#v called=%v", outcome, called)
 	}
@@ -628,7 +632,7 @@ func TestUnsupportedRepositoryPreservesAnalysisAndDoesNotExecute(t *testing.T) {
 		called = true
 		return successfulCommand(request)
 	}))
-	outcome := service.Run(context.Background(), directory, Options{})
+	outcome := service.Run(context.Background(), directory, testOptions())
 	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || called || !hasDiagnosticCode(outcome.Run.Diagnostics, "unsupported_application") || findingByID(outcome.Run.Findings, "container.dockerfile") == nil {
 		t.Fatalf("unsupported repository result was incomplete: outcome=%#v called=%v", outcome, called)
 	}
@@ -721,7 +725,11 @@ func verificationAnalysis(endpoints []model.Endpoint) model.AnalysisResult {
 	}}
 }
 
+func testOptions() Options { return Options{Version: "test", Commit: strings.Repeat("a", 40)} }
+
 func fixedService(runner command.Runner) *Service {
+	currentImage := "cloudforge/healthy-node-api:0123abcd-a"
+	replicas := int32(2)
 	loadRan := false
 	var runnerLock sync.Mutex
 	wrapped := runnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {
@@ -730,6 +738,56 @@ func fixedService(runner command.Runner) *Service {
 		result := runner.Run(ctx, request)
 		if failed(result) {
 			return result
+		}
+
+		if request.Name == "kubectl" && containsArgument(request.Args, "apply") && strings.HasSuffix(request.Args[len(request.Args)-1], "workload.yaml") {
+			data, _ := os.ReadFile(request.Args[len(request.Args)-1])
+			for _, document := range strings.Split(string(data), "---") {
+				var d appsv1.Deployment
+				if yaml.Unmarshal([]byte(document), &d) == nil && d.Kind == "Deployment" {
+					currentImage = d.Spec.Template.Spec.Containers[0].Image
+					replicas = *d.Spec.Replicas
+				}
+			}
+		}
+		if request.Name == "kubectl" && containsArgument(request.Args, "image") {
+			_, currentImage, _ = strings.Cut(request.Args[len(request.Args)-1], "=")
+		}
+		if request.Name == "kubectl" && containsArgument(request.Args, "delete") && containsArgument(request.Args, "horizontalpodautoscaler") {
+			loadRan = false
+		}
+		if request.Name == "kubectl" && containsArgument(request.Args, "get") && containsArgument(request.Args, "deployment") && result.Stdout == "" {
+			result.Stdout = fmt.Sprintf(`{"metadata":{"uid":"deployment-uid","generation":1,"annotations":{"deployment.kubernetes.io/revision":"1"}},"spec":{"replicas":%d,"template":{"spec":{"containers":[{"image":%q}]}}},"status":{"observedGeneration":1}}`, replicas, currentImage)
+		}
+		if request.Name == "kubectl" && containsArgument(request.Args, "replicasets") && result.Stdout == "" {
+			result.Stdout = fmt.Sprintf(`{"items":[{"metadata":{"uid":"rs-uid","annotations":{"deployment.kubernetes.io/revision":"1"},"ownerReferences":[{"uid":"deployment-uid","kind":"Deployment","controller":true}]},"spec":{"template":{"spec":{"containers":[{"image":%q}]}}}}]}`, currentImage)
+		}
+		if request.Name == "kubectl" && containsArgument(request.Args, "pods") {
+			var list map[string]any
+			if json.Unmarshal([]byte(result.Stdout), &list) == nil {
+				items, _ := list["items"].([]any)
+				for _, item := range items {
+					pod := item.(map[string]any)
+					meta, _ := pod["metadata"].(map[string]any)
+					if meta == nil {
+						meta = map[string]any{}
+						pod["metadata"] = meta
+					}
+					meta["ownerReferences"] = []any{map[string]any{"uid": "rs-uid", "kind": "ReplicaSet", "controller": true}}
+					if spec, ok := pod["spec"].(map[string]any); ok {
+						if containers, ok := spec["containers"].([]any); ok {
+							for _, c := range containers {
+								container := c.(map[string]any)
+								if container["image"] == "cloudforge/healthy-node-api:0123abcd-b" {
+									container["image"] = currentImage
+								}
+							}
+						}
+					}
+				}
+				data, _ := json.Marshal(list)
+				result.Stdout = string(data)
+			}
 		}
 		if request.Name == "k6" && containsArgument(request.Args, "run") {
 			loadRan = true
@@ -769,8 +827,9 @@ func fixedService(runner command.Runner) *Service {
 	service.poll = time.Millisecond
 	service.trafficPoll = time.Millisecond
 	service.readinessTimeout = 50 * time.Millisecond
-	service.recoveryTimeout = 50 * time.Millisecond
-	service.rolloutTimeout = 50 * time.Millisecond
+	service.recoveryTimeout = 200 * time.Millisecond
+	service.baselineTimeout = time.Second
+	service.rolloutTimeout = 200 * time.Millisecond
 	service.hpaMetricsTimeout = 50 * time.Millisecond
 	service.hpaScaleTimeout = 50 * time.Millisecond
 	service.loadProfile.Duration = time.Second
@@ -831,7 +890,7 @@ func successfulCommand(request command.Request) model.CommandResult {
 	if request.Name == "kubectl" && containsArgument(request.Args, "nodes") {
 		result.Stdout = `{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
 	}
-	if request.Name == "trivy" {
+	if request.Name == "trivy" && containsArgument(request.Args, "image") {
 		result.Stdout = `{"Results":[]}`
 	}
 	if request.Name == "docker" && containsArgument(request.Args, "port") {
@@ -839,6 +898,14 @@ func successfulCommand(request command.Request) model.CommandResult {
 	}
 	if request.Name == "kubectl" && containsArgument(request.Args, "pods") {
 		result.Stdout = readyPodList
+	}
+	if containsArgument(request.Args, "version") || containsArgument(request.Args, "--version") || request.Name == "docker" && containsArgument(request.Args, "info") {
+		versions := map[string]string{"docker": "28.0.4", "k3d": "5.9.0", "k6": "2.2.0", "trivy": "0.74.0"}
+		if request.Name == "kubectl" {
+			result.Stdout = `{"clientVersion":{"gitVersion":"v1.35.5"},"serverVersion":{"gitVersion":"v1.35.5+k3s1"}}`
+		} else {
+			result.Stdout = versions[request.Name]
+		}
 	}
 	return result
 }
@@ -904,7 +971,7 @@ func TestMissingImportedImageIsExecutionErrorAndCleansUp(t *testing.T) {
 		}
 		return result
 	})
-	out := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	out := fixedService(runner).Run(context.Background(), fixturePath(t), testOptions())
 	if out.ExitCode != 2 || out.Run.Status != model.StatusError || !hasDiagnosticCode(out.Run.Diagnostics, "runtime_image_unavailable") {
 		t.Fatalf("unavailable test image was not an execution error: %#v", out)
 	}

@@ -102,3 +102,13 @@ assertions to the readiness endpoint, including lifecycle traffic observations.
 The same cluster ownership and independent cleanup contexts remove dependency
 resources. v1alpha2 adds capability/dependency sections and fingerprints; the
 legacy v1alpha1 schema remains readable. See [ADR 007](adr/007-explicit-dependency-runtime.md).
+
+## Evidence reliability
+
+The existing verifier performs a pure capability plan, compatibility preflight,
+and sequential experiments around a shared validated baseline. Mutation attempts
+trigger explicit restoration; controller revision, pods, dependencies and HTTP
+readiness gate later siblings. Recovery evidence is attached to the original
+experiment without replacing its status. v1alpha3 adds those records and
+topology/producer identity; older report schemas remain immutable. See
+[evidence reliability](evidence-reliability.md).

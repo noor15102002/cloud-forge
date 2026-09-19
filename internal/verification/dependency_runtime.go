@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/noor15102002/cloud-forge/internal/dependency"
@@ -72,11 +71,8 @@ func (s *Service) startRedis(ctx context.Context, client *kubernetes.Client, cur
 	if failed(result) {
 		// Only a bounded wait or Kubernetes' fixed rollout-failure messages
 		// establish a dependency failure. Authorization/API/tool errors do not.
-		rolloutFailure := result.FailureType == model.FailureTimeout ||
-			(result.FailureType == model.FailureExit &&
-				(strings.Contains(result.Stderr, "timed out waiting for the condition") ||
-					strings.Contains(result.Stderr, "exceeded its progress deadline")))
-		if !rolloutFailure {
+
+		if !isRolloutFailure(result) {
 			out.addError("dependency_execution_failed", "Dependency readiness could not be observed reliably.", "Check kubectl availability and isolated cluster API access.")
 			return false
 		}

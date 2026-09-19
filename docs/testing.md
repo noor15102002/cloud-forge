@@ -94,3 +94,12 @@ unsupported rather than being claimed as tested.
 
 Validated dependency-runtime results and downloadable artifacts are recorded in
 [dependency verification evidence](dependency-verification-evidence.md).
+
+## Evidence reliability matrix
+
+`go test -race ./...` covers compatibility, identity, restoration and continuation
+without runtime tools. `scripts/pilot-reliability.py` requires disposable runtime
+tools and proves the same Node behavior under one/two source replicas and one
+generated replica, with identical source hashes, persistent original failures,
+later evidence, strict report round trips and cleanup. The
+`.github/workflows/reliability.yml` job runs alongside the full existing matrix.

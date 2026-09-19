@@ -93,16 +93,17 @@ func newVersionCommand(stdout io.Writer) *cobra.Command {
 		if err := validateFormat(format); err != nil {
 			return &exitError{code: 2, err: err}
 		}
+		buildVersion, buildCommit := buildIdentity()
 		value := struct {
 			SchemaVersion string `json:"schema_version"`
 			Version       string `json:"version"`
 			Commit        string `json:"commit"`
 			Date          string `json:"date"`
-		}{"v1alpha1", Version, Commit, Date}
+		}{"v1alpha1", buildVersion, buildCommit, Date}
 		if format == "json" {
 			return render.JSON(stdout, value)
 		}
-		_, err := fmt.Fprintf(stdout, "cloudforge %s (commit %s, built %s)\n", Version, Commit, Date)
+		_, err := fmt.Fprintf(stdout, "cloudforge %s (commit %s, built %s)\n", buildVersion, buildCommit, Date)
 		return err
 	}}
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
@@ -220,7 +221,7 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 	cmd.Flags().StringVar(&configPath, "config", "", "strict verification configuration (default: application/cloudforge.yaml)")
 	cmd.Flags().BoolVar(&planOnly, "plan", false, "inspect capabilities without builds, subprocesses or runtime resources")
 	cmd.Flags().BoolVar(&keepEnvironment, "keep-environment", false, "keep the k3d cluster after verification")
-	cmd.Flags().StringVar(&baselinePath, "baseline", "", "compare with an explicit v1alpha1 or v1alpha2 verification JSON file")
+	cmd.Flags().StringVar(&baselinePath, "baseline", "", "compare with an explicit v1alpha1, v1alpha2 or v1alpha3 verification JSON file")
 	return cmd
 }
 

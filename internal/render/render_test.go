@@ -208,3 +208,26 @@ func reverseUnavailable(values []model.ComparisonUnavailable) {
 		values[left], values[right] = values[right], values[left]
 	}
 }
+
+func TestReliabilityCollectionsCanonicalWithoutMutatingInput(t *testing.T) {
+	run := model.VerificationRun{Plan: &model.VerificationPlan{Detected: []string{"redis", "python"}, Capabilities: []model.Capability{{Name: "rollout", Prerequisites: []string{"ready", "image"}}, {Name: "build"}}}, Evidence: []model.Evidence{{ExperimentID: "rollout", Recovery: &model.RecoveryEvidence{Checks: []model.BaselineCheck{{Name: "replicas"}, {Name: "image"}}}}}}
+	before, _ := json.Marshal(run)
+	var first, second bytes.Buffer
+	if err := JSON(&first, run); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := json.Marshal(run)
+	if !bytes.Equal(before, after) {
+		t.Fatal("rendering mutated input")
+	}
+	run.Plan.Detected = []string{"python", "redis"}
+	run.Plan.Capabilities[0].Prerequisites = []string{"image", "ready"}
+	run.Plan.Capabilities[0], run.Plan.Capabilities[1] = run.Plan.Capabilities[1], run.Plan.Capabilities[0]
+	run.Evidence[0].Recovery.Checks[0], run.Evidence[0].Recovery.Checks[1] = run.Evidence[0].Recovery.Checks[1], run.Evidence[0].Recovery.Checks[0]
+	if err := JSON(&second, run); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first.Bytes(), second.Bytes()) {
+		t.Fatal("collection order changed canonical serialization")
+	}
+}

@@ -48,7 +48,7 @@ sys.exit(result.returncode)
     path.write_text(result.stdout)
     (args.output / f"{name}.stderr.txt").write_text(result.stderr)
     report = json.loads(result.stdout)
-    assert report["schema_version"] == "v1alpha2"
+    assert report["schema_version"] == "v1alpha3"
     # Exercise the same strict schema loader used by users and the Action.
     rendered = subprocess.run([args.binary, "report", str(path), "--format", "json"], capture_output=True, text=True, check=True)
     repeat = subprocess.run([args.binary, "report", str(path), "--format", "json"], capture_output=True, text=True, check=True)
@@ -100,5 +100,5 @@ os.execv(os.environ['CF_REAL_KUBECTL'], [os.environ['CF_REAL_KUBECTL'], *args])
     result, report, evidence = run_case("dependency-timeout", "testdata/redis-failures/startup-timeout.yaml", environment)
     assert result.returncode == 1 and report["status"] == "blocked"
     assert evidence["dependency.redis"]["status"] == "fail"
-    assert evidence["deployment-readiness"]["status"] == "skipped"
+    assert evidence["deployment-readiness"]["status"] == "blocked"
     assert not any(item["id"] == "container.startup" for item in report["findings"])

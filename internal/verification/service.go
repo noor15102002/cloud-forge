@@ -72,6 +72,7 @@ type Service struct {
 	trafficPoll           time.Duration
 	readinessTimeout      time.Duration
 	recoveryTimeout       time.Duration
+	baselineTimeout       time.Duration
 	rolloutTimeout        time.Duration
 	hpaMetricsTimeout     time.Duration
 	hpaScaleTimeout       time.Duration
@@ -85,7 +86,7 @@ func New(runner command.Runner) *Service {
 		runner: runner, now: time.Now, newID: randomID, controlledExperiments: true,
 		probe: httpProbe(directHTTPClient()),
 		poll:  200 * time.Millisecond, trafficPoll: 20 * time.Millisecond, readinessTimeout: readinessWindow,
-		recoveryTimeout: recoveryWindow, rolloutTimeout: recoveryWindow,
+		recoveryTimeout: recoveryWindow, rolloutTimeout: recoveryWindow, baselineTimeout: recoveryWindow,
 		hpaMetricsTimeout: time.Minute, hpaScaleTimeout: time.Minute,
 		cleanupTimeout: 2 * time.Minute,
 		loadProfile:    k6executor.Profile{VirtualUsers: 16, Duration: 20 * time.Second},
@@ -98,6 +99,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	started := s.now()
 	out.Run = model.VerificationRun{
 		SchemaVersion: model.VerificationSchemaVersion,
+		Producer:      &model.BuildIdentity{Version: options.Version, Commit: options.Commit},
 		Status:        model.StatusError,
 		StartedAt:     started.UTC().Format(time.RFC3339Nano),
 		Environment:   model.VerificationEnvironment{Backend: "k3d", Namespace: namespace},
@@ -170,7 +172,14 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.ExitCode = 0
 		return out
 	}
+	if !validIdentity(*out.Run.Producer) {
+		out.addError("build_identity_missing", "Runtime verification requires CloudForge version and commit identity.", "Use a VCS-stamped build or inject the version and full commit with Go linker flags.")
+		return out
+	}
 	out.Run.Fingerprint = newFingerprint(ctx, s.runner, root, plan, options)
+	if !checkRuntimeTools(ctx, scopedRunner{runner: s.runner, kubeconfig: os.DevNull}, &out) {
+		return out
+	}
 	out.Run.Environment.ClusterName = plan.clusterName
 	s.loadProfile.VirtualUsers = config.Load.VUs
 	s.loadProfile.Duration, _ = time.ParseDuration(config.Load.Duration)
@@ -357,6 +366,9 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addError("cluster_not_ready", "The isolated cluster did not become ready before application deployment.", "Cluster condition: "+reason+"; inspect Docker capacity and cluster health before retrying.")
 		return out
 	}
+	if !checkRuntimeServer(ctx, scoped, plan, &out) {
+		return out
+	}
 	if result := k3dClient.ImportImage(ctx, plan.clusterName, plan.image); failed(result) {
 		out.addCommandDiagnostic("image_import_failed", "The application image could not be confirmed in the isolated node after import.", result)
 		return out
@@ -366,7 +378,6 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 			return out
 		}
 	}
-	fingerprintTools(ctx, scoped, plan, out.Run.Fingerprint)
 	if result := kubernetesClient.Apply(ctx, plan.clusterName, manifestPath); failed(result) {
 		out.addCommandDiagnostic("deployment_apply_failed", "kubectl could not apply the generated workload.", result)
 		return out
@@ -407,6 +418,12 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	}
 	if acceptance != nil {
 		out.Run.Evidence = append(out.Run.Evidence, acceptance.evidence(httpResult.DurationMS))
+	}
+
+	if failed(waitResult) && !isRolloutFailure(waitResult) {
+		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{ExperimentID: "deployment-readiness", Title: "Deployment readiness", Status: model.StatusError, Summary: "Kubernetes readiness could not be observed reliably."})
+		out.addError("readiness_observation_failed", "Kubernetes readiness could not be observed reliably.", "Check the isolated API and kubectl access; no application startup failure is inferred.")
+		return out
 	}
 	pods, podResult, podErr := kubernetesClient.ObservePods(ctx, plan.clusterName, namespace, "app.kubernetes.io/name="+plan.workloadName)
 	ready, total, restarts := summarizePods(pods)
@@ -515,53 +532,52 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		Summary: "The application started with all requested replicas ready.", Observed: fmt.Sprintf("%d/%d pods ready", ready, total),
 		Expected: "all requested replicas become ready", DurationMS: waitResult.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
 	})
-	if plan.readinessURL == "" {
-		out.Run.Evidence = append(out.Run.Evidence,
-			model.Evidence{ExperimentID: "graceful-shutdown", Title: "Graceful shutdown under traffic", Status: model.StatusSkipped, Summary: "Graceful shutdown traffic requires an explicit HTTP readiness endpoint."},
-			model.Evidence{ExperimentID: "pod-recovery", Title: "Pod recovery under traffic", Status: model.StatusSkipped, Summary: "Pod recovery traffic requires an explicit HTTP readiness endpoint."},
-			model.Evidence{ExperimentID: "rolling-deployment", Title: "Rolling deployment under traffic", Status: model.StatusSkipped, Summary: "Rolling deployment traffic requires an explicit HTTP readiness endpoint."},
-			model.Evidence{ExperimentID: "load-profile", Title: "Bounded HTTP load profile", Status: model.StatusSkipped, Summary: "Load testing requires an explicit HTTP readiness endpoint."},
-			model.Evidence{ExperimentID: "horizontal-autoscaling", Title: "Horizontal autoscaling under load", Status: model.StatusSkipped, Summary: "Autoscaling observation requires an explicit HTTP readiness endpoint."},
-		)
-	} else {
-		gating := s.runReadinessGating(ctx, kubernetesClient, plan)
-		applyExperimentOutcome(&out, gating)
-		if gating.ExitCode != 0 {
-			return out
-		}
-		inFlight := s.runInFlightShutdown(ctx, kubernetesClient, plan)
-		applyExperimentOutcome(&out, inFlight)
-		if inFlight.ExitCode != 0 {
-			return out
-		}
-		shutdown := s.runGracefulShutdown(ctx, kubernetesClient, plan)
-		applyExperimentOutcome(&out, shutdown)
-		if shutdown.ExitCode != 0 {
-			return out
-		}
-		recovery := s.runPodRecovery(ctx, kubernetesClient, plan)
-		applyExperimentOutcome(&out, recovery)
-		if recovery.ExitCode != 0 {
-			return out
-		}
-		imagesToCleanup = append(imagesToCleanup, plan.rolloutImage)
-		rolloutBuild := dockerClient.BuildVersion(ctx, root, plan.rolloutImage, "b")
-		rollout := s.runRollingDeployment(ctx, k3dClient, kubernetesClient, plan, rolloutBuild)
-		applyExperimentOutcome(&out, rollout)
-		if rollout.ExitCode != 0 {
-			return out
-		}
-		load, autoscaling := s.runLoadAndAutoscaling(ctx, k6executor.New(s.runner), kubernetesClient, plan, temporary, hpaManifestPath)
-		applyExperimentOutcome(&out, load)
-		if load.ExitCode != 0 {
-			return out
-		}
-		applyExperimentOutcome(&out, autoscaling)
-		if autoscaling.ExitCode != 0 {
-			return out
-		}
+
+	blocked := ""
+	experiments := []struct {
+		name string
+		run  func() recoveryOutcome
+	}{
+		{"readiness-gating", func() recoveryOutcome { return s.runReadinessGating(ctx, kubernetesClient, plan) }},
+		{"inflight-shutdown", func() recoveryOutcome { return s.runInFlightShutdown(ctx, kubernetesClient, plan) }},
+		{"graceful-shutdown", func() recoveryOutcome { return s.runGracefulShutdown(ctx, kubernetesClient, plan) }},
+		{"pod-recovery", func() recoveryOutcome { return s.runPodRecovery(ctx, kubernetesClient, plan) }},
+		{"rolling-deployment", func() recoveryOutcome {
+			imagesToCleanup = append(imagesToCleanup, plan.rolloutImage)
+			build := dockerClient.BuildVersion(ctx, root, plan.rolloutImage, "b")
+			return s.runRollingDeployment(ctx, k3dClient, kubernetesClient, plan, build)
+		}},
 	}
-	out.Run.Status, out.ExitCode = outcomeForFindings(out.Run.Findings)
+	for _, experiment := range experiments {
+		if ctx.Err() != nil {
+			break
+		}
+		if !s.prepareExperiment(ctx, kubernetesClient, plan, &out, experiment.name, &blocked) {
+			continue
+		}
+		result := experiment.run()
+		s.finishExperiment(ctx, kubernetesClient, plan, manifestPath, &out, result, false, &blocked)
+	}
+	if ctx.Err() == nil && s.prepareExperiment(ctx, kubernetesClient, plan, &out, "load-profile", &blocked) {
+		load, autoscaling := s.runLoadAndAutoscaling(ctx, k6executor.New(scoped), kubernetesClient, plan, temporary, hpaManifestPath)
+		load.Evidence.Execution = &model.ExperimentExecution{Executed: load.Evidence.Status != model.StatusSkipped, MutationAttempted: load.MutationAttempted}
+		load.Evidence.Topology = plan.topology
+		applyExperimentOutcome(&out, load)
+		// HPA and load share one bounded observation; restore after both results.
+		s.finishExperiment(ctx, kubernetesClient, plan, manifestPath, &out, autoscaling, hpaManifestPath != "", &blocked)
+	} else if ctx.Err() == nil {
+		capability := plannedCapability(out.Run.Plan, "horizontal-autoscaling")
+		status, reason := model.StatusSkipped, capability.Reason
+		if capability.Disposition == "supported" {
+			status, reason = model.StatusBlocked, "The required load/baseline prerequisite was not established."
+		}
+		recordNotExecuted(&out, plan, "horizontal-autoscaling", status, reason)
+	}
+	finalEvidenceStatus(&out)
+	if ctx.Err() != nil {
+		out.addError("verification_canceled", "Verification was canceled; no further experiments were scheduled.", "Evidence collected before cancellation is preserved; owned resources are cleaned up with bounded independent contexts.")
+	}
+
 	return out
 }
 
@@ -587,6 +603,7 @@ func applyExperimentOutcome(out *Outcome, experiment recoveryOutcome) {
 }
 
 type plan struct {
+	topology           *model.TestTopology
 	clusterName        string
 	workloadName       string
 	image              string
@@ -811,6 +828,7 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 		readinessScheme: readinessScheme, readinessPath: readinessPath, healthScheme: healthScheme, healthPath: healthPath,
 		httpSkipReason: httpSkipReason, manifest: manifest, config: config, effectiveResources: modelResources(resources),
 	}
+	result.topology = testTopology(application, replicas, strategy, grace, minReady, []*corev1.Probe{livenessProbe, readinessProbe, startupProbe}, config)
 	result.hpaSkipReason = "No supported HPA targets the selected Deployment."
 	if len(application.Kubernetes.HorizontalPodScalers) == 1 && len(application.Kubernetes.Deployments) == 1 {
 		source := application.Kubernetes.HorizontalPodScalers[0]
@@ -1211,4 +1229,8 @@ func normalizedNamespace(value string) string {
 		return "default"
 	}
 	return value
+}
+
+func isRolloutFailure(result model.CommandResult) bool {
+	return result.FailureType == model.FailureTimeout || (result.FailureType == model.FailureExit && (strings.Contains(result.Stderr, "timed out waiting for the condition") || strings.Contains(result.Stderr, "exceeded its progress deadline")))
 }

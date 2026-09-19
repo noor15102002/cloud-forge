@@ -53,6 +53,21 @@ application source and detailed findings remain outside the public repository.
 
 PostgreSQL, dependency-loss experiments and authenticated POST loads remain deferred.
 
+## Evidence Reliability Milestone
+
+Tracking: [#37](https://github.com/noor15102002/cloud-forge/issues/37),
+[milestone 8](https://github.com/noor15102002/cloud-forge/milestone/8).
+
+Scope is frozen to [four reliability improvements](evidence-reliability.md):
+
+- [ ] Runtime/tool compatibility, explicit supported/unsupported/not_validated policy, and verifier identity.
+- [ ] Topology-aware availability evidence with source/generated provenance.
+- [ ] Bounded baseline restoration and continuation without erasing failed evidence.
+- [ ] Planner explanations separated from completed evidence.
+- [ ] Final full runtime, same-code topology and cancellation/cleanup matrix.
+
+No new provider, workload category or private application pilot is included.
+
 ## v1.0 — Public V1
 
 - [x] Validate representative healthy and intentionally broken fixtures.
