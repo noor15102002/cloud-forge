@@ -14,6 +14,7 @@ import time
 parser = argparse.ArgumentParser()
 parser.add_argument("binary")
 parser.add_argument("output", type=Path)
+parser.add_argument("--stages", nargs="+", default=["build", "cluster", "readiness", "load"], choices=["build", "cluster", "readiness", "load", "redis"])
 args = parser.parse_args()
 args.binary = str(Path(args.binary).resolve())
 args.output.mkdir(parents=True, exist_ok=True)
@@ -21,11 +22,14 @@ original_kubeconfig = Path.home() / ".kube" / "config"
 original_bytes = original_kubeconfig.read_bytes() if original_kubeconfig.exists() else None
 
 wrapper = '''#!/usr/bin/env python3
-import json, os, pathlib, subprocess, sys
+import json, os, pathlib, re, subprocess, sys
 tool = pathlib.Path(sys.argv[0]).name
 arguments = sys.argv[1:]
 stage = os.environ['CLOUDFORGE_PILOT_STAGE']
-selected = (stage == 'build' and tool == 'docker' and 'build' in arguments) or (stage == 'cluster' and tool == 'k3d' and 'create' in arguments) or (stage == 'readiness' and tool == 'kubectl' and 'rollout' in arguments and 'status' in arguments) or (stage == 'load' and tool == 'k6' and 'run' in arguments)
+if stage == 'redis' and tool == 'kubectl' and 'apply' in arguments and arguments[-1].endswith('dependency-redis.yaml'):
+    path = pathlib.Path(arguments[-1])
+    path.write_text(re.sub(r'(?m)^(\\s+)periodSeconds: 1$', r'\\1initialDelaySeconds: 60\\n\\1periodSeconds: 1', path.read_text()))
+selected = (stage == 'redis' and tool == 'kubectl' and 'rollout' in arguments and 'deployment/cf-dependency-redis' in arguments) or (stage == 'build' and tool == 'docker' and 'build' in arguments) or (stage == 'cluster' and tool == 'k3d' and 'create' in arguments) or (stage == 'readiness' and tool == 'kubectl' and 'rollout' in arguments and 'status' in arguments) or (stage == 'load' and tool == 'k6' and 'run' in arguments)
 process = subprocess.Popen([os.environ['CLOUDFORGE_REAL_' + tool.upper()], *arguments])
 if selected:
     pathlib.Path(os.environ['CLOUDFORGE_PILOT_MARKER']).write_text(json.dumps({'tool':tool,'pid':process.pid}))
@@ -63,11 +67,11 @@ def existing_state():
 
 
 with existing_state() as (sentinel_name, baseline_kubeconfig, sentinel_ids):
-    for stage in ["build", "cluster", "readiness", "load"]:
+    for stage in args.stages:
         with tempfile.TemporaryDirectory(prefix="cloudforge-cancel-") as temporary:
             root = Path(temporary)
             app = root / "app"
-            shutil.copytree("testdata/healthy-node", app)
+            shutil.copytree("testdata/healthy-node-redis" if stage == "redis" else "testdata/healthy-node", app)
             # Keep each targeted phase long enough to establish an actual interruption.
             if stage == "build":
                 dockerfile = app / "Dockerfile"
@@ -79,7 +83,7 @@ with existing_state() as (sentinel_name, baseline_kubeconfig, sentinel_ids):
             config.write_text(config.read_text().split("experiments:")[0])
             bin_dir = root / "bin"
             bin_dir.mkdir()
-            environment = dict(os.environ)
+            environment = dict(os.environ, TMPDIR=str(root))
             for tool in ["docker", "k3d", "kubectl", "k6"]:
                 real = shutil.which(tool)
                 assert real, tool
@@ -105,6 +109,10 @@ with existing_state() as (sentinel_name, baseline_kubeconfig, sentinel_ids):
                 assert process.wait(timeout=180) == 2, f"{stage}: cancellation was not classified as execution error"
             report = json.loads(report_path.read_text())
             assert report["status"] == "error", report
+            assert not list(root.glob("cloudforge-verify-*")), "Temporary kubeconfig/runtime directory leaked"
+            if stage == "redis":
+                assert report["dependencies"][0]["status"] == "error"
+                assert not any(item["experiment_id"] == "deployment-readiness" and item["status"] == "pass" for item in report["evidence"])
             subprocess.run(["bash", "scripts/pilot-cleanup-check.sh"], check=True)
             current_bytes = original_kubeconfig.read_bytes() if original_kubeconfig.exists() else None
             assert current_bytes == baseline_kubeconfig, "User kubeconfig changed"

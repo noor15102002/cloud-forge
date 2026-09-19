@@ -121,3 +121,5 @@ workflow.
 The verification action exports `report-json`, `report-markdown`, `binary`, and
 `exit-code`. The reports are also uploaded under `artifact-name` for the
 configured retention period, which defaults to 14 days.
+
+Dependency-aware runs use the application-root `cloudforge.yaml` v1alpha2 configuration. Reports retain BLOCKED dependency plans and separate dependency outcomes; the trusted reporter accepts both schema-version markers.

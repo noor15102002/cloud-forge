@@ -1,0 +1,831 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/noor15102002/cloud-forge/schemas/verification.v1alpha2.schema.json",
+  "title": "CloudForge Verification Report v1alpha2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "status",
+    "started_at",
+    "duration_ms",
+    "environment",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "v1alpha2"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/status"
+    },
+    "application": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "environment": {
+      "$ref": "#/$defs/environment"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "comparison": {
+      "$ref": "#/$defs/comparison"
+    },
+    "fingerprint": {
+      "$ref": "#/$defs/fingerprint"
+    },
+    "plan": {
+      "$ref": "#/$defs/plan"
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/dependencyEvidence"
+      }
+    }
+  },
+  "$defs": {
+    "status": {
+      "enum": [
+        "pass",
+        "warn",
+        "fail",
+        "skipped",
+        "error",
+        "blocked"
+      ]
+    },
+    "severity": {
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "document": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "field": {
+          "type": "string"
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "status",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "message": {
+          "type": "string"
+        },
+        "guidance": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "status",
+        "severity",
+        "summary",
+        "observed",
+        "expected",
+        "remediation",
+        "duration_ms",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "severity": {
+          "$ref": "#/$defs/severity"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "observed": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "string"
+        },
+        "remediation": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/source"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experiment_id",
+        "title",
+        "status",
+        "summary",
+        "duration_ms"
+      ],
+      "properties": {
+        "experiment_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "measurements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/measurement"
+          }
+        }
+      }
+    },
+    "comparisonKind": {
+      "enum": [
+        "status",
+        "measurement"
+      ]
+    },
+    "comparisonChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experiment_id",
+        "kind",
+        "baseline",
+        "current",
+        "summary"
+      ],
+      "properties": {
+        "experiment_id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/comparisonKind"
+        },
+        "measurement": {
+          "type": "string"
+        },
+        "baseline": {
+          "type": "string"
+        },
+        "current": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    },
+    "comparisonUnavailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experiment_id",
+        "kind",
+        "reason"
+      ],
+      "properties": {
+        "experiment_id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/comparisonKind"
+        },
+        "measurement": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseline_run_id",
+        "status"
+      ],
+      "properties": {
+        "baseline_run_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "regressions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/comparisonChange"
+          }
+        },
+        "improvements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/comparisonChange"
+          }
+        },
+        "unavailable": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/comparisonUnavailable"
+          }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backend",
+        "kept"
+      ],
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "cluster_name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "kept": {
+          "type": "boolean"
+        }
+      }
+    },
+    "runtimeConfiguration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "enum": [
+            "v1alpha1",
+            "v1alpha2"
+          ]
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "port": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "required": [
+            "port"
+          ]
+        },
+        "endpoints": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "health": {
+              "type": "string"
+            },
+            "readiness": {
+              "type": "string"
+            },
+            "load": {
+              "type": "string"
+            }
+          },
+          "required": []
+        },
+        "load": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vus": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            },
+            "duration": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "vus",
+            "duration"
+          ]
+        },
+        "experiments": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "control_path": {
+              "type": "string"
+            }
+          },
+          "required": []
+        },
+        "dependencies": {
+          "type": "object",
+          "maxProperties": 8,
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,31}$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "startup_timeout": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          }
+        },
+        "environment": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "const": "dependency.redis.url"
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 64
+              }
+            },
+            "required": [],
+            "oneOf": [
+              {
+                "required": [
+                  "from"
+                ],
+                "not": {
+                  "required": [
+                    "value"
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "value"
+                ],
+                "not": {
+                  "required": [
+                    "from"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "readiness": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "type": "integer",
+              "minimum": 200,
+              "maximum": 299
+            },
+            "json": {
+              "type": "object",
+              "maxProperties": 16,
+              "propertyNames": {
+                "pattern": "^[a-zA-Z_][a-zA-Z0-9_]{0,63}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 64
+              }
+            }
+          },
+          "required": [
+            "status"
+          ]
+        }
+      },
+      "required": [
+        "schema_version"
+      ]
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu_request": {
+          "type": "string"
+        },
+        "memory_request": {
+          "type": "string"
+        },
+        "cpu_limit": {
+          "type": "string"
+        },
+        "memory_limit": {
+          "type": "string"
+        }
+      },
+      "required": []
+    },
+    "safetyBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workload_cpu": {
+          "type": "string"
+        },
+        "workload_memory": {
+          "type": "string"
+        },
+        "cluster_memory": {
+          "type": "string"
+        },
+        "build_memory": {
+          "type": "string"
+        },
+        "build_timeout": {
+          "type": "string"
+        },
+        "readiness_timeout": {
+          "type": "string"
+        },
+        "experiment_timeout": {
+          "type": "string"
+        },
+        "max_replicas": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "build_cpus": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "workload_cpu",
+        "workload_memory",
+        "cluster_memory",
+        "build_memory",
+        "build_timeout",
+        "readiness_timeout",
+        "experiment_timeout",
+        "max_replicas",
+        "build_cpus"
+      ]
+    },
+    "fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_commit": {
+          "type": "string"
+        },
+        "image_id": {
+          "type": "string"
+        },
+        "image_digest": {
+          "type": "string"
+        },
+        "cloudforge_version": {
+          "type": "string"
+        },
+        "cloudforge_commit": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "workload_hash": {
+          "type": "string"
+        },
+        "compatibility_key": {
+          "type": "string"
+        },
+        "source_dirty": {
+          "type": "boolean"
+        },
+        "cpus": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ]
+          }
+        },
+        "configuration": {
+          "$ref": "#/$defs/runtimeConfiguration"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        },
+        "budget": {
+          "$ref": "#/$defs/safetyBudget"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dependencyFingerprint"
+          }
+        },
+        "environment_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "cloudforge_version",
+        "cloudforge_commit",
+        "platform",
+        "workload_hash",
+        "source_dirty",
+        "cpus",
+        "tools",
+        "configuration",
+        "resources",
+        "budget"
+      ]
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "disposition": {
+          "enum": [
+            "supported",
+            "skipped",
+            "blocked"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "disposition",
+        "reason"
+      ]
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        },
+        "budget": {
+          "$ref": "#/$defs/safetyBudget"
+        },
+        "schema_version": {
+          "const": "v1alpha2"
+        }
+      },
+      "required": [
+        "status",
+        "capabilities",
+        "budget",
+        "schema_version"
+      ]
+    },
+    "dependencyFingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "configuration_mode": {
+          "type": "string"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        }
+      },
+      "required": [
+        "kind",
+        "image",
+        "digest",
+        "version",
+        "configuration_mode",
+        "resources"
+      ]
+    },
+    "dependencyEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "configuration_mode": {
+          "type": "string"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        },
+        "name": {
+          "type": "string"
+        },
+        "network_exposure": {
+          "type": "string"
+        },
+        "authentication": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "startup_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "kind",
+        "image",
+        "version",
+        "configuration_mode",
+        "resources",
+        "name",
+        "network_exposure",
+        "authentication",
+        "reason",
+        "status",
+        "startup_ms"
+      ]
+    }
+  }
+}

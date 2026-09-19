@@ -2,11 +2,14 @@ package model
 
 // RuntimeConfiguration is the explicit, bounded verification contract.
 type RuntimeConfiguration struct {
-	SchemaVersion string             `json:"schema_version"`
-	Runtime       RuntimeSettings    `json:"runtime"`
-	Endpoints     EndpointSettings   `json:"endpoints"`
-	Load          LoadSettings       `json:"load"`
-	Experiments   ExperimentSettings `json:"experiments"`
+	Dependencies  map[string]DependencySpec     `json:"dependencies,omitempty"`
+	Environment   map[string]EnvironmentBinding `json:"environment,omitempty"`
+	Readiness     *ReadinessAcceptance          `json:"readiness,omitempty"`
+	SchemaVersion string                        `json:"schema_version"`
+	Runtime       RuntimeSettings               `json:"runtime"`
+	Endpoints     EndpointSettings              `json:"endpoints"`
+	Load          LoadSettings                  `json:"load"`
+	Experiments   ExperimentSettings            `json:"experiments"`
 }
 
 // RuntimeSettings selects the application port; replica/resource bounds are enforced independently.

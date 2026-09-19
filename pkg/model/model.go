@@ -19,6 +19,7 @@ const (
 	StatusFail    Status = "fail"
 	StatusSkipped Status = "skipped"
 	StatusError   Status = "error"
+	StatusBlocked Status = "blocked"
 )
 
 // SourceReference identifies where a discovered fact came from.
@@ -324,6 +325,8 @@ type VerificationEnvironment struct {
 
 // VerificationRun is the versioned result of a CloudForge verification.
 type VerificationRun struct {
+	Plan          *VerificationPlan       `json:"plan,omitempty"`
+	Dependencies  []DependencyEvidence    `json:"dependencies,omitempty"`
 	Fingerprint   *RunFingerprint         `json:"fingerprint,omitempty"`
 	SchemaVersion string                  `json:"schema_version"`
 	RunID         string                  `json:"run_id"`

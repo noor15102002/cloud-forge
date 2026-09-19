@@ -24,3 +24,9 @@ reporting workflow.
 
 CloudForge is not a deployment platform, CI system, static Kubernetes linter,
 generic security scanner, hosted dashboard, or AI decision engine.
+
+The supported runtime scope now includes explicitly declared Redis dependencies.
+CloudForge plans supported, skipped and blocked capabilities before expensive
+execution, isolates Redis, injects only declared safe test configuration and
+checks optional semantic HTTP readiness. Recognition is not a promise to run
+arbitrary repositories. See [supported applications](supported-applications.md).

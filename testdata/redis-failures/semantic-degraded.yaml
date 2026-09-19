@@ -1,0 +1,12 @@
+schema_version: v1alpha2
+dependencies:
+  redis: {enabled: true}
+environment:
+  REDIS_URL: {from: dependency.redis.url}
+  FORCE_DEGRADED: {value: "true"}
+endpoints:
+  health: /health
+  readiness: /ready
+readiness:
+  status: 200
+  json: {status: ready}

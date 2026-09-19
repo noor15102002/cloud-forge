@@ -1,9 +1,10 @@
 # Runtime configuration and pilot support
 
-CloudForge tests one stateless HTTP application with one root Dockerfile and at
-most one single-container Deployment. PostgreSQL/Redis provisioning, arbitrary
-manifest application, Helm rendering and production credentials are outside
-this pilot. Peaxis and Avylo are not in the pilot test matrix.
+CloudForge tests one HTTP application with one root Dockerfile and at most one
+single-container Deployment. Explicit Redis provisioning and safe test bindings
+are described in [dependency runtime](dependency-runtime.md). PostgreSQL, arbitrary
+manifest application, Helm rendering and production credentials remain unsupported.
+The historical stateless pilot evidence is separate from subsequent private pilots.
 
 Place `cloudforge.yaml` at the application root or use `verify --config FILE`:
 
@@ -23,7 +24,7 @@ load:
 The file is limited to 64 KiB, must be regular, and rejects duplicate/unknown
 fields. Endpoints must be application-relative paths without queries or external
 hosts. Configuration overrides endpoint/port discovery; conflicting source
-probe ports are rejected. Configuration does not load environment variables.
+probe ports are rejected. Configuration never loads host environment values; v1alpha2 adds restricted explicit test bindings.
 An omitted load endpoint skips load/HPA experiments. VUs are bounded to 1–32;
 duration to 1s–1m. Defaults are five VUs and twenty seconds.
 

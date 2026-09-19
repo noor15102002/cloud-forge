@@ -55,7 +55,7 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	if outcome.ExitCode != 0 || outcome.Run.Status != model.StatusPass {
 		t.Fatalf("unexpected outcome: %#v", outcome)
 	}
-	if len(outcome.Run.Evidence) != 10 || outcome.Run.Evidence[2].Measurements[0].Value != "2" {
+	if len(outcome.Run.Evidence) != 12 || outcome.Run.Evidence[2].Measurements[0].Value != "2" {
 		t.Fatalf("missing readiness evidence: %#v", outcome.Run.Evidence)
 	}
 	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
@@ -591,7 +591,7 @@ func TestAmbiguousPortStopsBeforeExecution(t *testing.T) {
 		return model.CommandResult{Command: request.Name}
 	}))
 	outcome := service.Run(context.Background(), directory, Options{})
-	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusFail || called {
+	if outcome.ExitCode != 1 || outcome.Run.Status != model.StatusBlocked || called {
 		t.Fatalf("ambiguous plan should fail before execution: %#v called=%v", outcome, called)
 	}
 }

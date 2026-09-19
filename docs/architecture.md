@@ -1,7 +1,7 @@
 # Architecture
 
 CloudForge uses explicit boundaries between repository discovery, architecture
-models, future risk planning, execution, evidence, regression comparison, and
+models, capability planning, execution, evidence, regression comparison, and
 reporting.
 
 The implemented slice contains:
@@ -12,6 +12,7 @@ The implemented slice contains:
 - `internal/safefile`: bounded regular-file reads without symlink traversal
 - `internal/doctor`: local prerequisite checks
 - `internal/executor`: Docker, k3d, kubectl, k6, and Trivy command adapters
+- `internal/dependency`: pinned, owned Redis resource generation and safe identity
 - `internal/findings`: deterministic container and Kubernetes configuration checks
 - `internal/verification`: generated workload planning and lifecycle orchestration
 - `internal/regression`: bounded baseline loading and deterministic comparison
@@ -87,3 +88,17 @@ job may execute pull-request code but has no write token or secrets. A later
 `workflow_run` job loads its code from the default branch, treats the JSON
 artifact as untrusted input, and receives narrowly scoped permission to update
 the pull-request comment. The reporter never executes artifact content.
+
+## Dependency extension
+
+The existing verifier plans capabilities before any subprocess. Explicit Redis
+resources are generated with official Kubernetes types, applied after cluster
+bootstrap and made ready before application deployment. Unsupported required
+dependencies block the plan. Restricted environment bindings are rendered only
+into the private application manifest. Dependency startup evidence remains
+separate from application findings. Semantic readiness applies bounded flat JSON
+assertions to the readiness endpoint, including lifecycle traffic observations.
+
+The same cluster ownership and independent cleanup contexts remove dependency
+resources. v1alpha2 adds capability/dependency sections and fingerprints; the
+legacy v1alpha1 schema remains readable. See [ADR 007](adr/007-explicit-dependency-runtime.md).

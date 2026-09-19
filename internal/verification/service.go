@@ -26,6 +26,7 @@ import (
 
 	"github.com/noor15102002/cloud-forge/internal/analyzer"
 	"github.com/noor15102002/cloud-forge/internal/command"
+	"github.com/noor15102002/cloud-forge/internal/dependency"
 	"github.com/noor15102002/cloud-forge/internal/executor/docker"
 	"github.com/noor15102002/cloud-forge/internal/executor/k3d"
 	k6executor "github.com/noor15102002/cloud-forge/internal/executor/k6"
@@ -46,6 +47,8 @@ type probeFunc func(context.Context, string) (int, error)
 
 // Options controls one verification run.
 type Options struct {
+	PlanOnly        bool
+	OnPlan          func(model.VerificationPlan)
 	KeepEnvironment bool
 	ConfigPath      string
 	Version         string
@@ -94,13 +97,14 @@ func New(runner command.Runner) *Service {
 func (s *Service) Run(ctx context.Context, path string, options Options) (out Outcome) {
 	started := s.now()
 	out.Run = model.VerificationRun{
-		SchemaVersion: model.SchemaVersion,
+		SchemaVersion: model.VerificationSchemaVersion,
 		Status:        model.StatusError,
 		StartedAt:     started.UTC().Format(time.RFC3339Nano),
 		Environment:   model.VerificationEnvironment{Backend: "k3d", Namespace: namespace},
 		Evidence:      []model.Evidence{},
 	}
 	out.ExitCode = 2
+	defer func() { appendUnexecuted(&out) }()
 	defer func() { out.Run.DurationMS = elapsedMilliseconds(s.now().Sub(started)) }()
 	defer func() {
 		sort.Slice(out.Run.Findings, func(i, j int) bool { return out.Run.Findings[i].ID < out.Run.Findings[j].ID })
@@ -151,13 +155,19 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		config.Experiments.ControlPath = ""
 	}
 	plan, err := buildConfiguredPlan(analysis, id, config)
-	if err != nil {
-		out.Run.Status = model.StatusFail
+	out.Run.Plan = capabilityPlan(analysis, plan, config, err)
+	if options.OnPlan != nil {
+		options.OnPlan(*out.Run.Plan)
+	}
+	if out.Run.Plan.Status == model.StatusBlocked {
+		out.Run.Status = model.StatusBlocked
 		out.ExitCode = 1
-		out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
-			Code: "verification_ambiguous", Status: model.StatusFail,
-			Message: "CloudForge could not derive one safe verification workload.", Guidance: err.Error(),
-		})
+		out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{Code: "verification_blocked", Status: model.StatusBlocked, Message: "Required runtime capabilities could not be planned safely.", Guidance: "Resolve blocked capabilities in the plan before retrying."})
+		return out
+	}
+	if options.PlanOnly {
+		out.Run.Status = model.StatusSkipped
+		out.ExitCode = 0
 		return out
 	}
 	out.Run.Fingerprint = newFingerprint(ctx, s.runner, root, plan, options)
@@ -351,12 +361,29 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addError("cluster_not_ready", "The isolated cluster did not become ready before application deployment.", "Cluster condition: "+reason+"; inspect Docker capacity and cluster health before retrying.")
 		return out
 	}
+	if config.Dependencies["redis"].Enabled {
+		if !s.startRedis(ctx, kubernetesClient, plan, temporary, &out) {
+			return out
+		}
+	}
 	fingerprintTools(ctx, scoped, plan, out.Run.Fingerprint)
 	if result := kubernetesClient.Apply(ctx, plan.clusterName, manifestPath); failed(result) {
 		out.addCommandDiagnostic("deployment_apply_failed", "kubectl could not apply the generated workload.", result)
 		return out
 	}
 
+	var acceptance *readinessChecker
+	if config.Readiness != nil {
+		acceptance = newReadinessChecker(directHTTPClient(), *config.Readiness)
+		original := s.probe
+		s.probe = func(ctx context.Context, url string) (int, error) {
+			if url == plan.readinessURL {
+				return acceptance.probe(ctx, url)
+			}
+			return original(ctx, url)
+		}
+		defer func() { s.probe = original }()
+	}
 	var httpResultChannel chan httpObservation
 	var stopHTTP context.CancelFunc
 	if plan.readinessURL != "" {
@@ -374,6 +401,13 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		httpResult = <-httpResultChannel
 		stopHTTP()
 	}
+	if ctx.Err() != nil {
+		out.addError("verification_canceled", "Verification was canceled during application readiness.", "Retry with the isolated environment after cancellation cleanup.")
+		return out
+	}
+	if acceptance != nil {
+		out.Run.Evidence = append(out.Run.Evidence, acceptance.evidence(httpResult.DurationMS))
+	}
 	pods, podResult, podErr := kubernetesClient.ObservePods(ctx, plan.clusterName, namespace, "app.kubernetes.io/name="+plan.workloadName)
 	ready, total, restarts := summarizePods(pods)
 	readinessStatus := model.StatusPass
@@ -384,7 +418,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	}
 	if plan.readinessURL != "" && !httpResult.Success {
 		readinessStatus = model.StatusFail
-		readinessSummary = "The readiness endpoint did not return a successful HTTP status."
+		readinessSummary = "The readiness endpoint did not satisfy the configured HTTP readiness contract."
 	}
 	if podErr != nil || failed(podResult) {
 		out.addError("pod_observation_failed", "CloudForge could not decode the deployed pod state.", commandGuidance(podResult, podErr))
@@ -723,7 +757,11 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 			peakReplicas = hpa.MaxReplicas
 		}
 	}
-	resources, err = boundedResources(resources, peakReplicas, strategy)
+	var dependencyResources []model.ResourceRequirements
+	if config.Dependencies["redis"].Enabled {
+		dependencyResources = append(dependencyResources, dependency.RedisResources())
+	}
+	resources, err = boundedResources(resources, peakReplicas, strategy, dependencyResources...)
 	if err != nil {
 		return plan{}, err
 	}
@@ -731,7 +769,7 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 	config.Endpoints.Readiness, config.Endpoints.Health = readinessPath, healthPath
 	labels := map[string]string{"app.kubernetes.io/name": workloadName, "app.kubernetes.io/managed-by": "cloudforge", "cloudforge.dev/run-id": id}
 	objects := []any{
-		&corev1.Namespace{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"}, ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "cloudforge"}}},
+		&corev1.Namespace{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"}, ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "cloudforge", "cloudforge.dev/run-id": id}}},
 		&appsv1.Deployment{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 			ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: namespace, Labels: labels},
@@ -739,7 +777,7 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 				Strategy: strategy, MinReadySeconds: minReady, ProgressDeadlineSeconds: progressDeadline,
 				Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels},
 				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{TerminationGracePeriodSeconds: grace, Containers: []corev1.Container{{
-					Name: "application", Image: image, ImagePullPolicy: corev1.PullNever,
+					Name: "application", Image: image, ImagePullPolicy: corev1.PullNever, Env: applicationEnvironment(config),
 					Ports:     []corev1.ContainerPort{{Name: portName, ContainerPort: port, Protocol: corev1.ProtocolTCP}},
 					Resources: resources, ReadinessProbe: readinessProbe, LivenessProbe: livenessProbe, StartupProbe: startupProbe,
 				}}}},

@@ -1,0 +1,20 @@
+schema_version: v1alpha2
+dependencies:
+  redis:
+    enabled: true
+environment:
+  REDIS_URL:
+    from: dependency.redis.url
+endpoints:
+  health: /health
+  readiness: /ready
+  load: /work
+readiness:
+  status: 200
+  json:
+    status: ready
+load:
+  vus: 5
+  duration: 20s
+experiments:
+  control_path: /_test

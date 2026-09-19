@@ -36,6 +36,20 @@ exhaustive task list.
 
 - [x] Complete the [pilot-readiness gate](pilot-readiness.md) and publish real runtime evidence before testing Peaxis or Avylo.
 
+## Dependency-aware application verification
+
+Tracking: [#32](https://github.com/noor15102002/cloud-forge/issues/32),
+[milestone 7](https://github.com/noor15102002/cloud-forge/milestone/7).
+
+- [x] Implement explicit Redis declarations, bounded provider and safe test bindings.
+- [x] Add semantic readiness, capability planning and versioned dependency reports.
+- [x] Add generic Node/FastAPI fixtures and focused regression tests.
+- [ ] Pass disposable Redis integration, cancellation and cleanup gates.
+- [ ] Merge validated implementation through protected main.
+- [ ] Rerun the controlled private FastAPI pilot and record the resulting boundary.
+
+PostgreSQL, dependency-loss experiments and authenticated POST loads remain deferred.
+
 ## v1.0 — Public V1
 
 - [x] Validate representative healthy and intentionally broken fixtures.

@@ -42,7 +42,7 @@ func preservedProbe(value model.Probe) (*corev1.Probe, error) {
 	return probe, nil
 }
 
-func boundedResources(declared corev1.ResourceRequirements, replicas int32, strategy appsv1.DeploymentStrategy) (corev1.ResourceRequirements, error) {
+func boundedResources(declared corev1.ResourceRequirements, replicas int32, strategy appsv1.DeploymentStrategy, dependencies ...model.ResourceRequirements) (corev1.ResourceRequirements, error) {
 	if replicas < 1 || replicas > safetyBudget().MaxReplicas {
 		return declared, errors.New("replica count exceeds the local safety bound of 1–5; select an explicitly reduced test deployment")
 	}
@@ -83,8 +83,15 @@ func boundedResources(declared corev1.ResourceRequirements, replicas int32, stra
 	}
 	cpu, memory := declared.Limits[corev1.ResourceCPU], declared.Limits[corev1.ResourceMemory]
 	cpuBudget, memoryBudget := resource.MustParse(safetyBudget().WorkloadCPU), resource.MustParse(safetyBudget().WorkloadMemory)
+	for _, dep := range dependencies {
+		cpuBudget.Sub(resource.MustParse(dep.CPULimit))
+		memoryBudget.Sub(resource.MustParse(dep.MemoryLimit))
+	}
+	if cpuBudget.Sign() <= 0 || memoryBudget.Sign() <= 0 {
+		return declared, errors.New("dependency resources exceed aggregate budget")
+	}
 	if cpu.Cmp(*resource.NewMilliQuantity(cpuBudget.MilliValue()/capacity, resource.DecimalSI)) > 0 || memory.Cmp(*resource.NewQuantity(memoryBudget.Value()/capacity, resource.BinarySI)) > 0 {
-		return declared, errors.New("replicas plus rollout surge exceed the aggregate 4 CPU / 2 GiB workload budget")
+		return declared, errors.New("application replicas, rollout surge and dependencies exceed the aggregate 4 CPU / 2 GiB workload budget")
 	}
 	return declared, nil
 }
