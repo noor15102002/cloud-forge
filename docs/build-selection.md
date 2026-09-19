@@ -57,3 +57,6 @@ The runnable `testdata/monorepo` fixture demonstrates a custom filename and a
 root context required to import `packages/shared`. Its semantic readiness checks
 the shared value. It opts out of load and control-protocol experiments because
 no representative workload or instrumentation is configured.
+
+See the [runtime acceptance record](build-selection-evidence.md) for measured
+results, preserved failures and current limitations.
