@@ -1,0 +1,66 @@
+package model
+
+// VerificationSchemaVersion adds dependency evidence and capability planning.
+// Analysis and legacy reports retain their original v1alpha1 contract.
+const VerificationSchemaVersion = "v1alpha2"
+
+// DependencySpec explicitly opts a dependency into the isolated test run.
+type DependencySpec struct {
+	Enabled        bool   `json:"enabled"`
+	StartupTimeout string `json:"startup_timeout,omitempty"`
+}
+
+// EnvironmentBinding selects a generated endpoint or an explicit test literal.
+// Literal values are removed before configuration enters any public report.
+type EnvironmentBinding struct {
+	From  string  `json:"from,omitempty"`
+	Value *string `json:"value,omitempty"`
+}
+
+// ReadinessAcceptance checks status and flat string-valued JSON properties.
+type ReadinessAcceptance struct {
+	Status int               `json:"status"`
+	JSON   map[string]string `json:"json,omitempty"`
+}
+
+// Capability records intent before execution; supported is never an observed pass.
+type Capability struct {
+	Name        string `json:"name"`
+	Disposition string `json:"disposition"`
+	Reason      string `json:"reason"`
+}
+
+// VerificationPlan exposes safe execution intent without generated credentials.
+type VerificationPlan struct {
+	SchemaVersion string       `json:"schema_version"`
+	Status        Status       `json:"status"`
+	Port          int32        `json:"port,omitempty"`
+	Capabilities  []Capability `json:"capabilities"`
+	Budget        SafetyBudget `json:"budget"`
+}
+
+// DependencyEvidence keeps dependency infrastructure separate from application failures.
+type DependencyEvidence struct {
+	Name              string               `json:"name"`
+	Kind              string               `json:"kind"`
+	Image             string               `json:"image"`
+	Digest            string               `json:"digest,omitempty"`
+	Version           string               `json:"version"`
+	Resources         ResourceRequirements `json:"resources"`
+	ConfigurationMode string               `json:"configuration_mode"`
+	NetworkExposure   string               `json:"network_exposure"`
+	Authentication    string               `json:"authentication"`
+	Status            Status               `json:"status"`
+	StartupMS         int64                `json:"startup_ms"`
+	Reason            string               `json:"reason"`
+}
+
+// DependencyFingerprint excludes timings, run identities and endpoint values.
+type DependencyFingerprint struct {
+	Kind              string               `json:"kind"`
+	Image             string               `json:"image"`
+	Digest            string               `json:"digest"`
+	Version           string               `json:"version"`
+	Resources         ResourceRequirements `json:"resources"`
+	ConfigurationMode string               `json:"configuration_mode"`
+}

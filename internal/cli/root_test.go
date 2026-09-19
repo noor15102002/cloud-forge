@@ -60,7 +60,7 @@ func TestVerifyJSONContractAndExitCode(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != model.SchemaVersion || result.Status != model.StatusPass || len(result.Evidence) != 8 {
+	if result.SchemaVersion != model.VerificationSchemaVersion || result.Status != model.StatusPass || len(result.Evidence) != 12 {
 		t.Fatalf("unexpected verification contract: %#v", result)
 	}
 }
@@ -89,7 +89,7 @@ func TestVerifyMarkdownReport(t *testing.T) {
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("verify failed: %v stderr=%q", err, stderr.String())
 	}
-	if !bytes.Contains(stdout.Bytes(), []byte("<!-- cloudforge-verification-report:v1alpha1 -->")) || !bytes.Contains(stdout.Bytes(), []byte("## CloudForge verification")) {
+	if !bytes.Contains(stdout.Bytes(), []byte("<!-- cloudforge-verification-report:v1alpha2 -->")) || !bytes.Contains(stdout.Bytes(), []byte("## CloudForge verification")) {
 		t.Fatalf("unexpected Markdown report:\n%s", stdout.String())
 	}
 }
@@ -280,5 +280,31 @@ func TestVerboseDiagnosticsStayOnStderr(t *testing.T) {
 	var result model.AnalysisResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("verbose logging corrupted JSON output: %v", err)
+	}
+}
+
+func TestDependencyPlanIsReadOnlyDeterministicAndVersioned(t *testing.T) {
+	var previous []byte
+	for range 2 {
+		var stdout, stderr bytes.Buffer
+		root := newRootCommand(&stdout, &stderr, cliRunnerFunc(func(context.Context, command.Request) model.CommandResult {
+			t.Fatal("plan executed a subprocess")
+			return model.CommandResult{}
+		}))
+		root.SetArgs([]string{"verify", filepath.Join("..", "..", "testdata", "healthy-node-redis"), "--plan", "--format", "json"})
+		if err := root.ExecuteContext(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		var plan model.VerificationPlan
+		if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil {
+			t.Fatal(err)
+		}
+		if plan.SchemaVersion != model.VerificationSchemaVersion || plan.Status != model.StatusPass || stderr.Len() != 0 {
+			t.Fatal("invalid plan contract")
+		}
+		if previous != nil && !bytes.Equal(previous, stdout.Bytes()) {
+			t.Fatal("plan not deterministic")
+		}
+		previous = append([]byte(nil), stdout.Bytes()...)
 	}
 }

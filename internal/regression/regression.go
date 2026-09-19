@@ -27,6 +27,9 @@ const maxReportBytes = 4 << 20
 //go:embed verification.v1alpha1.schema.json
 var verificationSchema []byte
 
+//go:embed verification.v1alpha2.schema.json
+var dependencyVerificationSchema []byte
+
 type direction int
 
 type measurementPolicy struct {
@@ -73,11 +76,11 @@ func Load(path string) (model.VerificationRun, error) {
 	if err := json.Unmarshal(data, &identity); err != nil {
 		return model.VerificationRun{}, fmt.Errorf("decode verification report %q: %w", path, err)
 	}
-	if identity.SchemaVersion != model.SchemaVersion {
-		return model.VerificationRun{}, fmt.Errorf("verification report schema version %q is unsupported; expected %q", identity.SchemaVersion, model.SchemaVersion)
+	if identity.SchemaVersion != model.SchemaVersion && identity.SchemaVersion != model.VerificationSchemaVersion {
+		return model.VerificationRun{}, fmt.Errorf("verification report schema version %q is unsupported; expected v1alpha1 or %q", identity.SchemaVersion, model.VerificationSchemaVersion)
 	}
 	if err := validateSchema(data); err != nil {
-		return model.VerificationRun{}, fmt.Errorf("verification report %q does not satisfy the %s schema: %w", path, model.SchemaVersion, err)
+		return model.VerificationRun{}, fmt.Errorf("verification report %q does not satisfy the %s schema: %w", path, identity.SchemaVersion, err)
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -103,7 +106,15 @@ func Load(path string) (model.VerificationRun, error) {
 
 func validateSchema(data []byte) error {
 	var schemaDocument any
-	if err := json.Unmarshal(verificationSchema, &schemaDocument); err != nil {
+	var identity struct {
+		SchemaVersion string `json:"schema_version"`
+	}
+	_ = json.Unmarshal(data, &identity)
+	schemaBytes := verificationSchema
+	if identity.SchemaVersion == model.VerificationSchemaVersion {
+		schemaBytes = dependencyVerificationSchema
+	}
+	if err := json.Unmarshal(schemaBytes, &schemaDocument); err != nil {
 		return fmt.Errorf("load embedded schema: %w", err)
 	}
 	compiler := jsonschema.NewCompiler()
@@ -169,7 +180,7 @@ func Compare(current, baseline model.VerificationRun) model.BaselineComparison {
 		comparison.Unavailable = append(comparison.Unavailable, unavailable("application", model.ComparisonStatus, "", fmt.Sprintf("baseline application %q does not match current application %q", baseline.Application, current.Application)))
 		return comparison
 	}
-	if current.Fingerprint == nil || baseline.Fingerprint == nil || current.Fingerprint.CompatibilityKey == "" || baseline.Fingerprint.CompatibilityKey == "" || current.Fingerprint.CompatibilityKey != baseline.Fingerprint.CompatibilityKey {
+	if current.SchemaVersion != baseline.SchemaVersion || current.Status == model.StatusBlocked || baseline.Status == model.StatusBlocked || current.Fingerprint == nil || baseline.Fingerprint == nil || current.Fingerprint.CompatibilityKey == "" || baseline.Fingerprint.CompatibilityKey == "" || current.Fingerprint.CompatibilityKey != baseline.Fingerprint.CompatibilityKey {
 		comparison.Status = model.StatusWarn
 		comparison.Unavailable = append(comparison.Unavailable, unavailable("environment", model.ComparisonStatus, "", "baseline lacks a compatible complete experiment/environment fingerprint"))
 		return comparison
@@ -200,7 +211,7 @@ func Compare(current, baseline model.VerificationRun) model.BaselineComparison {
 
 func compareStatus(comparison *model.BaselineComparison, current, baseline model.Evidence) {
 	if current.Status == baseline.Status {
-		if current.Status == model.StatusSkipped {
+		if current.Status == model.StatusSkipped || current.Status == model.StatusBlocked || baseline.Status == model.StatusBlocked {
 			comparison.Unavailable = append(comparison.Unavailable, unavailable(current.ExperimentID, model.ComparisonStatus, "", "both baseline and current experiments were skipped"))
 		}
 		return
@@ -293,7 +304,7 @@ func statusRank(status model.Status) (int, bool) {
 }
 
 func validStatus(status model.Status) bool {
-	if status == model.StatusSkipped {
+	if status == model.StatusSkipped || status == model.StatusBlocked {
 		return true
 	}
 	_, valid := statusRank(status)

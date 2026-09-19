@@ -1,0 +1,7 @@
+schema_version: v1alpha2
+dependencies:
+  redis: {enabled: true, startup_timeout: 1s}
+environment:
+  REDIS_URL: {from: dependency.redis.url}
+endpoints:
+  readiness: /ready

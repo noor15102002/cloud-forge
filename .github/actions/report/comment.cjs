@@ -1,6 +1,7 @@
 'use strict'
 
 const marker = '<!-- cloudforge-verification-report:v1alpha1 -->'
+const markers = [marker, '<!-- cloudforge-verification-report:v1alpha2 -->']
 const maximumBodyBytes = 60_000
 
 function validatePullRequestNumber(value) {
@@ -16,8 +17,8 @@ function validatePullRequestNumber(value) {
 }
 
 function validateBody(body) {
-  if (!body.startsWith(`${marker}\n`)) {
-    throw new Error('CloudForge report is missing the expected v1alpha1 marker')
+  if (!markers.some(value => body.startsWith(`${value}\n`))) {
+    throw new Error('CloudForge report is missing the expected versioned marker')
   }
   if (Buffer.byteLength(body, 'utf8') > maximumBodyBytes) {
     throw new Error(`CloudForge report exceeds the ${maximumBodyBytes}-byte comment limit`)
@@ -50,7 +51,7 @@ async function updateComment({ github, owner, repo, pullRequestNumber, body }) {
     typeof comment.user.login === 'string' &&
     comment.user.login.toLowerCase() === authenticatedLogin &&
     typeof comment.body === 'string' &&
-    comment.body.startsWith(marker)
+    markers.some(value => comment.body.startsWith(value))
   )
 
   let commentID

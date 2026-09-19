@@ -104,6 +104,14 @@ func VerificationText(w io.Writer, run model.VerificationRun) error {
 	if _, err := fmt.Fprintf(w, "Status: %s  Application: %s  Duration: %d ms\nRun: %s\n", strings.ToUpper(string(run.Status)), terminalText(displayValue(run.Application)), run.DurationMS, terminalText(run.RunID)); err != nil {
 		return err
 	}
+	if run.Plan != nil {
+		if err := PlanText(w, *run.Plan); err != nil {
+			return err
+		}
+	}
+	if err := dependenciesText(w, run); err != nil {
+		return err
+	}
 	counts := countStatuses(run.Evidence)
 	if _, err := fmt.Fprintf(w, "Evidence: %d passed, %d warned, %d failed, %d skipped, %d errors\n", counts[model.StatusPass], counts[model.StatusWarn], counts[model.StatusFail], counts[model.StatusSkipped], counts[model.StatusError]); err != nil {
 		return err
@@ -183,6 +191,19 @@ func VerificationMarkdown(w io.Writer, run model.VerificationRun) error {
 		if _, err := fmt.Fprintln(w); err != nil {
 			return err
 		}
+	}
+	if run.Plan != nil {
+		if _, err := fmt.Fprintln(w, "\n### Capability plan\n\n| Capability | Disposition | Reason |\n|---|---|---|"); err != nil {
+			return err
+		}
+		for _, capability := range run.Plan.Capabilities {
+			if _, err := fmt.Fprintf(w, "| %s | %s | %s |\n", markdownText(capability.Name), strings.ToUpper(capability.Disposition), markdownText(capability.Reason)); err != nil {
+				return err
+			}
+		}
+	}
+	if err := dependenciesMarkdown(w, run); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintln(w, "\n| Experiment | Status | Duration | Result |"); err != nil {
 		return err
@@ -278,6 +299,14 @@ func VerificationMarkdown(w io.Writer, run model.VerificationRun) error {
 
 func canonicalVerification(run model.VerificationRun) model.VerificationRun {
 	result := run
+	result.Dependencies = append([]model.DependencyEvidence(nil), run.Dependencies...)
+	sort.Slice(result.Dependencies, func(i, j int) bool { return result.Dependencies[i].Name < result.Dependencies[j].Name })
+	if run.Plan != nil {
+		value := *run.Plan
+		value.Capabilities = append([]model.Capability(nil), value.Capabilities...)
+		sort.Slice(value.Capabilities, func(i, j int) bool { return value.Capabilities[i].Name < value.Capabilities[j].Name })
+		result.Plan = &value
+	}
 	if run.Fingerprint != nil {
 		fingerprint := *run.Fingerprint
 		fingerprint.Tools = append([]model.ToolVersion{}, run.Fingerprint.Tools...)
@@ -433,7 +462,7 @@ func containsChange(changes []model.ComparisonChange, wanted model.ComparisonCha
 func actionableFindings(findings []model.Finding) []model.Finding {
 	result := make([]model.Finding, 0)
 	for _, finding := range findings {
-		if finding.Status == model.StatusFail || finding.Status == model.StatusWarn || finding.Status == model.StatusError {
+		if finding.Status == model.StatusFail || finding.Status == model.StatusWarn || finding.Status == model.StatusError || finding.Status == model.StatusBlocked {
 			result = append(result, finding)
 		}
 	}

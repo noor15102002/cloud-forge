@@ -121,7 +121,7 @@ func TestLoadRejectsSchemaMismatchUnknownFieldsAndDuplicateMetrics(t *testing.T)
 			if err == nil {
 				t.Fatal("expected baseline error")
 			}
-			if name == "schema" && !strings.Contains(err.Error(), `expected "v1alpha1"`) {
+			if name == "schema" && !strings.Contains(err.Error(), `expected v1alpha1 or "v1alpha2"`) {
 				t.Fatalf("schema mismatch was not actionable: %v", err)
 			}
 		})
@@ -173,5 +173,25 @@ func TestIncompatibleOrMissingFingerprintIsUnavailable(t *testing.T) {
 	baseline.Fingerprint = nil
 	if got := Compare(current, baseline); got.Status != model.StatusWarn {
 		t.Fatalf("legacy fingerprint fabricated: %#v", got)
+	}
+}
+
+func TestDependencySchemaMatchesPublishedContract(t *testing.T) {
+	published, err := os.ReadFile(filepath.Join("..", "..", "schemas", "verification.v1alpha2.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(published) != string(dependencyVerificationSchema) {
+		t.Fatal("embedded dependency schema differs from public schema")
+	}
+}
+
+func TestLegacyAndDependencyReportsDoNotCompareAcrossSchemas(t *testing.T) {
+	old := model.VerificationRun{SchemaVersion: model.SchemaVersion, Status: model.StatusPass, Fingerprint: &model.RunFingerprint{CompatibilityKey: "same"}}
+	current := old
+	current.SchemaVersion = model.VerificationSchemaVersion
+	result := Compare(current, old)
+	if len(result.Unavailable) != 1 || len(result.Regressions) != 0 {
+		t.Fatal("different schema environments were compared")
 	}
 }

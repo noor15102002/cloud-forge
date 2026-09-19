@@ -11,7 +11,8 @@ regression reporting.
 > verification adds normalized Trivy findings, bounded k6 load measurements,
 > HPA scaling evidence, stable terminal, JSON, and Markdown reports, explicit
 > baseline regression comparison, and a trust-separated GitHub Action with
-> artifact and pull-request reporting.
+> artifact and pull-request reporting. Explicit isolated Redis dependencies,
+> semantic HTTP readiness assertions and read-only capability planning are implemented.
 
 ## Why CloudForge
 
@@ -49,6 +50,7 @@ cloudforge doctor
 cloudforge doctor --format json
 cloudforge analyze .
 cloudforge analyze ./services/api --format json
+cloudforge verify . --plan
 cloudforge verify .
 cloudforge verify ./services/api --format json
 cloudforge verify ./services/api --format markdown
@@ -63,8 +65,8 @@ yet. It reports source-linked findings for container users and ports, probes,
 replicas, resources, Service ports, and HPA ranges. It does not execute
 repository code.
 
-Verification JSON is the canonical report and uses the versioned `v1alpha1` schema
-defined in [`schemas/verification.v1alpha1.schema.json`](schemas/verification.v1alpha1.schema.json).
+Verification JSON is the canonical report and uses the versioned `v1alpha2` schema
+defined in [`schemas/verification.v1alpha2.schema.json`](schemas/verification.v1alpha2.schema.json).
 Collections are sorted for repeatable output; consumers must not depend on JSON
 object key ordering. Verification also supports concise terminal output and a
 Markdown report suitable for a pull-request comment.
@@ -77,10 +79,11 @@ relative regressions. A detected regression exits with status `1`; missing,
 skipped, nonnumeric, or unit-incompatible evidence is reported as unavailable
 instead of being treated as a regression. Environment and effective workload
 fingerprints must also be complete and compatible. Baselines are read before repository
-code executes and must be strict, bounded `v1alpha1` JSON files.
+code executes and must be strict, bounded `v1alpha1` or `v1alpha2` JSON files.
 
 `verify` builds the root Dockerfile, creates a uniquely named k3d cluster,
-imports the image, deploys a generated Namespace, Deployment, and Service, and
+imports the image, provisions and waits for any explicitly enabled Redis dependency,
+then deploys a generated Namespace, Deployment, and Service, and
 records build and readiness evidence. When an HTTP readiness endpoint is
 declared, it measures startup and readiness status, then deletes one ready pod
 while sending continuous traffic and records replacement time, failed requests,
@@ -131,3 +134,12 @@ Linux and WSL2 are the primary targets. See [the roadmap](docs/roadmap.md),
 [architecture](docs/architecture.md), and [contribution guide](CONTRIBUTING.md).
 
 Apache-2.0 licensed.
+
+## Dependency-aware workloads
+
+See the [support matrix](docs/supported-applications.md) and
+[Redis/configuration contract](docs/dependency-runtime.md). Required unresolved
+or unsupported dependencies are BLOCKED before execution. Optional absent
+experiments are SKIPPED. Redis remains internal to the owned cluster, and its
+resources count against the workload budget. Semantic assertions distinguish
+HTTP 200 from configured readiness without copying response bodies into reports.

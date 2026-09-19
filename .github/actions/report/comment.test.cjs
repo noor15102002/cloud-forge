@@ -78,3 +78,7 @@ function fakeGitHub(comments, calls) {
     }
   }
 }
+
+test('accepts v1alpha2 dependency reports', () => {
+  validateBody('<!-- cloudforge-verification-report:v1alpha2 -->\n## Dependencies\nRedis PASS')
+})

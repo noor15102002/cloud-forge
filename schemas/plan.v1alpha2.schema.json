@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/plan",
+  "$defs": {
+    "status": {
+      "enum": [
+        "pass",
+        "warn",
+        "fail",
+        "skipped",
+        "error",
+        "blocked"
+      ]
+    },
+    "safetyBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workload_cpu": {
+          "type": "string"
+        },
+        "workload_memory": {
+          "type": "string"
+        },
+        "cluster_memory": {
+          "type": "string"
+        },
+        "build_memory": {
+          "type": "string"
+        },
+        "build_timeout": {
+          "type": "string"
+        },
+        "readiness_timeout": {
+          "type": "string"
+        },
+        "experiment_timeout": {
+          "type": "string"
+        },
+        "max_replicas": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "build_cpus": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "workload_cpu",
+        "workload_memory",
+        "cluster_memory",
+        "build_memory",
+        "build_timeout",
+        "readiness_timeout",
+        "experiment_timeout",
+        "max_replicas",
+        "build_cpus"
+      ]
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "disposition": {
+          "enum": [
+            "supported",
+            "skipped",
+            "blocked"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "disposition",
+        "reason"
+      ]
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        },
+        "budget": {
+          "$ref": "#/$defs/safetyBudget"
+        },
+        "schema_version": {
+          "const": "v1alpha2"
+        }
+      },
+      "required": [
+        "status",
+        "capabilities",
+        "budget",
+        "schema_version"
+      ]
+    }
+  }
+}

@@ -12,7 +12,7 @@ inputs:
     required: false
     default: .
   baseline-path:
-    description: Explicit local v1alpha1 verification JSON baseline.
+    description: Explicit local v1alpha1 or v1alpha2 verification JSON baseline.
     required: false
     default: ""
   baseline-run-id:

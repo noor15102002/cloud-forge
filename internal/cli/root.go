@@ -142,11 +142,15 @@ func newDoctorCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner command.Runner) *cobra.Command {
 	var format string
 	var keepEnvironment bool
+	var planOnly bool
 	var baselinePath string
 	var configPath string
 	cmd := &cobra.Command{Use: "verify [path]", Short: "Build and verify an application in a disposable k3d cluster", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateVerificationFormat(format); err != nil {
 			return &exitError{code: 2, err: err}
+		}
+		if planOnly && (baselinePath != "" || keepEnvironment) {
+			return &exitError{code: 2, err: errors.New("--plan cannot be combined with --baseline or --keep-environment")}
 		}
 		var baselineLoaded bool
 		var baseline model.VerificationRun
@@ -164,7 +168,29 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 		}
 		logger().Info("starting application verification", "path", path, "keep_environment", keepEnvironment)
 		buildVersion, buildCommit := buildIdentity()
-		outcome := verification.New(runner).Run(cmd.Context(), path, verification.Options{KeepEnvironment: keepEnvironment, ConfigPath: configPath, Version: buildVersion, Commit: buildCommit})
+		outcome := verification.New(runner).Run(cmd.Context(), path, verification.Options{KeepEnvironment: keepEnvironment, ConfigPath: configPath, Version: buildVersion, Commit: buildCommit, PlanOnly: planOnly, OnPlan: func(plan model.VerificationPlan) {
+			if !planOnly {
+				_ = render.PlanText(cmd.ErrOrStderr(), plan)
+			}
+		}})
+		if planOnly && outcome.Run.Plan != nil {
+			var renderErr error
+			switch format {
+			case "json":
+				renderErr = render.JSON(stdout, *outcome.Run.Plan)
+			case "markdown":
+				renderErr = render.PlanMarkdown(stdout, *outcome.Run.Plan)
+			default:
+				renderErr = render.PlanText(stdout, *outcome.Run.Plan)
+			}
+			if renderErr != nil {
+				return &exitError{code: 2, err: renderErr}
+			}
+			if outcome.ExitCode != 0 {
+				return &exitError{code: outcome.ExitCode, err: errors.New("verification plan is blocked")}
+			}
+			return nil
+		}
 		if baselineLoaded {
 			comparison := regression.Compare(outcome.Run, baseline)
 			outcome.Run.Comparison = &comparison
@@ -192,8 +218,9 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 	}}
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, or markdown")
 	cmd.Flags().StringVar(&configPath, "config", "", "strict verification configuration (default: application/cloudforge.yaml)")
+	cmd.Flags().BoolVar(&planOnly, "plan", false, "inspect capabilities without builds, subprocesses or runtime resources")
 	cmd.Flags().BoolVar(&keepEnvironment, "keep-environment", false, "keep the k3d cluster after verification")
-	cmd.Flags().StringVar(&baselinePath, "baseline", "", "compare with an explicit v1alpha1 verification JSON file")
+	cmd.Flags().StringVar(&baselinePath, "baseline", "", "compare with an explicit v1alpha1 or v1alpha2 verification JSON file")
 	return cmd
 }
 

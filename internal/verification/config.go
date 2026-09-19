@@ -42,7 +42,7 @@ func loadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 	if yaml.UnmarshalStrict(data, &supplied) != nil {
 		return config, errors.New("invalid configuration object")
 	}
-	for _, key := range []string{"runtime", "load", "endpoints", "experiments"} {
+	for _, key := range []string{"runtime", "load", "endpoints", "experiments", "dependencies", "environment", "readiness"} {
 		if string(supplied[key]) == "null" {
 			return config, errors.New("configuration sections cannot be null")
 		}
@@ -52,6 +52,28 @@ func loadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 	if _, present := runtimeFields["port"]; present && config.Runtime.Port == 0 {
 		return config, errors.New("explicit runtime.port must be between 1 and 65535")
 	}
+	var dependencyFields map[string]map[string]json.RawMessage
+	if json.Unmarshal(supplied["dependencies"], &dependencyFields) != nil && supplied["dependencies"] != nil {
+		return config, errors.New("invalid dependency configuration")
+	}
+	for _, fields := range dependencyFields {
+		if string(fields["enabled"]) != "true" && string(fields["enabled"]) != "false" {
+			return config, errors.New("dependency enabled must be explicitly true or false")
+		}
+	}
+	var readinessFields map[string]json.RawMessage
+	_ = json.Unmarshal(supplied["readiness"], &readinessFields)
+	if raw, ok := readinessFields["json"]; ok {
+		var properties map[string]json.RawMessage
+		if string(raw) == "null" || json.Unmarshal(raw, &properties) != nil {
+			return config, errors.New("readiness.json must contain flat string assertions")
+		}
+		for _, value := range properties {
+			if len(value) == 0 || value[0] != '"' {
+				return config, errors.New("readiness JSON assertion values must be strings")
+			}
+		}
+	}
 	if err := validateConfiguration(config); err != nil {
 		return config, err
 	}
@@ -59,8 +81,11 @@ func loadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 }
 
 func validateConfiguration(config model.RuntimeConfiguration) error {
-	if config.SchemaVersion != "v1alpha1" {
-		return errors.New("configuration schema_version must be v1alpha1")
+	if err := validateExtensions(config); err != nil {
+		return err
+	}
+	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != model.VerificationSchemaVersion {
+		return errors.New("configuration schema_version must be v1alpha1 or v1alpha2")
 	}
 	if config.Runtime.Port < 0 || config.Runtime.Port > 65535 {
 		return errors.New("runtime.port must be between 1 and 65535 when supplied")

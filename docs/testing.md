@@ -71,3 +71,23 @@ Real interruption tests preserve an existing kubeconfig/context and unrelated
 Docker container/network/volume while checking run-owned resource cleanup.
 `metadata-node` and `metadata-python` remain compact analyzer-only fixtures;
 `healthy-node` and `healthy-python` contain runnable reference applications.
+
+## Redis and semantic readiness
+
+`.github/workflows/dependencies.yml` runs `scripts/pilot-dependencies.py` against
+`healthy-node-redis` and `healthy-python-redis` on disposable GitHub runners.
+Each family covers a healthy dependency/application, disconnected application,
+HTTP 200 semantic degradation and deterministic Redis startup timeout. The
+harness delays Redis's readiness probe for the timeout case; this is recorded
+test fault injection, not a product configuration capability.
+
+`pilot-cancellation.py --stages redis` interrupts actual Redis startup and checks
+owned cleanup, private kubeconfig removal and unrelated sentinel Docker state.
+Unit tests cover invalid declarations, unsafe bindings, missing/duplicate/nested
+JSON fields, bounded bodies, resource accounting, startup order, failure/cancel
+classification, fingerprint omission and report schema loading.
+
+The private application pilot happens only after generic integration validation
+and protected-main merge. Private source and evidence must not enter public
+workflow artifacts. Dependency-loss disruption and richer HTTP workloads remain
+unsupported rather than being claimed as tested.
