@@ -101,14 +101,20 @@ metricsComplete:
 	go func() { loadDone <- executeLoad(loadCtx, loadClient, workspace, loadURL, s.loadProfile) }()
 	var execution loadExecution
 	loadFinished := false
+	finishLoad := func() recoveryOutcome {
+		cancelLoad()
+		if !loadFinished {
+			execution = <-loadDone
+			loadFinished = true
+		}
+		// An HPA observation error must not discard a completed load result or
+		// describe an interrupted, already-started load as never executed.
+		return loadOutcomeForExecution(execution, s.loadProfile)
+	}
 	for {
 		state, result, observeErr := client.ObserveHPA(scaleCtx, current.clusterName, namespace, current.hpaName)
 		if observeErr != nil || failed(result) {
-			cancelLoad()
-			if !loadFinished {
-				<-loadDone
-			}
-			return skippedLoad("The load profile was canceled because HPA state could not be inspected."), lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_observation_failed", "CloudForge could not inspect HPA behavior during load.", commandGuidance(result, observeErr), trafficObservation{})
+			return finishLoad(), lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_observation_failed", "CloudForge could not inspect HPA behavior during load.", commandGuidance(result, observeErr), trafficObservation{})
 		}
 		if state.DesiredReplicas > startReplicas {
 			scaleExpected = true
@@ -131,11 +137,7 @@ metricsComplete:
 		if peakReplicas > startReplicas {
 			ready, _, _, readyResult, readyErr := client.ReadyPods(scaleCtx, current.clusterName, namespace, "app.kubernetes.io/name="+current.workloadName)
 			if readyErr != nil || failed(readyResult) || ready < 0 || ready > 10 {
-				cancelLoad()
-				if !loadFinished {
-					<-loadDone
-				}
-				return skippedLoad("Autoscaling observation could not complete."), lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_readiness_unavailable", "CloudForge could not inspect scaled pod readiness.", "Inspect the disposable cluster.", trafficObservation{})
+				return finishLoad(), lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_readiness_unavailable", "CloudForge could not inspect scaled pod readiness.", "Inspect the disposable cluster.", trafficObservation{})
 			}
 			peakReady = maxInt32(peakReady, int32(ready))
 		}

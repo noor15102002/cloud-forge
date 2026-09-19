@@ -127,15 +127,15 @@ func TestHPAObservationFailureAfterLoadCompletionDoesNotHang(t *testing.T) {
 	})
 	service := New(runner)
 	service.poll = 50 * time.Millisecond
-	done := make(chan recoveryOutcome, 1)
+	done := make(chan [2]recoveryOutcome, 1)
 	go func() {
-		_, outcome := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), plan{loadURL: "http://127.0.0.1:8000/work", hpaTargetCPU: 70}, t.TempDir(), "hpa.yaml")
-		done <- outcome
+		load, outcome := service.runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), plan{loadURL: "http://127.0.0.1:8000/work", hpaTargetCPU: 70}, t.TempDir(), "hpa.yaml")
+		done <- [2]recoveryOutcome{load, outcome}
 	}()
 	select {
-	case outcome := <-done:
-		if outcome.ExitCode != 2 {
-			t.Fatalf("unexpected outcome: %#v", outcome)
+	case outcomes := <-done:
+		if outcomes[1].ExitCode != 2 || outcomes[0].Evidence.Status != model.StatusPass || measurementValue(outcomes[0].Evidence.Measurements, "request_count") != "20" {
+			t.Fatalf("HPA error discarded the completed load observation: %#v", outcomes)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("joined an already-consumed load result")

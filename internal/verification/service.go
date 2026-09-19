@@ -107,6 +107,11 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	}
 	out.ExitCode = 2
 	defer func() { appendUnexecuted(&out) }()
+	defer func() {
+		if ctx.Err() != nil {
+			out.addError("verification_canceled", "Verification was canceled; no further experiments were scheduled.", "Evidence collected before cancellation is preserved; owned resources are cleaned up with bounded independent contexts.")
+		}
+	}()
 	defer func() { out.Run.DurationMS = elapsedMilliseconds(s.now().Sub(started)) }()
 	defer func() {
 		sort.Slice(out.Run.Findings, func(i, j int) bool { return out.Run.Findings[i].ID < out.Run.Findings[j].ID })
@@ -413,7 +418,24 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		stopHTTP()
 	}
 	if ctx.Err() != nil {
-		out.addError("verification_canceled", "Verification was canceled during application readiness.", "Retry with the isolated environment after cancellation cleanup.")
+		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{
+			ExperimentID: "deployment-readiness", Title: "Deployment readiness", Status: model.StatusError,
+			Summary:    "Application readiness observation was interrupted; the readiness requirement was not assessed to completion.",
+			DurationMS: maxInt64(waitResult.DurationMS, httpResult.DurationMS),
+			Measurements: []model.Measurement{
+				{Name: "readiness_http_status", Value: strconv.Itoa(httpResult.Status)},
+				{Name: "readiness_attempts", Value: strconv.Itoa(httpResult.Attempts), Unit: "requests"},
+				{Name: "failed_startup_requests", Value: strconv.Itoa(httpResult.Failures), Unit: "requests"},
+			},
+		})
+		if acceptance != nil {
+			evidence := acceptance.evidence(httpResult.DurationMS)
+			if !httpResult.Success {
+				evidence.Status = model.StatusError
+				evidence.Summary = "Semantic readiness observation was interrupted; partial observations are retained."
+			}
+			out.Run.Evidence = append(out.Run.Evidence, evidence)
+		}
 		return out
 	}
 	if acceptance != nil {
@@ -574,9 +596,6 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		recordNotExecuted(&out, plan, "horizontal-autoscaling", status, reason)
 	}
 	finalEvidenceStatus(&out)
-	if ctx.Err() != nil {
-		out.addError("verification_canceled", "Verification was canceled; no further experiments were scheduled.", "Evidence collected before cancellation is preserved; owned resources are cleaned up with bounded independent contexts.")
-	}
 
 	return out
 }

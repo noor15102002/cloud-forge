@@ -90,6 +90,9 @@ business data or claim that application internals are identical.
 - Cancellation stops scheduling immediately, preserves collected evidence,
   and attempts bounded cleanup using independent contexts. It does not start
   another experiment or restoration cycle.
+- Started but interrupted readiness/load observations are ERROR with execution
+  recorded, not unexecuted SKIPPED entries. An HPA observation error retains an
+  already completed load result and its measurements.
 
 An overall report containing an original FAIL cannot become PASS after
 restoration. ERROR takes precedence for the process exit status, while the

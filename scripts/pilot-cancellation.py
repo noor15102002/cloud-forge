@@ -109,6 +109,12 @@ with existing_state() as (sentinel_name, baseline_kubeconfig, sentinel_ids):
                 assert process.wait(timeout=180) == 2, f"{stage}: cancellation was not classified as execution error"
             report = json.loads(report_path.read_text())
             assert report["status"] == "error", report
+            assert any(item["code"] == "verification_canceled" for item in report["diagnostics"]), "Missing cancellation classification"
+            evidence = {item["experiment_id"]: item for item in report["evidence"]}
+            target = {"build": "container-build", "readiness": "deployment-readiness", "load": "load-profile"}.get(stage)
+            if target:
+                assert evidence[target]["execution"]["executed"], "Started experiment was presented as never executed"
+                assert evidence[target]["status"] == "error", evidence[target]
             assert not list(root.glob("cloudforge-verify-*")), "Temporary kubeconfig/runtime directory leaked"
             if stage == "redis":
                 assert report["dependencies"][0]["status"] == "error"

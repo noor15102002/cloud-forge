@@ -257,6 +257,47 @@ func TestCancellationPreservesEvidenceStopsSchedulingAndCleansUp(t *testing.T) {
 	}
 }
 
+func TestEarlyCancellationAndStartedLoadAreReportedAccurately(t *testing.T) {
+	for _, stage := range []string{"build", "cluster", "readiness", "load"} {
+		t.Run(stage, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			runner := runnerFunc(func(callCtx context.Context, req command.Request) model.CommandResult {
+				selected := stage == "build" && req.Name == "docker" && containsArgument(req.Args, "build") ||
+					stage == "cluster" && req.Name == "k3d" && containsArgument(req.Args, "create") ||
+					stage == "readiness" && req.Name == "kubectl" && containsArgument(req.Args, "rollout") ||
+					stage == "load" && req.Name == "k6" && containsArgument(req.Args, "run")
+				if selected {
+					cancel()
+				}
+				if callCtx.Err() != nil {
+					return model.CommandResult{ExitCode: -1, FailureType: model.FailureCanceled}
+				}
+				return successfulCommand(req)
+			})
+			out := fixedService(runner).Run(ctx, fixturePath(t), testOptions())
+			if out.Run.Status != model.StatusError || !hasDiagnosticCode(out.Run.Diagnostics, "verification_canceled") {
+				t.Fatalf("cancellation was not explicit: %+v", out)
+			}
+			target := map[string]string{"build": "container-build", "readiness": "deployment-readiness", "load": "load-profile"}[stage]
+			if target != "" {
+				e := evidenceByID(out.Run.Evidence, target)
+				if e.Status != model.StatusError || !e.Execution.Executed {
+					t.Fatalf("started experiment was lost: %+v", e)
+				}
+			}
+			if stage != "load" {
+				e := evidenceByID(out.Run.Evidence, "load-profile")
+				if e.Status != model.StatusSkipped || e.Execution.Executed {
+					t.Fatalf("unscheduled experiment was not marked canceled: %+v", e)
+				}
+			} else if evidenceByID(out.Run.Evidence, "rolling-deployment").Status != model.StatusPass {
+				t.Fatal("earlier completed evidence was lost")
+			}
+		})
+	}
+}
+
 func TestBaselineRequiresImageRevisionReplicasAndReadyPods(t *testing.T) {
 	for _, broken := range []string{"image", "revision", "replicas", "ready", "http", "api"} {
 		t.Run(broken, func(t *testing.T) {
