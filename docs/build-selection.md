@@ -43,8 +43,10 @@ cannot be silently compared as the same environment.
 
 Without `build`, root Dockerfile selection and earlier configuration behavior
 are unchanged. Runtime v1alpha1/v1alpha2 configuration remains supported.
-Selection uses v1alpha3 configuration, v1alpha2 analysis and v1alpha4
-verification/plan schemas. Previously saved reports remain readable.
+Selection was introduced with v1alpha3 configuration, v1alpha2 analysis and
+v1alpha4 verification/plan schemas. Current plans/reports use v1alpha5; combining
+selection with explicit test topology uses configuration v1alpha4. Previously
+saved reports remain readable.
 
 Limitations: one workload, one Dockerfile, no build-target/build-secret/arbitrary
 build-argument contract, no Compose or Helm execution, and no inference of
