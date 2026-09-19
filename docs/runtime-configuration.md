@@ -1,6 +1,6 @@
 # Runtime configuration and pilot support
 
-CloudForge tests one HTTP application with one root Dockerfile and at most one
+CloudForge tests one HTTP application with one selected Dockerfile and at most one
 single-container Deployment. Explicit Redis provisioning and safe test bindings
 are described in [dependency runtime](dependency-runtime.md). PostgreSQL, arbitrary
 manifest application, Helm rendering and production credentials remain unsupported.
@@ -117,3 +117,10 @@ failures are retained as application failures, with successful final health and
 nonzero failed-request evidence. Successful baseline restoration allows later
 independent experiments to run without removing those failures. The pilot checks that these are application observations, not CloudForge
 execution errors; it does not turn the external application's verdict into PASS.
+
+## Monorepo builds
+
+Runtime configuration `v1alpha3` adds optional `build.app`, `build.dockerfile`
+and `build.context`. All three paths are relative to the positional repository
+boundary. See [single-workload selection](build-selection.md). Existing v1alpha1
+and v1alpha2 configurations keep their original behavior.

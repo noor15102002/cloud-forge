@@ -92,7 +92,7 @@ func TestVerifyMarkdownReport(t *testing.T) {
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("verify failed: %v stderr=%q", err, stderr.String())
 	}
-	if !bytes.Contains(stdout.Bytes(), []byte("<!-- cloudforge-verification-report:v1alpha3 -->")) || !bytes.Contains(stdout.Bytes(), []byte("## CloudForge verification")) {
+	if !bytes.Contains(stdout.Bytes(), []byte("<!-- cloudforge-verification-report:v1alpha4 -->")) || !bytes.Contains(stdout.Bytes(), []byte("## CloudForge verification")) {
 		t.Fatalf("unexpected Markdown report:\n%s", stdout.String())
 	}
 }
@@ -309,5 +309,56 @@ func TestDependencyPlanIsReadOnlyDeterministicAndVersioned(t *testing.T) {
 			t.Fatal("plan not deterministic")
 		}
 		previous = append([]byte(nil), stdout.Bytes()...)
+	}
+}
+
+func TestSelectedAnalyzeAndPlanResolvePathsAgainstRepository(t *testing.T) {
+	repository, err := filepath.Abs(filepath.Join("..", "..", "testdata", "monorepo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile("../../testdata/monorepo/cloudforge.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	config := filepath.Join(directory, "elsewhere.yaml")
+	confined, err := os.OpenRoot(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = confined.Close() }()
+	if err := confined.WriteFile("elsewhere.yaml", data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, commandName := range []string{"analyze", "verify"} {
+		var first []byte
+		for attempt := 0; attempt < 2; attempt++ {
+			var out, diagnostics bytes.Buffer
+			root := newRootCommand(&out, &diagnostics, cliRunnerFunc(func(context.Context, command.Request) model.CommandResult {
+				t.Fatal("inspection ran a tool")
+				return model.CommandResult{}
+			}))
+			arguments := []string{commandName, repository, "--config", config, "--format", "json"}
+			if commandName == "verify" {
+				arguments = append(arguments, "--plan")
+			}
+			root.SetArgs(arguments)
+			if err := root.ExecuteContext(context.Background()); err != nil {
+				t.Fatal(err, diagnostics.String())
+			}
+			var result map[string]any
+			if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			build := result["build"].(map[string]any)
+			if build["app"] != "apps/http" || build["context"] != "." || bytes.Contains(out.Bytes(), []byte(repository)) {
+				t.Fatal(out.String())
+			}
+			if attempt > 0 && !bytes.Equal(first, out.Bytes()) {
+				t.Fatal("non-deterministic inspection")
+			}
+			first = append([]byte(nil), out.Bytes()...)
+		}
 	}
 }

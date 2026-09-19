@@ -122,9 +122,9 @@ The verification action exports `report-json`, `report-markdown`, `binary`, and
 `exit-code`. The reports are also uploaded under `artifact-name` for the
 configured retention period, which defaults to 14 days.
 
-Dependency-aware runs use the application-root `cloudforge.yaml` v1alpha2 configuration. Reports retain BLOCKED dependency plans and separate dependency outcomes; the trusted reporter accepts all three schema-version markers.
+Dependency-aware runs use the application-root `cloudforge.yaml` v1alpha2 configuration. Reports retain BLOCKED dependency plans and separate dependency outcomes; the trusted reporter accepts all four schema-version markers.
 
-Runtime reports now use v1alpha3; runtime configuration remains v1alpha1/v1alpha2.
+Runtime reports now use v1alpha4; runtime configuration accepts v1alpha1/v1alpha2/v1alpha3.
 Tool compatibility and verifier build identity are checked before application
 execution. See [evidence reliability](evidence-reliability.md).
 
@@ -132,3 +132,11 @@ External Action use requires a full 40-character commit SHA pin. Downloaded
 Actions may lack Git metadata, so this immutable ref is injected as the verifier
 commit; a moving tag or branch is not resolved later and claimed as build
 identity. Local `uses: ./` builds retain Go VCS metadata.
+
+## Selected workload
+
+Set `path` to the repository boundary. The optional `config-path` input selects
+an existing regular configuration file inside the GitHub workspace. It is
+workspace-relative; `build` paths inside that file are relative to `path`, not
+the configuration file. With no input, CloudForge reads `path/cloudforge.yaml`.
+See [build selection](build-selection.md) for the v1alpha3 configuration.

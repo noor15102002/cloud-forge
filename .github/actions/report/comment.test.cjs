@@ -86,3 +86,7 @@ test('accepts v1alpha2 dependency reports', () => {
 test('accepts v1alpha3 reliability reports', () => {
   validateBody('<!-- cloudforge-verification-report:v1alpha3 -->\n## Completed evidence\nPod recovery FAIL')
 })
+
+test('accepts v1alpha4 selected workload reports', () => {
+  validateBody('<!-- cloudforge-verification-report:v1alpha4 -->\nBuild app=apps/http context=.')
+})

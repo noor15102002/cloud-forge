@@ -62,3 +62,15 @@ expect_failure "retention-days" CLOUDFORGE_RETENTION_DAYS=91
 expect_failure "JavaScript-safe integer" CLOUDFORGE_BASELINE_RUN_ID=9007199254740992 CLOUDFORGE_HAS_GITHUB_TOKEN=true
 expect_failure "github-token is required" CLOUDFORGE_BASELINE_RUN_ID=42
 expect_failure "baseline-artifact-name must not be empty" CLOUDFORGE_BASELINE_RUN_ID=42 CLOUDFORGE_HAS_GITHUB_TOKEN=true CLOUDFORGE_BASELINE_ARTIFACT_NAME=
+
+printf 'schema_version: v1alpha3\n' > "$workspace/config.yaml"
+printf 'schema_version: v1alpha3\n' > "$outside/config.yaml"
+mkfifo "$workspace/fifo"
+config_output="$temporary/config-output"
+env "${defaults[@]}" "GITHUB_OUTPUT=$config_output" CLOUDFORGE_CONFIG_PATH=config.yaml "$validator"
+grep -Fxq "config-path=$workspace/config.yaml" "$config_output"
+expect_failure "relative single-line" CLOUDFORGE_CONFIG_PATH=/tmp/config.yaml
+expect_failure "relative single-line" $'CLOUDFORGE_CONFIG_PATH=config.yaml\nforged-output=value'
+expect_failure "must not escape" CLOUDFORGE_CONFIG_PATH=escape/config.yaml
+expect_failure "regular file" CLOUDFORGE_CONFIG_PATH=fifo
+expect_failure "regular file" CLOUDFORGE_CONFIG_PATH=application

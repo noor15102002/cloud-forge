@@ -2,7 +2,11 @@ package docker
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
 	"github.com/noor15102002/cloud-forge/pkg/model"
@@ -80,5 +84,56 @@ func TestRemnantCleanupRequiresOwnershipAndExactRunName(t *testing.T) {
 	client.RemoveClusterRemnants(context.Background(), "cloudforge-0123abcd", "network")
 	if len(removals) != 1 || removals[0] != "123456abcdef" {
 		t.Fatalf("cleanup targeted unrelated resources: %#v", removals)
+	}
+}
+
+func TestSelectedBuildPreservesArgumentBoundariesAndRevalidates(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "apps/my app"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "apps/my app/Containerfile")
+	if err := os.WriteFile(file, []byte("FROM node:24-alpine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	selection := &model.BuildSelection{App: "apps/my app", Dockerfile: "apps/my app/Containerfile", Context: "."}
+	calls := 0
+	client := New(runnerFunc(func(_ context.Context, r command.Request) model.CommandResult {
+		calls++
+		if r.Dir != root || !slices.Contains(r.Args, "./apps/my app/Containerfile") || r.Args[len(r.Args)-1] != "./." {
+			t.Fatalf("unsafe args: %#v", r)
+		}
+		return model.CommandResult{}
+	}))
+	if result := client.BuildSelected(context.Background(), root, "image:a", "a", selection); result.FailureType != model.FailureNone {
+		t.Fatal(result)
+	}
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "outside"), file); err != nil {
+		t.Fatal(err)
+	}
+	if result := client.BuildSelected(context.Background(), root, "image:b", "b", selection); result.FailureType != model.FailureExecution || calls != 1 {
+		t.Fatal("changed path reached Docker", result)
+	}
+}
+
+func TestBuildStopsBeforeRunnerOnCanceledOrExpiredContext(t *testing.T) {
+	client := New(runnerFunc(func(context.Context, command.Request) model.CommandResult {
+		t.Fatal("canceled build executed")
+		return model.CommandResult{}
+	}))
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	expired, stop := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer stop()
+	for _, item := range []struct {
+		ctx  context.Context
+		want model.FailureType
+	}{{canceled, model.FailureCanceled}, {expired, model.FailureTimeout}} {
+		if result := client.BuildSelected(item.ctx, ".", "image:a", "a", nil); result.FailureType != item.want {
+			t.Fatal(result)
+		}
 	}
 }

@@ -2,6 +2,7 @@ package model
 
 // RuntimeConfiguration is the explicit, bounded verification contract.
 type RuntimeConfiguration struct {
+	Build         *BuildSelection               `json:"build,omitempty"`
 	Dependencies  map[string]DependencySpec     `json:"dependencies,omitempty"`
 	Environment   map[string]EnvironmentBinding `json:"environment,omitempty"`
 	Readiness     *ReadinessAcceptance          `json:"readiness,omitempty"`
@@ -10,6 +11,15 @@ type RuntimeConfiguration struct {
 	Endpoints     EndpointSettings              `json:"endpoints"`
 	Load          LoadSettings                  `json:"load"`
 	Experiments   ExperimentSettings            `json:"experiments"`
+}
+
+// BuildSelection uses repository-relative paths, never shell expressions or URLs.
+// App selects metadata; Context selects Docker COPY inputs; Dockerfile selects
+// the one image definition used throughout verification.
+type BuildSelection struct {
+	App        string `json:"app"`
+	Dockerfile string `json:"dockerfile"`
+	Context    string `json:"context"`
 }
 
 // RuntimeSettings selects the application port; replica/resource bounds are enforced independently.

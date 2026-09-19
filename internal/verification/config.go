@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/noor15102002/cloud-forge/internal/safefile"
+	"github.com/noor15102002/cloud-forge/internal/selection"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 	"sigs.k8s.io/yaml"
 )
@@ -20,6 +21,12 @@ func defaultConfiguration() model.RuntimeConfiguration {
 }
 
 func loadConfiguration(root, explicit string) (model.RuntimeConfiguration, error) {
+	return LoadConfiguration(root, explicit)
+}
+
+// LoadConfiguration reads the explicit configuration without executing tools.
+// The repository argument, not the config file's directory, anchors build paths.
+func LoadConfiguration(root, explicit string) (model.RuntimeConfiguration, error) {
 	config := defaultConfiguration()
 	path := explicit
 	if path == "" {
@@ -42,7 +49,7 @@ func loadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 	if yaml.UnmarshalStrict(data, &supplied) != nil {
 		return config, errors.New("invalid configuration object")
 	}
-	for _, key := range []string{"runtime", "load", "endpoints", "experiments", "dependencies", "environment", "readiness"} {
+	for _, key := range []string{"build", "runtime", "load", "endpoints", "experiments", "dependencies", "environment", "readiness"} {
 		if string(supplied[key]) == "null" {
 			return config, errors.New("configuration sections cannot be null")
 		}
@@ -84,8 +91,16 @@ func validateConfiguration(config model.RuntimeConfiguration) error {
 	if err := validateExtensions(config); err != nil {
 		return err
 	}
-	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != "v1alpha2" {
-		return errors.New("configuration schema_version must be v1alpha1 or v1alpha2")
+	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != "v1alpha2" && config.SchemaVersion != "v1alpha3" {
+		return errors.New("configuration schema_version must be v1alpha1, v1alpha2 or v1alpha3")
+	}
+	if config.Build != nil {
+		if config.SchemaVersion != "v1alpha3" {
+			return errors.New("build selection requires configuration schema_version v1alpha3")
+		}
+		if err := selection.Validate(*config.Build); err != nil {
+			return err
+		}
 	}
 	if config.Runtime.Port < 0 || config.Runtime.Port > 65535 {
 		return errors.New("runtime.port must be between 1 and 65535 when supplied")

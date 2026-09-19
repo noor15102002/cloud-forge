@@ -1,0 +1,735 @@
+{
+  "$defs": {
+    "AnalysisResult": {
+      "additionalProperties": false,
+      "properties": {
+        "application": {
+          "$ref": "#/$defs/Application"
+        },
+        "build": {
+          "$ref": "#/$defs/BuildSelection"
+        },
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          },
+          "type": "array"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "v1alpha2"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "blocked",
+            "skipped",
+            "error"
+          ]
+        },
+        "supported": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "supported",
+        "application",
+        "build"
+      ],
+      "type": "object"
+    },
+    "Application": {
+      "additionalProperties": false,
+      "properties": {
+        "containers": {
+          "items": {
+            "$ref": "#/$defs/Container"
+          },
+          "type": "array"
+        },
+        "dependencies": {
+          "items": {
+            "$ref": "#/$defs/Dependency"
+          },
+          "type": "array"
+        },
+        "kubernetes": {
+          "$ref": "#/$defs/KubernetesConfiguration"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "runtimes": {
+          "items": {
+            "$ref": "#/$defs/Runtime"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "path",
+        "kubernetes"
+      ],
+      "type": "object"
+    },
+    "BuildSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "dockerfile": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "app",
+        "dockerfile",
+        "context"
+      ],
+      "type": "object"
+    },
+    "Container": {
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "ports": {
+          "items": {
+            "$ref": "#/$defs/ContainerPort"
+          },
+          "type": "array"
+        },
+        "resources": {
+          "$ref": "#/$defs/ResourceRequirements"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceReference"
+        },
+        "unresolved_ports": {
+          "type": "boolean"
+        },
+        "user": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
+    "ContainerPort": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceReference"
+        }
+      },
+      "required": [
+        "port",
+        "source"
+      ],
+      "type": "object"
+    },
+    "Dependency": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceReference"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "source"
+      ],
+      "type": "object"
+    },
+    "Deployment": {
+      "additionalProperties": false,
+      "properties": {
+        "containers": {
+          "items": {
+            "$ref": "#/$defs/Container"
+          },
+          "type": "array"
+        },
+        "endpoints": {
+          "items": {
+            "$ref": "#/$defs/Endpoint"
+          },
+          "type": "array"
+        },
+        "min_ready_seconds": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "probes": {
+          "items": {
+            "$ref": "#/$defs/Probe"
+          },
+          "type": "array"
+        },
+        "progress_deadline_seconds": {
+          "type": "integer"
+        },
+        "replicas": {
+          "type": "integer"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceReference"
+        },
+        "strategy": {
+          "$ref": "#/$defs/DeploymentStrategy"
+        },
+        "termination_grace_period_seconds": {
+          "type": "integer"
+        },
+        "unsupported": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "source"
+      ],
+      "type": "object"
+    },
+    "DeploymentStrategy": {
+      "additionalProperties": false,
+      "properties": {
+        "rollingUpdate": {
+          "$ref": "#/$defs/RollingUpdateDeployment"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Diagnostic": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "guidance": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceReference"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "blocked",
+            "skipped",
+            "error"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "status",
+        "message"
+      ],
+      "type": "object"
+    },
+    "Endpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "port": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceReference"
+        }
+      },
+      "required": [
+        "purpose",
+        "source"
+      ],
+      "type": "object"
+    },
+    "Finding": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer"
+        },
+        "expected": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "observed": {
+          "type": "string"
+        },
+        "remediation": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "source": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/SourceReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "blocked",
+            "skipped",
+            "error"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "category",
+        "status",
+        "severity",
+        "summary",
+        "observed",
+        "expected",
+        "remediation",
+        "duration_ms",
+        "source"
+      ],
+      "type": "object"
+    },
+    "HPAScalingPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "periodSeconds": {
+          "type": "integer"
+        },
+        "type": {
+          "type": "string"
+        },
+        "value": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "value",
+        "periodSeconds"
+      ],
+      "type": "object"
+    },
+    "HPAScalingRules": {
+      "additionalProperties": false,
+      "properties": {
+        "policies": {
+          "items": {
+            "$ref": "#/$defs/HPAScalingPolicy"
+          },
+          "type": "array"
+        },
+        "selectPolicy": {
+          "type": "string"
+        },
+        "stabilizationWindowSeconds": {
+          "type": "integer"
+        },
+        "tolerance": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "HorizontalPodAutoscaler": {
+      "additionalProperties": false,
+      "properties": {
+        "behavior": {
+          "$ref": "#/$defs/HorizontalPodAutoscalerBehavior"
+        },
+        "max_replicas": {
+          "type": "integer"
+        },
+        "min_replicas": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceReference"
+        },
+        "target_cpu_utilization": {
+          "type": "integer"
+        },
+        "target_kind": {
+          "type": "string"
+        },
+        "target_name": {
+          "type": "string"
+        },
+        "unsupported": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "target_kind",
+        "target_name",
+        "max_replicas",
+        "source"
+      ],
+      "type": "object"
+    },
+    "HorizontalPodAutoscalerBehavior": {
+      "additionalProperties": false,
+      "properties": {
+        "scaleDown": {
+          "$ref": "#/$defs/HPAScalingRules"
+        },
+        "scaleUp": {
+          "$ref": "#/$defs/HPAScalingRules"
+        }
+      },
+      "type": "object"
+    },
+    "KubernetesConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "deployments": {
+          "items": {
+            "$ref": "#/$defs/Deployment"
+          },
+          "type": "array"
+        },
+        "horizontal_pod_autoscalers": {
+          "items": {
+            "$ref": "#/$defs/HorizontalPodAutoscaler"
+          },
+          "type": "array"
+        },
+        "other_resources": {
+          "items": {
+            "$ref": "#/$defs/KubernetesResource"
+          },
+          "type": "array"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/$defs/Service"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "KubernetesResource": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceReference"
+        }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "source"
+      ],
+      "type": "object"
+    },
+    "Probe": {
+      "additionalProperties": false,
+      "properties": {
+        "failure_threshold": {
+          "type": "integer"
+        },
+        "grpc_service": {
+          "type": "string"
+        },
+        "initial_delay_seconds": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "period_seconds": {
+          "type": "integer"
+        },
+        "port": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "scheme": {
+          "type": "string"
+        },
+        "success_threshold": {
+          "type": "integer"
+        },
+        "termination_grace_period_seconds": {
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "type": "integer"
+        },
+        "type": {
+          "type": "string"
+        },
+        "unsupported": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "purpose",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ResourceRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "cpu_limit": {
+          "type": "string"
+        },
+        "cpu_request": {
+          "type": "string"
+        },
+        "memory_limit": {
+          "type": "string"
+        },
+        "memory_request": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RollingUpdateDeployment": {
+      "additionalProperties": false,
+      "properties": {
+        "maxSurge": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "maxUnavailable": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Runtime": {
+      "additionalProperties": false,
+      "properties": {
+        "framework": {
+          "type": "string"
+        },
+        "framework_candidates": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "language": {
+          "type": "string"
+        },
+        "package_manager": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceReference"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "language",
+        "source"
+      ],
+      "type": "object"
+    },
+    "Service": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "ports": {
+          "items": {
+            "$ref": "#/$defs/ServicePort"
+          },
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceReference"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "source"
+      ],
+      "type": "object"
+    },
+    "ServicePort": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "target_port": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "port"
+      ],
+      "type": "object"
+    },
+    "SourceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "document": {
+          "type": "integer"
+        },
+        "field": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/AnalysisResult",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CloudForge selected workload analysis v1alpha2"
+}

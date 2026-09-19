@@ -15,7 +15,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument("binary")
 parser.add_argument("output", type=Path)
 parser.add_argument("--stages", nargs="+", default=["build", "cluster", "readiness", "load"], choices=["build", "cluster", "readiness", "load", "redis"])
+parser.add_argument("--monorepo", action="store_true", help="Exercise selected custom Dockerfile cancellation (build stage only)")
 args = parser.parse_args()
+if args.monorepo and args.stages != ["build"]:
+    parser.error("--monorepo requires --stages build")
 args.binary = str(Path(args.binary).resolve())
 args.output.mkdir(parents=True, exist_ok=True)
 original_kubeconfig = Path.home() / ".kube" / "config"
@@ -71,10 +74,10 @@ with existing_state() as (sentinel_name, baseline_kubeconfig, sentinel_ids):
         with tempfile.TemporaryDirectory(prefix="cloudforge-cancel-") as temporary:
             root = Path(temporary)
             app = root / "app"
-            shutil.copytree("testdata/healthy-node-redis" if stage == "redis" else "testdata/healthy-node", app)
+            shutil.copytree("testdata/monorepo" if args.monorepo else ("testdata/healthy-node-redis" if stage == "redis" else "testdata/healthy-node"), app)
             # Keep each targeted phase long enough to establish an actual interruption.
             if stage == "build":
-                dockerfile = app / "Dockerfile"
+                dockerfile = app / ("apps/http/Containerfile.release" if args.monorepo else "Dockerfile")
                 dockerfile.write_text(dockerfile.read_text().replace("WORKDIR /app", "RUN sleep 60\nWORKDIR /app"))
             if stage == "readiness":
                 server = app / "server.js"

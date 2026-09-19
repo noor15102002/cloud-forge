@@ -129,11 +129,17 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addError("repository_invalid", "CloudForge could not resolve the application directory.", err.Error())
 		return out
 	}
-	analysis, err := analyzer.New().Analyze(root)
+	config, err := loadConfiguration(root, options.ConfigPath)
+	if err != nil {
+		out.addError("configuration_invalid", "CloudForge rejected the verification configuration before execution.", err.Error())
+		return out
+	}
+	analysis, err := analyzer.New().AnalyzeSelected(root, config.Build)
 	if err != nil {
 		out.addError("analysis_failed", "CloudForge could not analyze the application.", err.Error())
 		return out
 	}
+	config.Build = analysis.Build
 	out.Run.Application = analysis.Application.Name
 	out.Run.Findings = append(out.Run.Findings, analysis.Findings...)
 	out.Run.Diagnostics = append(out.Run.Diagnostics, analysis.Diagnostics...)
@@ -153,11 +159,6 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 
-	config, err := loadConfiguration(root, options.ConfigPath)
-	if err != nil {
-		out.addError("configuration_invalid", "CloudForge rejected the verification configuration before execution.", err.Error())
-		return out
-	}
 	if !s.controlledExperiments {
 		config.Experiments.ControlPath = ""
 	}
@@ -278,7 +279,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addCommandDiagnostic("builder_create_failed", "CloudForge could not create its bounded build environment.", result)
 		return out
 	}
-	buildResult := dockerClient.BuildVersion(ctx, root, plan.image, "a")
+	buildResult := dockerClient.BuildSelected(ctx, root, plan.image, "a", plan.config.Build)
 	buildStatus := model.StatusPass
 	buildSummary := "Container image built successfully."
 	if failed(buildResult) {
@@ -297,7 +298,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	buildFinding := model.Finding{
 		ID: "container.build", Category: "container", Status: buildStatus, Severity: model.SeverityHigh,
 		Summary: buildSummary, Observed: strings.ToLower(string(buildStatus)), Expected: "image builds successfully",
-		DurationMS: buildResult.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
+		DurationMS: buildResult.DurationMS, Source: plan.buildSource(),
 	}
 	switch buildStatus {
 	case model.StatusFail:
@@ -529,7 +530,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 			ID: "container.startup", Category: "container", Status: model.StatusFail, Severity: model.SeverityHigh,
 			Summary: "The application did not start with all requested replicas ready.", Observed: readinessSummary,
 			Expected: "all requested replicas become ready", Remediation: "Inspect the container entry point, application logs, port, and readiness probe.",
-			DurationMS: waitResult.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
+			DurationMS: waitResult.DurationMS, Source: plan.buildSource(),
 		})
 		out.Run.Status = model.StatusFail
 		out.ExitCode = 1
@@ -552,7 +553,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	out.Run.Findings = append(out.Run.Findings, model.Finding{
 		ID: "container.startup", Category: "container", Status: model.StatusPass, Severity: model.SeverityInfo,
 		Summary: "The application started with all requested replicas ready.", Observed: fmt.Sprintf("%d/%d pods ready", ready, total),
-		Expected: "all requested replicas become ready", DurationMS: waitResult.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
+		Expected: "all requested replicas become ready", DurationMS: waitResult.DurationMS, Source: plan.buildSource(),
 	})
 
 	blocked := ""
@@ -566,7 +567,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		{"pod-recovery", func() recoveryOutcome { return s.runPodRecovery(ctx, kubernetesClient, plan) }},
 		{"rolling-deployment", func() recoveryOutcome {
 			imagesToCleanup = append(imagesToCleanup, plan.rolloutImage)
-			build := dockerClient.BuildVersion(ctx, root, plan.rolloutImage, "b")
+			build := dockerClient.BuildSelected(ctx, root, plan.rolloutImage, "b", plan.config.Build)
 			return s.runRollingDeployment(ctx, k3dClient, kubernetesClient, plan, build)
 		}},
 	}
@@ -655,8 +656,15 @@ func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
 
 func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.RuntimeConfiguration) (plan, error) {
 	application := analysis.Application
-	if len(application.Containers) != 1 || application.Containers[0].Source.Path != "Dockerfile" {
-		return plan{}, errors.New("verification requires exactly one root Dockerfile")
+	dockerfile := "Dockerfile"
+	if config.Build != nil {
+		if analysis.Build == nil || *analysis.Build != *config.Build {
+			return plan{}, errors.New("build selection must match the analyzed workload")
+		}
+		dockerfile = config.Build.Dockerfile
+	}
+	if len(application.Containers) != 1 || application.Containers[0].Source.Path != dockerfile {
+		return plan{}, errors.New("verification requires exactly one root Dockerfile or an explicit build selection")
 	}
 	if len(application.Kubernetes.Deployments) > 1 {
 		return plan{}, errors.New("verification requires zero or one Kubernetes Deployment; select a narrower application directory")

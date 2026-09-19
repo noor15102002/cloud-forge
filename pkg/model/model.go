@@ -184,12 +184,13 @@ type Application struct {
 
 // AnalysisResult is the versioned output of repository analysis.
 type AnalysisResult struct {
-	SchemaVersion string       `json:"schema_version"`
-	Status        Status       `json:"status"`
-	Supported     bool         `json:"supported"`
-	Application   Application  `json:"application"`
-	Findings      []Finding    `json:"findings,omitempty"`
-	Diagnostics   []Diagnostic `json:"diagnostics,omitempty"`
+	Build         *BuildSelection `json:"build,omitempty"`
+	SchemaVersion string          `json:"schema_version"`
+	Status        Status          `json:"status"`
+	Supported     bool            `json:"supported"`
+	Application   Application     `json:"application"`
+	Findings      []Finding       `json:"findings,omitempty"`
+	Diagnostics   []Diagnostic    `json:"diagnostics,omitempty"`
 }
 
 // Severity communicates a finding's urgency independently from its outcome.

@@ -221,12 +221,12 @@ func newVerifyCommand(stdout io.Writer, logger func() *slog.Logger, runner comma
 	cmd.Flags().StringVar(&configPath, "config", "", "strict verification configuration (default: application/cloudforge.yaml)")
 	cmd.Flags().BoolVar(&planOnly, "plan", false, "inspect capabilities without builds, subprocesses or runtime resources")
 	cmd.Flags().BoolVar(&keepEnvironment, "keep-environment", false, "keep the k3d cluster after verification")
-	cmd.Flags().StringVar(&baselinePath, "baseline", "", "compare with an explicit v1alpha1, v1alpha2 or v1alpha3 verification JSON file")
+	cmd.Flags().StringVar(&baselinePath, "baseline", "", "compare with an explicit v1alpha1, v1alpha2, v1alpha3 or v1alpha4 verification JSON file")
 	return cmd
 }
 
 func newAnalyzeCommand(stdout io.Writer, logger func() *slog.Logger) *cobra.Command {
-	var format string
+	var format, configPath string
 	cmd := &cobra.Command{Use: "analyze [path]", Short: "Analyze supported application and deployment metadata", Args: cobra.MaximumNArgs(1), RunE: func(_ *cobra.Command, args []string) error {
 		if err := validateFormat(format); err != nil {
 			return &exitError{code: 2, err: err}
@@ -236,7 +236,11 @@ func newAnalyzeCommand(stdout io.Writer, logger func() *slog.Logger) *cobra.Comm
 			path = args[0]
 		}
 		logger().Info("analyzing repository", "path", path)
-		result, err := analyzer.New().Analyze(path)
+		config, err := verification.LoadConfiguration(path, configPath)
+		if err != nil {
+			return &exitError{code: 2, err: fmt.Errorf("CloudForge rejected the analysis configuration: %w", err)}
+		}
+		result, err := analyzer.New().AnalyzeSelected(path, config.Build)
 		if err != nil {
 			return &exitError{code: 2, err: fmt.Errorf("CloudForge could not analyze the repository: %w", err)}
 		}
@@ -255,6 +259,7 @@ func newAnalyzeCommand(stdout io.Writer, logger func() *slog.Logger) *cobra.Comm
 		return nil
 	}}
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	cmd.Flags().StringVar(&configPath, "config", "", "configuration selecting one workload (default: path/cloudforge.yaml); build paths are relative to path")
 	return cmd
 }
 

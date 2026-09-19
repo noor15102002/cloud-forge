@@ -67,6 +67,9 @@ func AnalysisText(w io.Writer, result model.AnalysisResult) error {
 	if _, err := fmt.Fprintf(w, "Status: %s\nApplication: %s\n", strings.ToUpper(string(result.Status)), displayValue(result.Application.Name)); err != nil {
 		return err
 	}
+	if err := buildText(w, result.Build); err != nil {
+		return err
+	}
 	for _, runtime := range result.Application.Runtimes {
 		framework := runtime.Framework
 		if framework == "" && len(runtime.FrameworkCandidates) > 0 {

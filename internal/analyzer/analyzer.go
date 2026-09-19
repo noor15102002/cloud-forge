@@ -12,6 +12,7 @@ import (
 
 	"github.com/noor15102002/cloud-forge/internal/findings"
 	"github.com/noor15102002/cloud-forge/internal/safefile"
+	"github.com/noor15102002/cloud-forge/internal/selection"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -34,6 +35,12 @@ func New() *Analyzer { return &Analyzer{} }
 
 // Analyze inspects one application root and returns a deterministic result.
 func (a *Analyzer) Analyze(path string) (model.AnalysisResult, error) {
+	return a.AnalyzeSelected(path, nil)
+}
+
+// AnalyzeSelected analyzes only the selected app and Dockerfile. With a build
+// selection, every source reference is relative to the supplied repository.
+func (a *Analyzer) AnalyzeSelected(path string, build *model.BuildSelection) (model.AnalysisResult, error) {
 	root, err := filepath.Abs(path)
 	if err != nil {
 		return model.AnalysisResult{}, fmt.Errorf("resolve repository path: %w", err)
@@ -49,6 +56,15 @@ func (a *Analyzer) Analyze(path string) (model.AnalysisResult, error) {
 	if !info.IsDir() {
 		return model.AnalysisResult{}, errors.New("analysis path must be a directory")
 	}
+	repository := root
+	if build != nil {
+		resolved, err := selection.Resolve(repository, *build)
+		if err != nil {
+			return model.AnalysisResult{}, err
+		}
+		build = &resolved
+		root = filepath.Join(repository, filepath.FromSlash(build.App))
+	}
 
 	result := model.AnalysisResult{
 		SchemaVersion: model.SchemaVersion,
@@ -63,9 +79,18 @@ func (a *Analyzer) Analyze(path string) (model.AnalysisResult, error) {
 
 	a.analyzeNode(root, files, &result)
 	a.analyzePython(root, files, &result)
-	a.analyzeDocker(root, files, &result)
+	if build == nil {
+		a.analyzeDocker(root, files, &result)
+	}
 	a.analyzeKubernetes(root, files, &result)
 	a.detectLimitedFormats(files, &result)
+	if build != nil {
+		result.SchemaVersion = "v1alpha2"
+		result.Build = build
+		result.Application.Path = build.App
+		rebaseSources(&result, build.App)
+		a.analyzeDockerFile(repository, build.Dockerfile, &result)
+	}
 	result.Findings = findings.Static(result.Application)
 
 	result.Supported = len(result.Application.Runtimes) > 0
