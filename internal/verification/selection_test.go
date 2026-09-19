@@ -12,6 +12,8 @@ import (
 	"github.com/noor15102002/cloud-forge/internal/command"
 	"github.com/noor15102002/cloud-forge/internal/regression"
 	"github.com/noor15102002/cloud-forge/pkg/model"
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
+	"sigs.k8s.io/yaml"
 )
 
 func selectedFixture(t *testing.T) string {
@@ -187,6 +189,40 @@ func TestSelectedAndHistoricalReportsPreserveEvidence(t *testing.T) {
 		}
 		if loaded.Status != model.StatusFail || loaded.Evidence[0].Status != model.StatusFail || len(loaded.Evidence) != len(result.Evidence) {
 			t.Fatal("historical observations changed")
+		}
+	}
+}
+
+func TestPublishedSelectionConfigurationAndPlanSchemas(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "monorepo")
+	config, err := os.ReadFile("../../testdata/monorepo/cloudforge.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err = yaml.YAMLToJSON(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := New(runnerFunc(func(context.Context, command.Request) model.CommandResult {
+		t.Fatal("plan ran tools")
+		return model.CommandResult{}
+	})).Run(context.Background(), root, Options{PlanOnly: true})
+	planned, err := json.Marshal(out.Run.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string][]byte{"runtime.v1alpha3": config, "plan.v1alpha4": planned} {
+		var document any
+		if err := json.Unmarshal(data, &document); err != nil {
+			t.Fatal(err)
+		}
+		compiler := jsonschema.NewCompiler()
+		schema, err := compiler.Compile(filepath.Join("..", "..", "schemas", name+".schema.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := schema.Validate(document); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
