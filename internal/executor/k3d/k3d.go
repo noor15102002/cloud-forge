@@ -28,14 +28,15 @@ func (c *Client) Create(ctx context.Context, name string, nodePort int) model.Co
 // ImportImage loads a local image into every node in a cluster.
 func (c *Client) ImportImage(ctx context.Context, cluster, image string) model.CommandResult {
 	imported := c.runner.Run(ctx, command.Request{
-		Name: "k3d", Args: []string{"image", "import", image, "--cluster", cluster},
+		Name: "k3d", Args: []string{"image", "import", image, "--cluster", cluster, "--mode", "direct"},
 		Timeout: 3 * time.Minute, OutputLimit: 128 * 1024,
 	})
 	if imported.ExitCode != 0 || imported.FailureType != model.FailureNone {
 		return imported
 	}
-	// k3d 5.9's tools importer can log a node import error but return success.
-	// Confirm the image in the single server's CRI before deploying either image.
+	// Use the direct importer because k3d 5.9's tools importer can log a node
+	// import error but return success. Independently confirm the image in the
+	// single server's CRI before deploying either image.
 	// The generated cluster name targets only this run's node; no shell is used.
 	checked := c.runner.Run(ctx, command.Request{
 		Name: "docker", Args: []string{"exec", "k3d-" + cluster + "-server-0", "crictl", "inspecti", image},

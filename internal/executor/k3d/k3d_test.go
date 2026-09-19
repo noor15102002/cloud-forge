@@ -35,6 +35,9 @@ func TestImportConfirmsCRIImageAndPropagatesFailure(t *testing.T) {
 				return result
 			}))
 			result := client.ImportImage(context.Background(), "cloudforge-0123abcd", "cloudforge/api:test")
+			if !reflect.DeepEqual(calls[0].Args, []string{"image", "import", "cloudforge/api:test", "--cluster", "cloudforge-0123abcd", "--mode", "direct"}) {
+				t.Fatalf("expected direct import with error propagation: %#v", calls[0])
+			}
 			if len(calls) != test.calls || (result.ExitCode != 0) != (test.importFails || test.missing) {
 				t.Fatalf("unexpected import result: %#v calls=%#v", result, calls)
 			}

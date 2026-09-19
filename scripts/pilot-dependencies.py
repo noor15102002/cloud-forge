@@ -23,6 +23,25 @@ def run_case(name, config=None, env=None):
         command += ["--config", config]
     with tempfile.TemporaryDirectory(prefix="cf-dependency-private-") as private:
         environment = dict(os.environ if env is None else env, TMPDIR=private)
+        # Retain bounded image-import diagnostics for these public fixtures only.
+        # Never capture kubeconfig retrieval or application/container logs.
+        wrapper = Path(private) / "k3d"
+        wrapper.write_text('''#!/usr/bin/env python3
+import os, pathlib, subprocess, sys
+args = sys.argv[1:]
+real = os.environ['CF_REAL_IMPORT_K3D']
+if args[:2] != ['image', 'import']:
+    os.execv(real, [real, *args])
+result = subprocess.run([real, *args], capture_output=True)
+with pathlib.Path(os.environ['CF_IMPORT_LOG']).open('ab') as log:
+    log.write((result.stdout + result.stderr)[-65536:])
+sys.stdout.buffer.write(result.stdout)
+sys.stderr.buffer.write(result.stderr)
+sys.exit(result.returncode)
+''')
+        wrapper.chmod(0o700)
+        environment.update(CF_REAL_IMPORT_K3D=shutil.which("k3d"), CF_IMPORT_LOG=str((args.output / f"{name}.image-import.txt").resolve()))
+        environment["PATH"] = private + os.pathsep + environment["PATH"]
         result = subprocess.run(command, capture_output=True, text=True, timeout=1000, env=environment)
         assert not list(Path(private).glob("cloudforge-verify-*")), "Temporary kubeconfig/runtime directory leaked"
     path = args.output / f"{name}.json"
