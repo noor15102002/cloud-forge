@@ -40,6 +40,27 @@ func TestUnavailableHPAMetricsBlockRequiredAssertion(t *testing.T) {
 	}
 }
 
+func TestHPASetupFailureBlocksUnstartedLoad(t *testing.T) {
+	for _, stage := range []string{"apply", "observation"} {
+		t.Run(stage, func(t *testing.T) {
+			loadStarted := false
+			runner := runnerFunc(func(_ context.Context, req command.Request) model.CommandResult {
+				if req.Name == "k6" {
+					loadStarted = true
+				}
+				if req.Name == "kubectl" && (stage == "apply" && containsArgument(req.Args, "apply") || stage == "observation" && containsArgument(req.Args, "horizontalpodautoscaler")) {
+					return model.CommandResult{ExitCode: 1, FailureType: model.FailureExit}
+				}
+				return model.CommandResult{}
+			})
+			load, hpa := New(runner).runLoadAndAutoscaling(context.Background(), k6executor.New(runner), kubernetes.New(runner), plan{loadURL: "http://127.0.0.1:8000/work"}, t.TempDir(), "hpa.yaml")
+			if loadStarted || load.Evidence.Status != model.StatusBlocked || hpa.Evidence.Status != model.StatusError || !hpa.MutationAttempted {
+				t.Fatalf("incorrect prerequisite classification: load=%+v hpa=%+v", load, hpa)
+			}
+		})
+	}
+}
+
 func TestHPAMetricsDeadlineBlocksRequiredAssertion(t *testing.T) {
 	runner := runnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}

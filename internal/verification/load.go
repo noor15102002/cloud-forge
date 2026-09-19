@@ -29,7 +29,7 @@ func (s *Service) runLoadAndAutoscaling(ctx context.Context, loadClient *k6execu
 		mutationAttempted = true
 		if result := client.Apply(ctx, current.clusterName, hpaManifestPath); failed(result) {
 			failure := lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_apply_failed", "CloudForge could not apply the generated HPA.", commandGuidance(result, nil), trafficObservation{})
-			return skippedLoad("The load profile was not started because the HPA could not be applied."), failure
+			return lifecycleBlocked("load-profile", "Bounded HTTP load profile", "The load profile was not started because the required HPA setup could not be established."), failure
 		}
 		metricsCtx, cancel := context.WithTimeout(ctx, s.hpaMetricsTimeout)
 		defer cancel()
@@ -43,7 +43,7 @@ func (s *Service) runLoadAndAutoscaling(ctx context.Context, loadClient *k6execu
 					goto metricsComplete
 				}
 				failure := lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_observation_failed", "CloudForge could not inspect the HPA.", commandGuidance(result, observeErr), trafficObservation{})
-				return skippedLoad("The load profile was not started because HPA state could not be inspected."), failure
+				return lifecycleBlocked("load-profile", "Bounded HTTP load profile", "The load profile was not started because the required HPA setup could not be inspected."), failure
 			}
 			starting = state
 			metricsReason = state.Reason
@@ -63,11 +63,11 @@ metricsComplete:
 	if hpaManifestPath == "" || !metricsReady {
 		execution := executeLoad(ctx, loadClient, workspace, loadURL, s.loadProfile)
 		loadOutcome := loadOutcomeForExecution(execution, s.loadProfile)
-		if loadOutcome.ExitCode != 0 {
-			return loadOutcome, skippedAutoscaling("Autoscaling evidence is unavailable because the load profile did not complete successfully.")
-		}
 		if hpaManifestPath == "" {
 			return loadOutcome, skippedAutoscaling(current.hpaSkipReason)
+		}
+		if loadOutcome.ExitCode != 0 {
+			return loadOutcome, lifecycleBlocked("horizontal-autoscaling", "Horizontal autoscaling under load", "The required load profile did not complete successfully; no scale assertion was made.")
 		}
 		reason := metricsReason
 		if reason == "" {
@@ -168,7 +168,7 @@ metricsComplete:
 scaleComplete:
 	loadOutcome := loadOutcomeForExecution(execution, s.loadProfile)
 	if loadOutcome.ExitCode != 0 {
-		return loadOutcome, skippedAutoscaling("Autoscaling evidence is unavailable because the load profile did not complete successfully.")
+		return loadOutcome, lifecycleBlocked("horizontal-autoscaling", "Horizontal autoscaling under load", "The required load profile did not complete successfully; no scale assertion was made.")
 	}
 	summary := execution.summary
 	measurements := []model.Measurement{

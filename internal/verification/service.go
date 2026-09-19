@@ -582,7 +582,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	}
 	if ctx.Err() == nil && s.prepareExperiment(ctx, kubernetesClient, plan, &out, "load-profile", &blocked) {
 		load, autoscaling := s.runLoadAndAutoscaling(ctx, k6executor.New(scoped), kubernetesClient, plan, temporary, hpaManifestPath)
-		load.Evidence.Execution = &model.ExperimentExecution{Executed: load.Evidence.Status != model.StatusSkipped, MutationAttempted: load.MutationAttempted}
+		load.Evidence.Execution = &model.ExperimentExecution{Executed: load.Evidence.Status != model.StatusSkipped && load.Evidence.Status != model.StatusBlocked, MutationAttempted: load.MutationAttempted}
 		load.Evidence.Topology = plan.topology
 		applyExperimentOutcome(&out, load)
 		// HPA and load share one bounded observation; restore after both results.
