@@ -353,12 +353,12 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		}
 		out.Run.Environment.Endpoint = plan.readinessURL
 	}
-	if result := k3dClient.ImportImage(ctx, plan.clusterName, plan.image); failed(result) {
-		out.addCommandDiagnostic("image_import_failed", "k3d could not import the application image.", result)
-		return out
-	}
 	if result, reason := kubernetesClient.WaitReady(ctx, plan.clusterName); failed(result) {
 		out.addError("cluster_not_ready", "The isolated cluster did not become ready before application deployment.", "Cluster condition: "+reason+"; inspect Docker capacity and cluster health before retrying.")
+		return out
+	}
+	if result := k3dClient.ImportImage(ctx, plan.clusterName, plan.image); failed(result) {
+		out.addCommandDiagnostic("image_import_failed", "The application image could not be confirmed in the isolated node after import.", result)
 		return out
 	}
 	if config.Dependencies["redis"].Enabled {
@@ -464,6 +464,19 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		for _, reason := range keys {
 			index := len(out.Run.Evidence) - 1
 			out.Run.Evidence[index].Measurements = append(out.Run.Evidence[index].Measurements, model.Measurement{Name: "pods_" + reason, Value: strconv.Itoa(reasons[reason]), Unit: "pods"})
+		}
+		if reasons["image_unavailable"] > 0 {
+			index := len(out.Run.Evidence) - 1
+			out.Run.Evidence[index].Status = model.StatusError
+			out.Run.Evidence[index].Summary = "The imported application image was unavailable in the test node; application startup could not be assessed."
+			for i := range out.Run.Evidence {
+				if out.Run.Evidence[i].ExperimentID == "semantic-readiness" {
+					out.Run.Evidence[i].Status = model.StatusSkipped
+					out.Run.Evidence[i].Summary = "Semantic readiness could not be assessed because the test image was unavailable."
+				}
+			}
+			out.addError("runtime_image_unavailable", out.Run.Evidence[index].Summary, "Inspect the isolated image import and node image storage before retrying.")
+			return out
 		}
 		problems, nodeResult, nodeErr := kubernetesClient.NodeProblems(ctx, plan.clusterName)
 		if nodeErr == nil && !failed(nodeResult) && len(problems) > 0 {

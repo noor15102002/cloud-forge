@@ -889,3 +889,32 @@ const degradedPodList = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata
 const readySinglePodList = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"api-a"},"spec":{"containers":[{"name":"application","image":"cloudforge/broken-shutdown-api:0123abcd-a"}]},"status":{"conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"restartCount":0}]}}]}`
 
 const oldVersionPodList = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"api-a"},"spec":{"containers":[{"name":"application","image":"cloudforge/healthy-node-api:0123abcd-a"}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}},{"metadata":{"name":"api-b"},"spec":{"containers":[{"name":"application","image":"cloudforge/healthy-node-api:0123abcd-a"}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
+
+func TestMissingImportedImageIsExecutionErrorAndCleansUp(t *testing.T) {
+	var calls []command.Request
+	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		calls = append(calls, request)
+		result := successfulCommand(request)
+		if request.Name == "kubectl" && containsArgument(request.Args, "rollout") {
+			result.ExitCode = 1
+			result.FailureType = model.FailureTimeout
+		}
+		if request.Name == "kubectl" && containsArgument(request.Args, "pods") {
+			result.Stdout = `{"items":[{"metadata":{"name":"app-1"},"status":{"phase":"Pending","containerStatuses":[{"name":"application","state":{"waiting":{"reason":"ErrImageNeverPull","message":"do not publish private data"}}}]}}]}`
+		}
+		return result
+	})
+	out := fixedService(runner).Run(context.Background(), fixturePath(t), Options{})
+	if out.ExitCode != 2 || out.Run.Status != model.StatusError || !hasDiagnosticCode(out.Run.Diagnostics, "runtime_image_unavailable") {
+		t.Fatalf("unavailable test image was not an execution error: %#v", out)
+	}
+	if findingByID(out.Run.Findings, "container.startup") != nil {
+		t.Fatal("test infrastructure failure attributed to application")
+	}
+	if evidenceByID(out.Run.Evidence, "deployment-readiness").Status != model.StatusError {
+		t.Fatal("startup evidence must be ERROR")
+	}
+	if !hasCommand(calls, "k3d", "delete") || !hasCommand(calls, "docker", "rm") {
+		t.Fatal("cleanup missing")
+	}
+}

@@ -9,6 +9,7 @@ Versioning once releases begin.
 - Added restricted test environment bindings, optional bounded flat JSON readiness assertions and a read-only `verify --plan` capability report.
 - Added v1alpha2 reports/config extensions, BLOCKED outcomes, dependency fingerprints and legacy v1alpha1 report/config compatibility.
 - Added generic Node/FastAPI Redis fixtures plus dependency timeout/cancellation, cleanup and semantic-readiness validation paths.
+- Confirm imported images in the isolated node before deployment; unavailable test images produce execution errors instead of application startup failures.
 
 - Pilot implementation: correct root/probe/ORM/port analysis, bounded regular-file reading, faithful supported workload settings, private runtime configuration and resource budgets.
 - Explicit endpoint/load configuration, compatible environment fingerprints and optional controlled readiness/in-flight shutdown experiments.
