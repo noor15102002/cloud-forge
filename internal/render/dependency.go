@@ -14,6 +14,9 @@ func PlanText(w io.Writer, plan model.VerificationPlan) error {
 	if _, err := fmt.Fprintf(w, "CloudForge planned capabilities: %s (port %d)\n", strings.ToUpper(string(plan.Status)), plan.Port); err != nil {
 		return err
 	}
+	if err := buildText(w, plan.Build); err != nil {
+		return err
+	}
 
 	if plan.Topology != nil {
 		if _, err := fmt.Fprintf(w, "  Planned topology: %s\n", terminalText(topologyDescription(plan.Topology))); err != nil {
@@ -78,6 +81,11 @@ func PlanMarkdown(w io.Writer, plan model.VerificationPlan) error {
 	if _, err := fmt.Fprintf(w, "### Planned capabilities\n\n**Status:** %s\n", strings.ToUpper(string(plan.Status))); err != nil {
 		return err
 	}
+	if plan.Build != nil {
+		if _, err := fmt.Fprintf(w, "\n**Build selection (repository-relative):** app `%s`, Dockerfile `%s`, context `%s`.\n", markdownText(plan.Build.App), markdownText(plan.Build.Dockerfile), markdownText(plan.Build.Context)); err != nil {
+			return err
+		}
+	}
 	if len(plan.Detected) > 0 {
 		if _, err := fmt.Fprintf(w, "\n**Detected:** %s\n\n", markdownText(strings.Join(plan.Detected, ", "))); err != nil {
 			return err
@@ -110,6 +118,14 @@ func PlanMarkdown(w io.Writer, plan model.VerificationPlan) error {
 		}
 	}
 	return nil
+}
+
+func buildText(w io.Writer, build *model.BuildSelection) error {
+	if build == nil {
+		return nil
+	}
+	_, err := fmt.Fprintf(w, "Build selection (repository-relative): app=%s dockerfile=%s context=%s\n", terminalText(build.App), terminalText(build.Dockerfile), terminalText(build.Context))
+	return err
 }
 
 func topologyDescription(t *model.TestTopology) string {

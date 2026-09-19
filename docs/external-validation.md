@@ -26,8 +26,7 @@ repository-specific behavior for these applications.
 
 An analysis result marked `supported` means CloudForge understands the
 application manifest. Runtime verification additionally requires exactly one
-root Dockerfile and one unambiguous TCP port. It can generate a minimal
+root Dockerfile or an explicit [build selection](build-selection.md), and one unambiguous TCP port. It can generate a minimal
 Deployment and Service when no supported Kubernetes workload exists. External
 applications that depend on Compose services, secret configuration, multiple
-containers, multiple Deployments, dynamic Dockerfile ports, or monorepo build
-context need an explicitly supported configuration before runtime verification.
+containers, multiple Deployments or dynamic Dockerfile ports need an explicitly supported configuration before runtime verification.

@@ -112,3 +112,12 @@ readiness gate later siblings. Recovery evidence is attached to the original
 experiment without replacing its status. v1alpha3 adds those records and
 topology/producer identity; older report schemas remain immutable. See
 [evidence reliability](evidence-reliability.md).
+
+Single-workload selection resolves a bounded repository-relative tuple before
+analysis or runtime tools. The analyzer inspects app metadata and exactly the
+selected Dockerfile, rebasing provenance to the repository. The executor
+revalidates these paths before each image build and uses argument arrays, a
+repository working directory and explicit `--file`/context arguments. Both
+synthetic images share the tuple. Git identity covers the repository boundary;
+the effective tuple participates in fingerprint compatibility. No second planner
+or multi-service scheduler is introduced.

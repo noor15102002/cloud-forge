@@ -1,8 +1,8 @@
 package model
 
-// VerificationSchemaVersion adds compatibility, topology and recovery evidence.
+// VerificationSchemaVersion adds explicit single-workload build selection.
 // Analysis and legacy reports retain their original v1alpha1 contract.
-const VerificationSchemaVersion = "v1alpha3"
+const VerificationSchemaVersion = "v1alpha4"
 
 // DependencySpec explicitly opts a dependency into the isolated test run.
 type DependencySpec struct {
@@ -36,14 +36,15 @@ type Capability struct {
 
 // VerificationPlan exposes safe execution intent without generated credentials.
 type VerificationPlan struct {
-	Detected      []string      `json:"detected,omitempty"`
-	Topology      *TestTopology `json:"topology,omitempty"`
-	Limitations   []string      `json:"limitations,omitempty"`
-	SchemaVersion string        `json:"schema_version"`
-	Status        Status        `json:"status"`
-	Port          int32         `json:"port,omitempty"`
-	Capabilities  []Capability  `json:"capabilities"`
-	Budget        SafetyBudget  `json:"budget"`
+	Build         *BuildSelection `json:"build,omitempty"`
+	Detected      []string        `json:"detected,omitempty"`
+	Topology      *TestTopology   `json:"topology,omitempty"`
+	Limitations   []string        `json:"limitations,omitempty"`
+	SchemaVersion string          `json:"schema_version"`
+	Status        Status          `json:"status"`
+	Port          int32           `json:"port,omitempty"`
+	Capabilities  []Capability    `json:"capabilities"`
+	Budget        SafetyBudget    `json:"budget"`
 }
 
 // DependencyEvidence keeps dependency infrastructure separate from application failures.

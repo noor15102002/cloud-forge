@@ -1,0 +1,13 @@
+FROM node:24-alpine
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/http/package.json ./apps/http/package.json
+COPY packages/shared/package.json ./packages/shared/package.json
+RUN npm ci --omit=dev --ignore-scripts
+COPY apps/http/server.mjs ./apps/http/server.mjs
+COPY packages/shared/index.mjs ./packages/shared/index.mjs
+ARG CLOUDFORGE_VERSION=a
+ENV CLOUDFORGE_VERSION=$CLOUDFORGE_VERSION
+USER node
+EXPOSE 8080
+CMD ["node", "apps/http/server.mjs"]

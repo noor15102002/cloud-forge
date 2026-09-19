@@ -18,41 +18,45 @@ func (a *Analyzer) analyzeDocker(root string, files []string, result *model.Anal
 		if strings.Contains(path, "/") {
 			continue
 		}
-		data, err := readBounded(root, path)
-		if err != nil {
-			result.Diagnostics = append(result.Diagnostics, diagnostic("dockerfile_unreadable", "Could not read Dockerfile.", path, err.Error()))
-			continue
-		}
-		parsed, err := parser.Parse(bytes.NewReader(data))
-		if err != nil {
-			result.Diagnostics = append(result.Diagnostics, diagnostic("dockerfile_invalid", "Dockerfile could not be parsed.", path, "Fix the Dockerfile syntax: "+err.Error()))
-			continue
-		}
-		container := model.Container{Source: model.SourceReference{Path: path}}
-		for _, node := range parsed.AST.Children {
-			switch strings.ToLower(node.Value) {
-			case "from":
-				container.Image = firstNodeArgument(node)
-				container.User = ""
-				container.Ports = nil
-				container.UnresolvedPorts = false
-			case "user":
-				container.User = firstNodeArgument(node)
-			case "expose":
-				for _, value := range nodeArguments(node) {
-					portValue, protocol, ok := parseExposedPort(value)
-					if ok {
-						container.Ports = append(container.Ports, model.ContainerPort{Port: portValue, Protocol: protocol, Source: model.SourceReference{Path: path}})
-					} else {
-						container.UnresolvedPorts = true
-						result.Diagnostics = append(result.Diagnostics, diagnostic("docker_port_unknown", "Docker EXPOSE contains an unresolved or invalid port.", path, "Specify runtime.port in the verification configuration; environment variables are not evaluated."))
-					}
+		a.analyzeDockerFile(root, path, result)
+	}
+}
+
+func (a *Analyzer) analyzeDockerFile(root, path string, result *model.AnalysisResult) {
+	data, err := readBounded(root, path)
+	if err != nil {
+		result.Diagnostics = append(result.Diagnostics, diagnostic("dockerfile_unreadable", "Could not read Dockerfile.", path, err.Error()))
+		return
+	}
+	parsed, err := parser.Parse(bytes.NewReader(data))
+	if err != nil {
+		result.Diagnostics = append(result.Diagnostics, diagnostic("dockerfile_invalid", "Dockerfile could not be parsed.", path, "Fix the Dockerfile syntax: "+err.Error()))
+		return
+	}
+	container := model.Container{Source: model.SourceReference{Path: path}}
+	for _, node := range parsed.AST.Children {
+		switch strings.ToLower(node.Value) {
+		case "from":
+			container.Image = firstNodeArgument(node)
+			container.User = ""
+			container.Ports = nil
+			container.UnresolvedPorts = false
+		case "user":
+			container.User = firstNodeArgument(node)
+		case "expose":
+			for _, value := range nodeArguments(node) {
+				portValue, protocol, ok := parseExposedPort(value)
+				if ok {
+					container.Ports = append(container.Ports, model.ContainerPort{Port: portValue, Protocol: protocol, Source: model.SourceReference{Path: path}})
+				} else {
+					container.UnresolvedPorts = true
+					result.Diagnostics = append(result.Diagnostics, diagnostic("docker_port_unknown", "Docker EXPOSE contains an unresolved or invalid port.", path, "Specify runtime.port in the verification configuration; environment variables are not evaluated."))
 				}
 			}
 		}
-		sortContainerPorts(container.Ports)
-		result.Application.Containers = append(result.Application.Containers, container)
 	}
+	sortContainerPorts(container.Ports)
+	result.Application.Containers = append(result.Application.Containers, container)
 }
 
 func nodeArguments(node *parser.Node) []string {

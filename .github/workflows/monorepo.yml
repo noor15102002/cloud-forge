@@ -1,0 +1,46 @@
+name: Single-workload selection
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  monorepo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Snapshot fixture
+        run: find testdata/monorepo -type f -print0 | sort -z | xargs -0 sha256sum > "$RUNNER_TEMP/monorepo-source.sha256"
+      - name: Verify shared workspace with packaged Action
+        id: verify
+        uses: ./
+        with:
+          path: testdata/monorepo
+          config-path: testdata/monorepo/cloudforge.yaml
+          artifact-name: monorepo-verification
+      - name: Validate evidence and rejected app-only context
+        env:
+          CF_BINARY: ${{ steps.verify.outputs.binary }}
+          CF_REPORT: ${{ steps.verify.outputs.report-json }}
+        run: python3 scripts/pilot-monorepo.py "$CF_BINARY" "$CF_REPORT" "$RUNNER_TEMP/monorepo-evidence"
+      - name: Interrupt selected build and verify ownership cleanup
+        env:
+          CF_BINARY: ${{ steps.verify.outputs.binary }}
+        run: python3 scripts/pilot-cancellation.py "$CF_BINARY" "$RUNNER_TEMP/monorepo-evidence" --stages build --monorepo
+      - name: Preserve acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monorepo-acceptance
+          path: ${{ runner.temp }}/monorepo-evidence
+      - name: Confirm unchanged source and cleanup
+        if: always()
+        run: |
+          sha256sum --check "$RUNNER_TEMP/monorepo-source.sha256"
+          bash scripts/pilot-cleanup-check.sh

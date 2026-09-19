@@ -13,6 +13,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+func (p plan) buildSource() *model.SourceReference {
+	name := "Dockerfile"
+	if p.config.Build != nil {
+		name = p.config.Build.Dockerfile
+	}
+	return &model.SourceReference{Path: name}
+}
+
 func preservedProbe(value model.Probe) (*corev1.Probe, error) {
 	if len(value.Unsupported) > 0 {
 		return nil, fmt.Errorf("unsupported %s probe settings: %s", value.Purpose, strings.Join(value.Unsupported, ", "))

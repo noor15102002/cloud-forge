@@ -5,6 +5,11 @@ Versioning once releases begin.
 
 ## Unreleased
 
+- Add single-workload monorepo selection: independent app root, custom Dockerfile and build context with repository-relative provenance and safe path validation.
+- Apply the same selection to images A/B, capability plans and environment fingerprints; add `analyze --config` and Action `config-path`.
+- Add v1alpha3 configuration, v1alpha2 selected analysis and v1alpha4 plan/report contracts while retaining historical report loading.
+- Add a runnable shared-package workspace fixture and disposable build, lifecycle, wrong-context and cancellation acceptance checks.
+
 - Add v1alpha3 evidence reliability: checked tool/server compatibility and verifier identity, effective test topology, preserved failures with bounded baseline restoration and continuation, and explicit plan versus execution reporting.
 - Align kubectl 1.35.5 with the explicitly selected k3s 1.35.5 runtime; fingerprint both client and server.
 - Keep v1alpha1/v1alpha2 reports readable and runtime configuration unchanged.

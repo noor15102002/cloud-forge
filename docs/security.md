@@ -102,3 +102,11 @@ a security sandbox, and its image is not separately scanned in this release.
 Readiness bodies are bounded to 64KiB, parsed without execution and omitted from
 evidence. No shell interpolation, query language, host environment import or
 arbitrary Compose execution is supported. See docs/dependency-runtime.md.
+
+Explicit build paths reject absolute paths, URLs, parent traversal, option-like
+components and symlink components. The selected Dockerfile must be regular and
+at most 2 MiB; directories must stay within the repository boundary. Paths are
+revalidated before each build. Docker still controls build-context processing
+and `.dockerignore`; CloudForge does not sandbox Dockerfile instructions, freeze
+a concurrently modified checkout, or sanitize a deliberately broad context.
+Use clean reviewed checkouts and disposable runners for unfamiliar code.

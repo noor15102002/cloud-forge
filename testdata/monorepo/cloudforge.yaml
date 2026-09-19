@@ -1,0 +1,15 @@
+schema_version: v1alpha3
+build:
+  app: apps/http
+  dockerfile: apps/http/Containerfile.release
+  context: .
+runtime:
+  port: 8080
+endpoints:
+  health: /health
+  readiness: /ready
+readiness:
+  status: 200
+  json:
+    status: ok
+    shared: shared-package

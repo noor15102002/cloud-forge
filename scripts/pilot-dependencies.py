@@ -48,7 +48,7 @@ sys.exit(result.returncode)
     path.write_text(result.stdout)
     (args.output / f"{name}.stderr.txt").write_text(result.stderr)
     report = json.loads(result.stdout)
-    assert report["schema_version"] == "v1alpha3"
+    assert report["schema_version"] == "v1alpha4"
     # Exercise the same strict schema loader used by users and the Action.
     rendered = subprocess.run([args.binary, "report", str(path), "--format", "json"], capture_output=True, text=True, check=True)
     repeat = subprocess.run([args.binary, "report", str(path), "--format", "json"], capture_output=True, text=True, check=True)
