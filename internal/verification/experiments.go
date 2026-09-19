@@ -180,7 +180,7 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 	title := "Rolling deployment under traffic"
 	if failed(buildResult) {
 		if isApplicationBuildFailure(buildResult) {
-			return rolloutImageBuildFailure(title, buildResult)
+			return rolloutImageBuildFailure(title, buildResult, current)
 		}
 		return lifecycleExecutionError("rolling-deployment", title, "rollout_image_build_failed", "CloudForge could not build the version B image.", commandGuidance(buildResult, nil), trafficObservation{}, model.Measurement{Name: "version_b_build_duration_ms", Value: strconv.FormatInt(buildResult.DurationMS, 10), Unit: "ms"})
 	}
@@ -568,7 +568,7 @@ func lifecycleExecutionError(experimentID, title, code, summary, guidance string
 	return recoveryOutcome{Evidence: evidence, Diagnostic: &diagnostic, ExitCode: 2}
 }
 
-func rolloutImageBuildFailure(title string, result model.CommandResult) recoveryOutcome {
+func rolloutImageBuildFailure(title string, result model.CommandResult, current plan) recoveryOutcome {
 	summary := "The application version B image did not build."
 	guidance := "Run the Docker build with CLOUDFORGE_VERSION=b, correct the failing instruction, and retry verification."
 	evidence := model.Evidence{
@@ -579,7 +579,7 @@ func rolloutImageBuildFailure(title string, result model.CommandResult) recovery
 	finding := model.Finding{
 		ID: "container.rollout-build", Category: "container", Status: model.StatusFail, Severity: model.SeverityHigh,
 		Summary: summary, Observed: "fail", Expected: "version B image builds successfully", Remediation: guidance,
-		DurationMS: result.DurationMS, Source: &model.SourceReference{Path: "Dockerfile"},
+		DurationMS: result.DurationMS, Source: current.buildSource(),
 	}
 	diagnostic := model.Diagnostic{Code: "rollout_image_build_failed", Status: model.StatusFail, Message: summary, Guidance: guidance}
 	return recoveryOutcome{Evidence: evidence, Finding: &finding, Diagnostic: &diagnostic, ExitCode: 1}

@@ -103,3 +103,15 @@ tools and proves the same Node behavior under one/two source replicas and one
 generated replica, with identical source hashes, persistent original failures,
 later evidence, strict report round trips and cleanup. The
 `.github/workflows/reliability.yml` job runs alongside the full existing matrix.
+
+## Single-workload selection
+
+`go test ./...` covers selected metadata/provenance, custom filenames, independent
+contexts, path traversal, symlink and FIFO rejection, 2 MiB Dockerfile bounds,
+A/B argument consistency, config placement, plan determinism and cancellation.
+The Single-workload selection workflow uses the packaged Action against
+`testdata/monorepo`, whose HTTP readiness imports a shared workspace package.
+It requires successful A/B rollout and restoration, records a real build failure
+with an app-only context, interrupts the custom Dockerfile build, checks source
+hashes, and proves cleanup preserves a pre-existing container/network/volume and
+kubeconfig. Reports and assertions are uploaded as separate artifacts.

@@ -33,6 +33,9 @@ var dependencyVerificationSchema []byte
 //go:embed verification.v1alpha3.schema.json
 var reliabilityVerificationSchema []byte
 
+//go:embed verification.v1alpha4.schema.json
+var buildVerificationSchema []byte
+
 type direction int
 
 type measurementPolicy struct {
@@ -79,8 +82,8 @@ func Load(path string) (model.VerificationRun, error) {
 	if err := json.Unmarshal(data, &identity); err != nil {
 		return model.VerificationRun{}, fmt.Errorf("decode verification report %q: %w", path, err)
 	}
-	if identity.SchemaVersion != model.SchemaVersion && identity.SchemaVersion != "v1alpha2" && identity.SchemaVersion != model.VerificationSchemaVersion {
-		return model.VerificationRun{}, fmt.Errorf("verification report schema version %q is unsupported; expected v1alpha1, v1alpha2 or %q", identity.SchemaVersion, model.VerificationSchemaVersion)
+	if identity.SchemaVersion != model.SchemaVersion && identity.SchemaVersion != "v1alpha2" && identity.SchemaVersion != "v1alpha3" && identity.SchemaVersion != model.VerificationSchemaVersion {
+		return model.VerificationRun{}, fmt.Errorf("verification report schema version %q is unsupported; expected v1alpha1, v1alpha2, v1alpha3 or %q", identity.SchemaVersion, model.VerificationSchemaVersion)
 	}
 	if err := validateSchema(data); err != nil {
 		return model.VerificationRun{}, fmt.Errorf("verification report %q does not satisfy the %s schema: %w", path, identity.SchemaVersion, err)
@@ -117,8 +120,11 @@ func validateSchema(data []byte) error {
 	if identity.SchemaVersion == "v1alpha2" {
 		schemaBytes = dependencyVerificationSchema
 	}
-	if identity.SchemaVersion == model.VerificationSchemaVersion {
+	if identity.SchemaVersion == "v1alpha3" {
 		schemaBytes = reliabilityVerificationSchema
+	}
+	if identity.SchemaVersion == model.VerificationSchemaVersion {
+		schemaBytes = buildVerificationSchema
 	}
 	if err := json.Unmarshal(schemaBytes, &schemaDocument); err != nil {
 		return fmt.Errorf("load embedded schema: %w", err)

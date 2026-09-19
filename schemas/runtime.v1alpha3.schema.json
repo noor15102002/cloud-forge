@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CloudForge runtime configuration v1alpha3",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "v1alpha3"
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      },
+      "required": [
+        "port"
+      ]
+    },
+    "endpoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "health": {
+          "type": "string"
+        },
+        "readiness": {
+          "type": "string"
+        },
+        "load": {
+          "type": "string"
+        }
+      },
+      "required": []
+    },
+    "load": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vus": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "duration": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "vus",
+        "duration"
+      ]
+    },
+    "experiments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "control_path": {
+          "type": "string"
+        }
+      },
+      "required": []
+    },
+    "dependencies": {
+      "type": "object",
+      "maxProperties": 8,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9-]{0,31}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "startup_timeout": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      }
+    },
+    "environment": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "const": "dependency.redis.url"
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "required": [],
+        "oneOf": [
+          {
+            "required": [
+              "from"
+            ],
+            "not": {
+              "required": [
+                "value"
+              ]
+            }
+          },
+          {
+            "required": [
+              "value"
+            ],
+            "not": {
+              "required": [
+                "from"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "integer",
+          "minimum": 200,
+          "maximum": 299
+        },
+        "json": {
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": {
+            "pattern": "^[a-zA-Z_][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "dockerfile",
+        "context"
+      ],
+      "properties": {
+        "app": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "dockerfile": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "context": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      }
+    }
+  },
+  "required": [
+    "schema_version"
+  ]
+}

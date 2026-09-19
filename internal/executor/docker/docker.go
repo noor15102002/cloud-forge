@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
+	"github.com/noor15102002/cloud-forge/internal/selection"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -29,6 +30,28 @@ func (c *Client) Build(ctx context.Context, root, image string) model.CommandRes
 
 // BuildVersion builds and tags a Dockerfile with an optional public experiment version.
 func (c *Client) BuildVersion(ctx context.Context, root, image, version string) model.CommandResult {
+	return c.BuildSelected(ctx, root, image, version, nil)
+}
+
+// BuildSelected uses one repository-relative build tuple for every image.
+// Revalidation catches selected paths replaced since planning, before Docker runs.
+func (c *Client) BuildSelected(ctx context.Context, root, image, version string, build *model.BuildSelection) model.CommandResult {
+	if err := ctx.Err(); err != nil {
+		failure := model.FailureCanceled
+		if err == context.DeadlineExceeded {
+			failure = model.FailureTimeout
+		}
+		return model.CommandResult{Command: "docker", ExitCode: -1, FailureType: failure}
+	}
+	buildContext := "."
+	if build != nil {
+		resolved, err := selection.Resolve(root, *build)
+		if err != nil {
+			return model.CommandResult{Command: "docker", ExitCode: -1, FailureType: model.FailureExecution, Stderr: "Build selection changed or became unsafe after planning."}
+		}
+		build = &resolved
+		buildContext = "./" + build.Context
+	}
 	args := []string{"build"}
 	if c.builder != "" {
 		args = []string{"buildx", "build", "--builder", c.builder, "--load", "--provenance=false", "--label", "cloudforge.dev/run-id=" + c.builder}
@@ -36,7 +59,10 @@ func (c *Client) BuildVersion(ctx context.Context, root, image, version string) 
 	if version != "" {
 		args = append(args, "--build-arg", "CLOUDFORGE_VERSION="+version)
 	}
-	args = append(args, "--tag", image, ".")
+	if build != nil {
+		args = append(args, "--file", "./"+build.Dockerfile)
+	}
+	args = append(args, "--tag", image, buildContext)
 	return c.runner.Run(ctx, command.Request{
 		Name: "docker", Args: args, Dir: root,
 		Timeout: 10 * time.Minute, OutputLimit: 256 * 1024,

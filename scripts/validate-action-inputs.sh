@@ -53,3 +53,18 @@ case "$application/" in
   *) fail "path must not escape the GitHub workspace." ;;
 esac
 printf 'application-path=%s\n' "$application" >> "$GITHUB_OUTPUT"
+
+config="${CLOUDFORGE_CONFIG_PATH:-}"
+if [ -n "$config" ]; then
+  if [[ "$config" = /* || "$config" == *$'\n'* || "$config" == *$'\r'* ]]; then
+    fail "config-path must be a relative single-line workspace path."
+  fi
+  if ! config="$(realpath -e -- "$workspace/$config")" || [ ! -f "$config" ]; then
+    fail "config-path must identify a regular file in the GitHub workspace."
+  fi
+  case "$config" in
+    "$workspace/"*) ;;
+    *) fail "config-path must not escape the GitHub workspace." ;;
+  esac
+fi
+printf 'config-path=%s\n' "$config" >> "$GITHUB_OUTPUT"

@@ -9,6 +9,10 @@ import (
 
 func capabilityPlan(analysis model.AnalysisResult, current plan, config model.RuntimeConfiguration, planErr error) *model.VerificationPlan {
 	result := &model.VerificationPlan{SchemaVersion: model.VerificationSchemaVersion, Status: model.StatusPass, Port: current.config.Runtime.Port, Budget: safetyBudget(), Capabilities: []model.Capability{}}
+	result.Build = analysis.Build
+	if result.Build == nil && planErr == nil {
+		result.Build = &model.BuildSelection{App: ".", Dockerfile: "Dockerfile", Context: "."}
+	}
 	add := func(name, disposition, reason string) {
 		result.Capabilities = append(result.Capabilities, model.Capability{Name: name, Disposition: disposition, Reason: reason})
 		if disposition == "blocked" {

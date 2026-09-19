@@ -4,7 +4,7 @@
 on standard error, so reports can be redirected without contamination.
 
 `cloudforge report <verification.json> --format text|json|markdown` validates a
-saved report against the bounded `v1alpha1`, `v1alpha2` or `v1alpha3` contract and renders it without
+saved report against the bounded `v1alpha1`, `v1alpha2`, `v1alpha3` or `v1alpha4` contract and renders it without
 analyzing, building, or executing repository code. The trusted GitHub reporter
 uses this command for pull-request artifacts. Its exit status describes loading
 and rendering only; the original run and comparison statuses remain in the
@@ -12,8 +12,8 @@ report.
 
 ## JSON
 
-Use `--format json` for automation. JSON is the canonical `v1alpha3` contract;
-its schema is [`schemas/verification.v1alpha3.schema.json`](../schemas/verification.v1alpha3.schema.json).
+Use `--format json` for automation. JSON is the canonical `v1alpha4` contract;
+its schema is [`schemas/verification.v1alpha4.schema.json`](../schemas/verification.v1alpha4.schema.json).
 CloudForge sorts evidence, measurements, findings, and diagnostics before
 serialization. Consumers must use field names and must not depend on object key
 order.
@@ -28,7 +28,7 @@ cloudforge verify . --format json > baseline.json
 cloudforge verify . --baseline baseline.json --format json > current.json
 ```
 
-The baseline must be a regular `v1alpha1`, `v1alpha2` or `v1alpha3` JSON file no larger than 4 MiB.
+The baseline must be a regular `v1alpha1`, `v1alpha2`, `v1alpha3` or `v1alpha4` JSON file no larger than 4 MiB.
 CloudForge validates the complete document against the embedded public schema
 and rejects incompatible versions, missing required fields, unknown fields,
 duplicate experiment IDs, and duplicate measurement names before building or
@@ -71,7 +71,7 @@ interactive output stays concise.
 
 Use `--format markdown` to produce a self-contained report suitable for a pull
 request comment. It begins with the stable
-`cloudforge-verification-report:v1alpha3` marker, summarizes every experiment,
+`cloudforge-verification-report:v1alpha4` marker, summarizes every experiment,
 and places measurements and up to 25 detailed findings in collapsible sections. Dynamic text
 is escaped to prevent repository metadata from introducing links, mentions, or
 HTML into the rendered comment. Markdown shows at most 25 findings and directs
@@ -88,7 +88,7 @@ finding. BLOCKED exits 1; cancellation or execution ERROR exits 2. No optional
 capability is promoted from SKIPPED to PASS. A supported plan entry is intent.
 
 `verify --plan` emits a standalone deterministic plan (see
-`schemas/plan.v1alpha3.schema.json`) without running commands. Its JSON is not a
+`schemas/plan.v1alpha4.schema.json`) without running commands. Its JSON is not a
 verification baseline. Reports include pinned dependency identity/resources/mode
 in fingerprints; literal environment values and readiness response bodies are
 omitted. Readiness evidence records transport, status and assertion matches.
@@ -101,3 +101,10 @@ flags, runtime compatibility, effective topology and recovery checks. The plan
 records intent; evidence records what ran and what was observed. A recovered
 baseline never removes the original FAIL or ERROR. See
 [evidence reliability](evidence-reliability.md) for status semantics and limits.
+
+Version `v1alpha4` adds the repository-relative `plan.build` tuple and optional
+configuration `build` in the environment fingerprint. Analysis with an explicit
+selection emits `v1alpha2` against `schemas/analysis.v1alpha2.schema.json`;
+unselected analysis remains `v1alpha1`. Historical v1alpha1–v1alpha3 verification
+schemas remain unchanged and readable. Baselines across versions or different
+build selections are incompatible rather than silently equated.
