@@ -44,6 +44,8 @@ strategy, maxUnavailable/maxSurge, termination grace period, and effective
 probe timings/thresholds. Omitted Kubernetes values are shown as Kubernetes
 defaults; Recreate has null maxUnavailable/maxSurge. The HTTP readiness route
 and optional semantic contract are separate from the Kubernetes probe.
+`readiness_origin` identifies the Kubernetes probe origin; an explicit HTTP
+experiment endpoint can differ from that source probe.
 
 A single-replica replacement can fail the tested zero-interruption requirement
 while the application correctly handles SIGTERM. Service traffic alone cannot

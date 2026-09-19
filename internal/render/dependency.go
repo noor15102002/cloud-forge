@@ -75,7 +75,15 @@ func dependenciesMarkdown(w io.Writer, run model.VerificationRun) error {
 // PlanMarkdown renders a standalone inspection without implying execution.
 func PlanMarkdown(w io.Writer, plan model.VerificationPlan) error {
 	plan = canonicalPlan(plan)
-	if _, err := fmt.Fprintf(w, "### Planned capabilities\n\n**Status:** %s\n\n| Capability | Planned disposition | Reason | Prerequisites | Expected mutation | Recovery |\n|---|---|---|---|---|---|\n", strings.ToUpper(string(plan.Status))); err != nil {
+	if _, err := fmt.Fprintf(w, "### Planned capabilities\n\n**Status:** %s\n", strings.ToUpper(string(plan.Status))); err != nil {
+		return err
+	}
+	if len(plan.Detected) > 0 {
+		if _, err := fmt.Fprintf(w, "\n**Detected:** %s\n\n", markdownText(strings.Join(plan.Detected, ", "))); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(w, "\n| Capability | Planned disposition | Reason | Prerequisites | Expected mutation | Recovery |\n|---|---|---|---|---|---|"); err != nil {
 		return err
 	}
 	for _, c := range plan.Capabilities {
@@ -115,7 +123,7 @@ func topologyDescription(t *model.TestTopology) string {
 	if t.MaxUnavailable != nil {
 		unavailable = *t.MaxUnavailable
 	}
-	return fmt.Sprintf("%s topology; %d replicas (%s); %s strategy (%s); maxUnavailable=%s; maxSurge=%s; readiness=%s %s (%s); availability probe connections=%s.", t.Origin, t.Replicas, t.ReplicaOrigin, t.Strategy, t.StrategyOrigin, unavailable, surge, t.ReadinessScheme, t.ReadinessPath, t.ReadinessOrigin, t.ConnectionPolicy)
+	return fmt.Sprintf("%s topology; %d replicas (%s); %s strategy (%s); maxUnavailable=%s; maxSurge=%s; HTTP readiness=%s %s; Kubernetes readiness probe origin=%s; availability probe connections=%s.", t.Origin, t.Replicas, t.ReplicaOrigin, t.Strategy, t.StrategyOrigin, unavailable, surge, t.ReadinessScheme, t.ReadinessPath, t.ReadinessOrigin, t.ConnectionPolicy)
 }
 
 func reliabilityText(w io.Writer, run model.VerificationRun) error {

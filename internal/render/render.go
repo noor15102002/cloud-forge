@@ -368,7 +368,7 @@ func canonicalVerification(run model.VerificationRun) model.VerificationRun {
 		})
 	}
 	sort.SliceStable(result.Evidence, func(i, j int) bool {
-		return canonicalSortKey(result.Evidence[i]) < canonicalSortKey(result.Evidence[j])
+		return result.Evidence[i].ExperimentID < result.Evidence[j].ExperimentID
 	})
 	sort.SliceStable(result.Findings, func(i, j int) bool {
 		return canonicalSortKey(result.Findings[i]) < canonicalSortKey(result.Findings[j])

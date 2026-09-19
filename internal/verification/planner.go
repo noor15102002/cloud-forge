@@ -75,8 +75,14 @@ func capabilityPlan(analysis model.AnalysisResult, current plan, config model.Ru
 	} else {
 		add("load-profile", "supported", "Run the bounded configured GET profile.")
 	}
-	if current.hpaName == "" || config.Endpoints.Load == "" {
-		add("horizontal-autoscaling", "skipped", "No supported HPA and representative load profile.")
+	if current.hpaName == "" {
+		reason := current.hpaSkipReason
+		if reason == "" {
+			reason = "No supported HPA could be selected."
+		}
+		add("horizontal-autoscaling", "skipped", reason)
+	} else if config.Endpoints.Load == "" {
+		add("horizontal-autoscaling", "skipped", "A representative load endpoint is required to test the selected HPA.")
 	} else {
 		add("horizontal-autoscaling", "supported", "Observe autoscaling only when sufficient demand is established.")
 	}

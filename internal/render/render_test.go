@@ -231,3 +231,18 @@ func TestReliabilityCollectionsCanonicalWithoutMutatingInput(t *testing.T) {
 		t.Fatal("collection order changed canonical serialization")
 	}
 }
+
+func TestNewEvidenceFieldsDoNotChangeExperimentOrdering(t *testing.T) {
+	run := model.VerificationRun{Evidence: []model.Evidence{{ExperimentID: "z-last"}, {ExperimentID: "a-first", Topology: &model.TestTopology{Origin: "source"}, Execution: &model.ExperimentExecution{Executed: true}}}}
+	var output bytes.Buffer
+	if err := JSON(&output, run); err != nil {
+		t.Fatal(err)
+	}
+	var decoded model.VerificationRun
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Evidence[0].ExperimentID != "a-first" || decoded.Evidence[1].ExperimentID != "z-last" {
+		t.Fatal("new evidence fields changed experiment ID ordering")
+	}
+}
