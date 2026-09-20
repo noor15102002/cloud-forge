@@ -90,11 +90,15 @@ Tracking: [#42](https://github.com/noor15102002/cloud-forge/issues/42), [milesto
 
 - [x] Implement bounded explicit test topology and provenance.
 - [x] Add safety, source-preservation, schema and deterministic planning tests.
-- [ ] Complete disposable generic comparison and cancellation acceptance.
-- [ ] Freeze the private same-revision one/two-replica comparison evidence.
-- [ ] Refine the backend boot/readiness contract before deciding on PostgreSQL/pgvector.
+- [x] Complete disposable generic comparison and cancellation acceptance.
+- [x] Freeze the private same-revision one/two-replica comparison evidence.
+- [x] Refine the backend boot/readiness contract before deciding on PostgreSQL/pgvector.
 
-See [the controlled protocol](controlled-topology.md). No new provider is included.
+See [the controlled protocol](controlled-topology.md) and
+[qualification evidence, including retained failed attempts](controlled-topology-evidence.md).
+No new provider is included. The private pair retained availability failures in
+both topologies, with successful restoration and cleanup. Backend execution and
+the choice of its exact dependency/configuration contract remain separate work.
 
 ## v1.0 — Public V1
 
