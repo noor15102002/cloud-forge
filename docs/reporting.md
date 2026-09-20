@@ -113,3 +113,9 @@ Version `v1alpha5` adds explicit test topology provenance and configuration v1al
 Historical v1alpha1–v1alpha4 contracts remain unchanged. Topology changes make
 baselines incompatible: use side-by-side observations rather than regression
 grading. See [controlled topology](controlled-topology.md).
+
+When an infrastructure failure prevents any HTTP response, semantic readiness is
+BLOCKED, with attempted-probe measurements retained. Its execution flag records
+that probes were attempted; this does not establish an application verdict.
+Real observed response PASS/FAIL results remain intact even if another runtime
+observation fails. Loading a historical report never changes its original status.

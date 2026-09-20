@@ -5,6 +5,8 @@ Versioning once releases begin.
 
 ## Unreleased
 
+- Mark semantic readiness BLOCKED when test infrastructure prevents any HTTP response; preserve actual response verdicts, attempted measurements and historical reports.
+
 - Add bounded explicit test topology with replica/rollout provenance, resource-budget checks and fixed-topology/HPA exclusion.
 - Sample Ready pod counts during deletion and recovery; retain original failures and restored baselines in paired topology evidence.
 - Add runtime configuration v1alpha4 and plan/report v1alpha5; preserve historical report loading and update the trusted Action reporter.

@@ -445,6 +445,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 
 	if failed(waitResult) && !isRolloutFailure(waitResult) {
 		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{ExperimentID: "deployment-readiness", Title: "Deployment readiness", Status: model.StatusError, Summary: "Kubernetes readiness could not be observed reliably."})
+		blockUnobservedReadiness(&out, "Kubernetes readiness could not be observed reliably.")
 		out.addError("readiness_observation_failed", "Kubernetes readiness could not be observed reliably.", "Check the isolated API and kubectl access; no application startup failure is inferred.")
 		return out
 	}
@@ -461,6 +462,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		readinessSummary = "The readiness endpoint did not satisfy the configured HTTP readiness contract."
 	}
 	if podErr != nil || failed(podResult) {
+		blockUnobservedReadiness(&out, "Pod state could not be observed reliably.")
 		out.addError("pod_observation_failed", "CloudForge could not decode the deployed pod state.", commandGuidance(podResult, podErr))
 		return out
 	}
@@ -509,12 +511,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 			index := len(out.Run.Evidence) - 1
 			out.Run.Evidence[index].Status = model.StatusError
 			out.Run.Evidence[index].Summary = "The imported application image was unavailable in the test node; application startup could not be assessed."
-			for i := range out.Run.Evidence {
-				if out.Run.Evidence[i].ExperimentID == "semantic-readiness" {
-					out.Run.Evidence[i].Status = model.StatusSkipped
-					out.Run.Evidence[i].Summary = "Semantic readiness could not be assessed because the test image was unavailable."
-				}
-			}
+			blockUnobservedReadiness(&out, "The application image was unavailable in the test node.")
 			out.addError("runtime_image_unavailable", out.Run.Evidence[index].Summary, "Inspect the isolated image import and node image storage before retrying.")
 			return out
 		}
@@ -523,6 +520,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 			index := len(out.Run.Evidence) - 1
 			out.Run.Evidence[index].Status = model.StatusError
 			out.Run.Evidence[index].Summary = "The test node was unhealthy; application startup could not be assessed reliably."
+			blockUnobservedReadiness(&out, "The test node was unhealthy.")
 			out.addError("runtime_environment_unhealthy", out.Run.Evidence[index].Summary, strings.Join(problems, ", "))
 			return out
 		}
