@@ -42,6 +42,15 @@ passed the subsequent complete legacy suite. The original ERROR and its report
 are retained; its precise infrastructure cause was not established. A successful
 repeat does not turn that attempt into a pass.
 
+The first [post-merge integration run](https://github.com/noor15102002/cloud-forge/actions/runs/35475995780)
+also stopped while preparing its deliberately broken-rollout fixture: k3d image
+import returned an error before the rollout could execute. The report recorded
+`image_import_failed` as ERROR and the workflow's cluster cleanup check passed.
+The failure log/report are retained; the precise import cause was not established.
+The packaged monorepo run on that same merged revision passed, and the subsequent
+full integration suite for PR #45 passed. These are distinct observations; the
+later passes do not erase the failed infrastructure attempt.
+
 These paired observations are not statistical significance or a production
 availability guarantee. Ready minima are sampled; passing availability can
 coexist with a sampled zero Ready count. Different topology fingerprints are
