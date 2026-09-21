@@ -10,12 +10,19 @@ type RuntimeConfiguration struct {
 	Dependencies  map[string]DependencySpec     `json:"dependencies,omitempty"`
 	Environment   map[string]EnvironmentBinding `json:"environment,omitempty"`
 	Readiness     *ReadinessAcceptance          `json:"readiness,omitempty"`
+	Probes        *ProbeSettings                `json:"probes,omitempty"`
 	Worker        *WorkerSettings               `json:"worker,omitempty"`
 	SchemaVersion string                        `json:"schema_version"`
 	Runtime       RuntimeSettings               `json:"runtime"`
 	Endpoints     EndpointSettings              `json:"endpoints,omitzero"`
 	Load          LoadSettings                  `json:"load,omitzero"`
 	Experiments   ExperimentSettings            `json:"experiments,omitzero"`
+}
+
+// ProbeSettings bounds CloudForge HTTP observation starts, independently of
+// Kubernetes probes, explicit control requests and the load-test profile.
+type ProbeSettings struct {
+	Interval string `json:"interval"`
 }
 
 // SafetySettings selects a qualified fixed budget, never arbitrary host limits.

@@ -146,7 +146,7 @@ func (s *Service) runPreparation(ctx context.Context, client *kubernetes.Client,
 					return true, blockApplication("The preparation command exited unsuccessfully; application verification was blocked.")
 				}
 				if state.Complete && !state.Failed {
-					evidence.Status, evidence.Summary = model.StatusPass, "The preparation command completed successfully in application image A before HTTP startup."
+					evidence.Status, evidence.Summary = model.StatusPass, "The preparation command completed successfully in application image A before workload startup."
 					return true, true
 				}
 				if deadline || state.Failed {

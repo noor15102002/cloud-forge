@@ -68,6 +68,7 @@ type Service struct {
 	now                   func() time.Time
 	newID                 func() (string, error)
 	probe                 probeFunc
+	probePacer            *probePacer
 	workerPoll            time.Duration
 	poll                  time.Duration
 	trafficPoll           time.Duration
@@ -456,6 +457,8 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		defer func() { s.probe = original }()
 	}
 	var httpResultChannel chan httpObservation
+	restoreProbePacing := s.configureProbePacing(config)
+	defer restoreProbePacing()
 	var stopHTTP context.CancelFunc
 	if plan.readinessURL != "" {
 		httpContext, cancel := context.WithTimeout(ctx, s.readinessTimeout)
@@ -526,6 +529,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		{Name: "container_restarts", Value: strconv.FormatInt(int64(restarts), 10), Unit: "restarts"},
 		{Name: "readiness_duration_ms", Value: strconv.FormatInt(waitResult.DurationMS, 10), Unit: "ms"},
 	}
+	readinessMeasurements = append(readinessMeasurements, podTerminationMeasurements(pods)...)
 	if plan.readinessURL != "" {
 		readinessMeasurements = append(readinessMeasurements,
 			model.Measurement{Name: "startup_duration_ms", Value: strconv.FormatInt(httpResult.DurationMS, 10), Unit: "ms"},

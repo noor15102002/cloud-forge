@@ -121,7 +121,7 @@ func TestLoadRejectsSchemaMismatchUnknownFieldsAndDuplicateMetrics(t *testing.T)
 			if err == nil {
 				t.Fatal("expected baseline error")
 			}
-			if name == "schema" && !strings.Contains(err.Error(), `expected v1alpha1, v1alpha2, v1alpha3, v1alpha4, v1alpha5, v1alpha6 or "v1alpha7"`) {
+			if name == "schema" && !strings.Contains(err.Error(), `expected v1alpha1, v1alpha2, v1alpha3, v1alpha4, v1alpha5, v1alpha6, v1alpha7 or "v1alpha8"`) {
 				t.Fatalf("schema mismatch was not actionable: %v", err)
 			}
 		})

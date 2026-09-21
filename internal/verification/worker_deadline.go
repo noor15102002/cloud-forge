@@ -21,13 +21,14 @@ func workerDeadlineResult(status model.Status, summary string, observation model
 	return result
 }
 
-func (s *Service) workerEmptyDeadline(parent context.Context, client *kubernetes.Client, current plan, observation model.WorkerObservation, started time.Time) workerResult {
+func (s *Service) workerEmptyDeadline(parent context.Context, client *kubernetes.Client, current plan, observation model.WorkerObservation, started time.Time) (result workerResult) {
 	ctx, cancel := context.WithTimeout(parent, lifecycleFinalObservationLimit)
 	defer cancel()
 	pods, res, err := client.ObservePods(ctx, current.clusterName, namespace, workerSelector(current))
 	if failed(res) || err != nil {
 		return workerDeadlineResult(model.StatusError, "Prior worker state could not be observed after the transition deadline.", observation, started, false)
 	}
+	defer func() { result.podSnapshot = pods }()
 	observation.RunningPods = 0
 	for _, pod := range pods {
 		if pod.Running {
@@ -52,10 +53,12 @@ func (s *Service) workerEmptyDeadline(parent context.Context, client *kubernetes
 	return workerDeadlineResult(model.StatusError, "Worker and heartbeat absence were observed only after the deadline; their completion time is unknown and no replacement was started.", observation, started, true)
 }
 
-func (s *Service) workerDeadline(parent context.Context, client *kubernetes.Client, current plan, image string, observation model.WorkerObservation, previousTimestamp, previousRedisTime time.Time, started time.Time) workerResult {
+func (s *Service) workerDeadline(parent context.Context, client *kubernetes.Client, current plan, image string, observation model.WorkerObservation, previousTimestamp, previousRedisTime time.Time, started time.Time) (result workerResult) {
 	ctx, cancel := context.WithTimeout(parent, lifecycleFinalObservationLimit)
 	defer cancel()
-	running, violation, err := s.workerPod(ctx, client, current, image, &observation)
+	var snapshot []kubernetes.PodState
+	defer func() { result.podSnapshot = snapshot }()
+	running, violation, err := s.workerPod(ctx, client, current, image, &observation, &snapshot)
 	if err != nil {
 		var prerequisite workerPrerequisiteError
 		if errors.As(err, &prerequisite) {

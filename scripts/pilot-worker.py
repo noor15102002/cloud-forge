@@ -224,7 +224,7 @@ def inspect(binary, source, config, output):
             raise helpers.QualificationError("worker_inspection_failed_or_nondeterministic")
         if name == "plan":
             plan = json.loads(first.stdout)
-            if plan["schema_version"] != "v1alpha7" or plan["runtime_kind"] != "worker" or plan["status"] != "pass":
+            if plan["schema_version"] != "v1alpha8" or plan["runtime_kind"] != "worker" or plan["status"] != "pass":
                 raise helpers.QualificationError("worker_plan_contract_mismatch")
             capabilities = {item["name"]: item["disposition"] for item in plan["capabilities"]}
             if any(capabilities.get(name) != "supported" for name in WORKER_IDS):
@@ -295,7 +295,7 @@ def check_deadline(item):
 def check_report(report, code, case):
     evidence = {item["experiment_id"]: item for item in report["evidence"]}
 
-    require(report["schema_version"] == "v1alpha7" and report["plan"]["runtime_kind"] == "worker", "worker_report_contract_mismatch")
+    require(report["schema_version"] == "v1alpha8" and report["plan"]["runtime_kind"] == "worker", "worker_report_contract_mismatch")
     require(report.get("producer", {}).get("commit") not in (None, "", "unknown"), "worker_producer_unidentified")
     require("cloudforge:worker:heartbeat" not in json.dumps(report) and "worker.js" not in json.dumps(report), "worker_contract_values_exposed")
     for name in HTTP_IDS:
@@ -543,7 +543,7 @@ def self_test():
                 if index:
                     item["recovery"] = {"status": "pass", "strategy": "stop_wait_for_expiry_restore_worker_and_validate", "worker": workers[index + 1]}
                 items.append(item)
-            report = {"schema_version": "v1alpha7", "run_id": run_id, "plan": {"runtime_kind": "worker"}, "producer": {"commit": "test-commit"},
+            report = {"schema_version": "v1alpha8", "run_id": run_id, "plan": {"runtime_kind": "worker"}, "producer": {"commit": "test-commit"},
                       "status": "pass", "evidence": items}
             observations = {"observer_errors": [], "pods": []}
             for value in workers:

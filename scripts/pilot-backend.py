@@ -262,7 +262,7 @@ def run_case(binary, fixture, base_config, name, output, repository):
 
     report_path = output / "stdout.json"
     report = json.loads(report_path.read_text())
-    assert report["schema_version"] == "v1alpha7"
+    assert report["schema_version"] == "v1alpha8"
     assert report["producer"]["commit"] not in ("", "unknown")
     evidence = {item["experiment_id"]: item for item in report["evidence"]}
     for provider in ("postgresql", "redis", "clamav"):

@@ -92,7 +92,7 @@ func TestVerifyMarkdownReport(t *testing.T) {
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("verify failed: %v stderr=%q", err, stderr.String())
 	}
-	if !bytes.Contains(stdout.Bytes(), []byte("<!-- cloudforge-verification-report:v1alpha7 -->")) || !bytes.Contains(stdout.Bytes(), []byte("## CloudForge verification")) {
+	if !bytes.Contains(stdout.Bytes(), []byte("<!-- cloudforge-verification-report:"+model.VerificationSchemaVersion+" -->")) || !bytes.Contains(stdout.Bytes(), []byte("## CloudForge verification")) {
 		t.Fatalf("unexpected Markdown report:\n%s", stdout.String())
 	}
 }

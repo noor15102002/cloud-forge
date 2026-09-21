@@ -9,6 +9,7 @@ import (
 
 func capabilityPlan(analysis model.AnalysisResult, current plan, config model.RuntimeConfiguration, planErr error) *model.VerificationPlan {
 	result := &model.VerificationPlan{SchemaVersion: model.VerificationSchemaVersion, Status: model.StatusPass, Port: current.config.Runtime.Port, Budget: budgetFor(config), Capabilities: []model.Capability{}}
+	result.Probes = effectiveProbes(config.Probes)
 	if planErr == nil {
 		resources := current.effectiveResources
 		result.Resources = &resources
@@ -136,6 +137,11 @@ func capabilityPlan(analysis model.AnalysisResult, current plan, config model.Ru
 	}
 	if config.Topology != nil {
 		result.Limitations = append(result.Limitations, "Replica count and rollout policy come from explicit test configuration; they are not source or production topology. Source probes and per-pod resources remain in effect.")
+	}
+	if config.Probes != nil {
+		result.Limitations = append(result.Limitations,
+			"The configured probe interval is the minimum time between CloudForge HTTP readiness and availability request starts; Kubernetes probes, explicit control requests and k6 are excluded.",
+			"Slower probe sampling cannot prove the absence of outages shorter than the observation interval.")
 	}
 	for i := range result.Capabilities {
 		c := &result.Capabilities[i]

@@ -12,6 +12,38 @@ permissions:
   contents: read
 
 jobs:
+  probe-pacing:
+    runs-on: ubuntu-latest
+    # Paired cases plus cancellation; independent cleanup can take 12 minutes.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.1
+      - name: Validate the generic rate limit and evidence guards
+        run: |
+          python3 scripts/test-probe-pacing.py
+          python3 scripts/test-pilot-cancellation.py
+      - name: Install pinned tools
+        run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
+      - name: Compare default and explicitly paced HTTP probes
+        run: |
+          go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
+          python3 scripts/pilot-probe-pacing.py /tmp/cloudforge "$RUNNER_TEMP/probe-pacing"
+      - name: Interrupt readiness with explicit probe pacing
+        run: python3 scripts/pilot-cancellation.py /tmp/cloudforge "$RUNNER_TEMP/probe-pacing/cancellation" --stages readiness --probe-pacing
+      - name: Preserve original policy, outcome and cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: probe-pacing
+          path: ${{ runner.temp }}/probe-pacing
+      - name: Check all owned resources
+        if: always()
+        run: timeout --signal=TERM --kill-after=5s 60s bash scripts/pilot-cleanup-check.sh
   explicit-topology:
     runs-on: ubuntu-latest
     timeout-minutes: 35

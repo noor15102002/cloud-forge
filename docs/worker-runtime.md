@@ -1,7 +1,7 @@
 # Bounded worker heartbeat verification
 
 Runtime configuration `v1alpha6` can explicitly select one background process.
-Plans and verification reports use `v1alpha7`; every earlier report schema remains
+Plans and verification reports use `v1alpha8`; every earlier report schema remains
 loadable without reinterpretation. The HTTP default and older runtime inputs are
 preserved. Worker qualification is tracked in [issue #50](https://github.com/noor15102002/cloud-forge/issues/50).
 

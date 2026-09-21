@@ -126,6 +126,7 @@ func validateExtensions(config model.RuntimeConfiguration) error {
 // safeConfiguration deliberately omits even user-declared harmless literal values.
 func safeConfiguration(config model.RuntimeConfiguration) model.RuntimeConfiguration {
 	result := config
+	result.Probes = effectiveProbes(config.Probes)
 	if config.Worker != nil {
 		settings := *config.Worker
 		settings.Command = []string{"<omitted>"}

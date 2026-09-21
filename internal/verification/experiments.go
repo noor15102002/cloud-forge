@@ -2,6 +2,7 @@ package verification
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -52,7 +53,12 @@ func (s *Service) waitForHTTP(ctx context.Context, url string) httpObservation {
 	ticker := time.NewTicker(s.poll)
 	defer ticker.Stop()
 	for {
-		status, err := s.probe(ctx, url)
+		attempted := false
+		status, err := s.performProbe(ctx, url, func(time.Time) { attempted = true })
+		if !attempted {
+			result.DurationMS = elapsedMilliseconds(time.Since(started))
+			return result
+		}
 		result.Attempts++
 		// Retain the last HTTP response. A final canceled transport attempt has
 		// no HTTP status and must not erase an observed 200/degraded response.
@@ -165,7 +171,7 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 	if parent.Err() != nil {
 		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_canceled", "Graceful shutdown was canceled before completion.", parent.Err().Error(), traffic)
 	}
-	finalStatus, finalErr := s.probe(observation.context(), current.healthURL)
+	finalStatus, finalErr := s.pacedProbe(observation.context(), current.healthURL)
 	if finalErr != nil {
 		finalStatus = 0
 	}
@@ -188,6 +194,12 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 	}
 	measurements = append(measurements, traffic.diagnostics()...)
 	measurements = append(measurements, lifecycleDeadlineMeasurements(deadlineReached)...)
+	if errors.Is(finalErr, errProbePacingInterrupted) {
+		measurements = append(measurements, model.Measurement{Name: "final_http_request_started", Value: "false"})
+		if traffic.Failures == 0 && (!deadlineReached || ready == int(current.desiredReplicas) && total == int(current.desiredReplicas)) {
+			return lifecycleFinalHealthUnobserved("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_final_health_unobserved", duration, traffic, measurements)
+		}
+	}
 	if deadlineReached && ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) && traffic.Failures == 0 {
 		return lifecycleCompletionUnobserved("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_completion_unobserved", "The replacement was ready only when observed after the deadline; completion within the required window was not established.", duration, traffic, measurements)
 	}
@@ -317,7 +329,7 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 	if parent.Err() != nil {
 		return lifecycleExecutionError("rolling-deployment", title, "rollout_canceled", "Rolling deployment was canceled before completion.", parent.Err().Error(), traffic)
 	}
-	finalStatus, finalErr := s.probe(observation.context(), current.healthURL)
+	finalStatus, finalErr := s.pacedProbe(observation.context(), current.healthURL)
 	if finalErr != nil {
 		finalStatus = 0
 	}
@@ -341,6 +353,12 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 	}
 	measurements = append(measurements, traffic.diagnostics()...)
 	measurements = append(measurements, lifecycleDeadlineMeasurements(deadlineReached)...)
+	if errors.Is(finalErr, errProbePacingInterrupted) {
+		measurements = append(measurements, model.Measurement{Name: "final_http_request_started", Value: "false"})
+		if traffic.Failures == 0 && (!deadlineReached || ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) && targetReady == int(current.desiredReplicas)) {
+			return lifecycleFinalHealthUnobserved("rolling-deployment", title, "rollout_final_health_unobserved", duration, traffic, measurements)
+		}
+	}
 	if deadlineReached && ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) && targetReady == int(current.desiredReplicas) && traffic.Failures == 0 {
 		return lifecycleCompletionUnobserved("rolling-deployment", title, "rollout_completion_unobserved", "Version B was ready only when observed after the deadline; completion within the required window was not established.", duration, traffic, measurements)
 	}
@@ -454,7 +472,7 @@ trafficContinued:
 	if parent.Err() != nil {
 		return recoveryExecutionError("pod_recovery_canceled", "Pod recovery was canceled before completion.", parent.Err().Error(), traffic)
 	}
-	finalStatus, finalErr := s.probe(observation.context(), current.healthURL)
+	finalStatus, finalErr := s.pacedProbe(observation.context(), current.healthURL)
 	if finalErr != nil {
 		finalStatus = 0
 	}
@@ -484,6 +502,12 @@ trafficContinued:
 	}
 	evidence.Measurements = append(evidence.Measurements, traffic.diagnostics()...)
 	evidence.Measurements = append(evidence.Measurements, lifecycleDeadlineMeasurements(deadlineReached)...)
+	if errors.Is(finalErr, errProbePacingInterrupted) {
+		evidence.Measurements = append(evidence.Measurements, model.Measurement{Name: "final_http_request_started", Value: "false"})
+		if traffic.Failures == 0 && (!deadlineReached || ready == int(current.desiredReplicas) && total == int(current.desiredReplicas)) {
+			return lifecycleFinalHealthUnobserved("pod-recovery", "Pod recovery under traffic", "pod_recovery_final_health_unobserved", replacementDuration, traffic, evidence.Measurements)
+		}
+	}
 	if deadlineReached && ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) && traffic.Failures == 0 {
 		return lifecycleCompletionUnobserved("pod-recovery", "Pod recovery under traffic", "pod_recovery_completion_unobserved", "The replacement was ready only when observed after the deadline; completion within the required window was not established.", replacementDuration, traffic, evidence.Measurements)
 	}
@@ -511,14 +535,16 @@ func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<-
 	defer ticker.Stop()
 	var failureStarted time.Time
 	for {
-		requestStarted := time.Now()
-		if started != nil {
-			select {
-			case started <- requestStarted:
-			default:
+		var requestStarted time.Time
+		status, err := s.performProbe(ctx, url, func(at time.Time) {
+			requestStarted = at
+			if started != nil {
+				select {
+				case started <- at:
+				default:
+				}
 			}
-		}
-		status, err := s.probe(ctx, url)
+		})
 		now := time.Now()
 		if ctx.Err() != nil {
 			if !failureStarted.IsZero() {

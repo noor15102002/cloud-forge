@@ -1,0 +1,10 @@
+schema_version: v1alpha7
+runtime:
+  port: 8000
+endpoints:
+  health: /health
+  readiness: /health
+readiness:
+  status: 200
+  json:
+    status: ok

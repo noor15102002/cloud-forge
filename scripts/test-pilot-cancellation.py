@@ -21,6 +21,28 @@ IMPORT_ARGS = ["image", "import", "cloudforge/healthy-node-redis:0123abcd-a", "-
 
 
 class CleanupCaptureTests(unittest.TestCase):
+    def test_probe_pacing_is_fixed_and_restricted_to_public_readiness(self):
+        environment = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux"}
+        with tempfile.TemporaryDirectory(prefix="cloudforge-cancel-") as temporary, patch.dict(os.environ, environment):
+            root = Path(temporary).resolve()
+            fixture = root / "app"
+            pilot.fixture_copy(fixture, "readiness", False, True)
+            pilot.validate_public_fixture(fixture, "readiness", False, True)
+            config = fixture / "cloudforge.yaml"
+            self.assertIn("schema_version: v1alpha7", config.read_text())
+            self.assertIn("interval: 2s", config.read_text())
+            with self.assertRaisesRegex(pilot.helpers.QualificationError, "public_fixture_changed"):
+                pilot.validate_public_fixture(fixture, "readiness", False)
+            config.write_text(config.read_text().replace("interval: 2s", "interval: 3s"))
+            with self.assertRaisesRegex(pilot.helpers.QualificationError, "public_fixture_changed"):
+                pilot.validate_public_fixture(fixture, "readiness", False, True)
+        with tempfile.TemporaryDirectory() as temporary:
+            for stage, monorepo in (("redis", False), ("build", False), ("readiness", True)):
+                target = Path(temporary) / stage
+                with self.subTest(stage=stage, monorepo=monorepo), self.assertRaisesRegex(pilot.helpers.QualificationError, "probe_pacing_requires_public_readiness_case"):
+                    pilot.fixture_copy(target, stage, monorepo, True)
+                self.assertFalse(target.exists())
+
     def test_stage_failure_still_retains_cleanup_observation(self):
         class EndedProcess:
             returncode = 2

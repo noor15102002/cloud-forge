@@ -20,16 +20,19 @@ type Client struct{ runner command.Runner }
 
 // PodState contains the safe pod identity and readiness data needed by experiments.
 type PodState struct {
-	UID           string
-	Running       bool
-	StartedAt     time.Time
-	ReplicaSetUID string
-	Name          string
-	Terminating   bool
-	Ready         bool
-	Restarts      int32
-	Image         string
-	Reason        string
+	UID                       string
+	Running                   bool
+	StartedAt                 time.Time
+	ReplicaSetUID             string
+	Name                      string
+	Terminating               bool
+	Ready                     bool
+	Restarts                  int32
+	Image                     string
+	Reason                    string
+	ApplicationStatusObserved bool
+	CurrentTermination        *ContainerTermination
+	PreviousTermination       *ContainerTermination
 }
 
 // HPAState contains safe autoscaler state needed by the load experiment.
@@ -93,9 +96,16 @@ func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector s
 	if err := json.Unmarshal([]byte(result.Stdout), &pods); err != nil {
 		return nil, result, fmt.Errorf("decode pod state: %w", err)
 	}
+	terminations, err := podTerminationSnapshots([]byte(result.Stdout))
+	if err != nil {
+		return nil, result, fmt.Errorf("decode pod termination state: %w", err)
+	}
 	states := make([]PodState, 0, len(pods.Items))
-	for _, pod := range pods.Items {
+	for index, pod := range pods.Items {
 		state := PodState{UID: string(pod.UID), Name: pod.Name, Ready: podReady(pod), Terminating: pod.DeletionTimestamp != nil, Reason: podReason(pod)}
+		state.ApplicationStatusObserved = terminations[index].observed
+		state.CurrentTermination = terminations[index].current
+		state.PreviousTermination = terminations[index].previous
 		for _, ref := range pod.OwnerReferences {
 			if ref.Kind == "ReplicaSet" && ref.Controller != nil && *ref.Controller {
 				state.ReplicaSetUID = string(ref.UID)

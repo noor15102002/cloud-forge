@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rate-limited-http
+spec:
+  replicas: 2
+  minReadySeconds: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: rate-limited-http
+  template:
+    metadata:
+      labels:
+        app: rate-limited-http
+    spec:
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: application
+          image: rate-limited-http:test
+          ports:
+            - name: http
+              containerPort: 8000
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 1
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 1
+            failureThreshold: 1
+          livenessProbe:
+            tcpSocket:
+              port: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rate-limited-http
+spec:
+  selector:
+    app: rate-limited-http
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

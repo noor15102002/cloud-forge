@@ -1,7 +1,7 @@
 'use strict'
 
 const marker = '<!-- cloudforge-verification-report:v1alpha1 -->'
-const markers = [marker, '<!-- cloudforge-verification-report:v1alpha2 -->', '<!-- cloudforge-verification-report:v1alpha3 -->', '<!-- cloudforge-verification-report:v1alpha4 -->', '<!-- cloudforge-verification-report:v1alpha5 -->', '<!-- cloudforge-verification-report:v1alpha6 -->', '<!-- cloudforge-verification-report:v1alpha7 -->']
+const markers = [marker, '<!-- cloudforge-verification-report:v1alpha2 -->', '<!-- cloudforge-verification-report:v1alpha3 -->', '<!-- cloudforge-verification-report:v1alpha4 -->', '<!-- cloudforge-verification-report:v1alpha5 -->', '<!-- cloudforge-verification-report:v1alpha6 -->', '<!-- cloudforge-verification-report:v1alpha7 -->', '<!-- cloudforge-verification-report:v1alpha8 -->']
 const maximumBodyBytes = 60_000
 
 function validatePullRequestNumber(value) {

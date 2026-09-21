@@ -563,7 +563,7 @@ def report_checks(report, stage):
               "application_not_started": not evidence.get("deployment-readiness", {}).get("execution", {}).get("executed", False)}
     if stage in PROVIDERS:
         checks["dependency_error"] = any(d.get("name") == stage and d.get("status") == "error" for d in report.get("dependencies", []))
-    checks["passed"] = checks["schema_version"] == "v1alpha7" and all(v is True for k, v in checks.items() if k != "schema_version")
+    checks["passed"] = checks["schema_version"] == "v1alpha8" and all(v is True for k, v in checks.items() if k != "schema_version")
     return checks
 
 
@@ -935,7 +935,7 @@ sys.exit(int(os.environ['FAKE_IMPORT_EXIT']))
                 self.assertTrue(json.loads(marker.read_text())["cloudforge_consumed_running_observation"])
 
         def test_canceled_report_cannot_fake_completed_evidence(self):
-            report = {"schema_version": "v1alpha7", "status": "error", "producer": {"version": "test", "commit": "abc123"},
+            report = {"schema_version": "v1alpha8", "status": "error", "producer": {"version": "test", "commit": "abc123"},
                       "diagnostics": [{"code": "verification_canceled"}], "evidence": [
                           {"experiment_id": "application-preparation", "status": "error", "execution": {"executed": True}},
                           {"experiment_id": "deployment-readiness", "status": "skipped", "execution": {"executed": False}}]}
