@@ -3,6 +3,7 @@ package verification
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
@@ -54,7 +55,7 @@ func checkRuntimeTools(ctx context.Context, runner command.Runner, out *Outcome)
 		if version == "" {
 			out.Run.Fingerprint.Tools = append(out.Run.Fingerprint.Tools, model.ToolVersion{Name: spec.name, Version: "unknown"})
 			addCompatibility(compatibility, spec.name, "not_validated", "Tool version could not be observed reliably.")
-			out.addError("runtime_version_unavailable", "CloudForge could not establish the runtime tool versions.", "Check "+spec.name+" installation and access; no application build was started.")
+			out.addError("runtime_version_unavailable", "CloudForge could not establish the runtime tool versions.", "Check "+spec.name+" installation and access; no application build was started. "+versionObservationGuidance(result))
 			return false
 		}
 		out.Run.Fingerprint.Tools = append(out.Run.Fingerprint.Tools, model.ToolVersion{Name: spec.name, Version: version})
@@ -112,7 +113,7 @@ func checkRuntimeServer(ctx context.Context, runner command.Runner, current plan
 	if failed(result) || result.Truncated || client == "" || server == "" {
 		addCompatibility(out.Run.Compatibility, "kubectl-observed-server", "not_validated", "The actual client/server versions could not be observed reliably.")
 		out.Run.Fingerprint.Tools = append(out.Run.Fingerprint.Tools, model.ToolVersion{Name: "kubernetes", Version: "unknown"})
-		out.addError("runtime_version_unavailable", "CloudForge could not observe the isolated Kubernetes client/server versions.", "No application deployment was attempted; inspect the isolated API and retry.")
+		out.addError("runtime_version_unavailable", "CloudForge could not observe the isolated Kubernetes client/server versions.", "No application deployment was attempted; inspect the isolated API and retry. "+versionObservationGuidance(result))
 		return false
 	}
 	out.Run.Compatibility.ObservedKubernetes = server
@@ -131,6 +132,25 @@ func checkRuntimeServer(ctx context.Context, runner command.Runner, current plan
 	addCompatibility(out.Run.Compatibility, "kubernetes", disposition, reason)
 	completeFingerprint(out.Run.Fingerprint)
 	return compatibilityAllowsRun(out)
+}
+
+func versionObservationGuidance(result model.CommandResult) string {
+	if failed(result) {
+		// Only normalized failure classes, timing, and fixed guidance enter the
+		// report. Tool output and invocation arguments can contain private data.
+		switch result.FailureType {
+		case model.FailureNotFound, model.FailureExit, model.FailureTimeout, model.FailureCanceled, model.FailureExecution:
+		case model.FailureNone:
+			result.FailureType = model.FailureExit
+		default:
+			result.FailureType = model.FailureExecution
+		}
+		return fmt.Sprintf("Version observation failed (%s; %d ms). %s", result.FailureType, result.DurationMS, commandGuidance(result, nil))
+	}
+	if result.Truncated {
+		return fmt.Sprintf("Version command completed in %d ms, but its output was truncated; the version is unverified.", result.DurationMS)
+	}
+	return fmt.Sprintf("Version command completed in %d ms, but its output did not contain the required version information.", result.DurationMS)
 }
 
 func addCompatibility(report *model.RuntimeCompatibility, name, status, reason string) {
