@@ -422,7 +422,10 @@ def check_observations(report, observations, case):
             exits = process.get("terminations", [])
             require(exits and all(value == {"exit_code": 23, "reason": "Error"} for value in exits), "worker_intended_exit_23_unobserved")
             require(process.get("maximum_container_restarts") == worker.get("container_restarts", 0) > 0, "worker_native_restart_not_independently_observed")
-        elif not case.startswith("cancel-") or worker.get("process_started_at"):
+        elif worker.get("process_started_at") or (not case.startswith("cancel-") and case not in ("future", "malformed")):
+            # An invalid Redis value can arrive between a Pending Pod snapshot
+            # and the heartbeat read. Preserve that observation ERROR without
+            # inventing a process-start observation that Kubernetes never gave.
             require(process.get("running_observed") and any(timestamp(started) == timestamp(worker.get("process_started_at"))
                     for started in process.get("started_at", [])), "worker_native_process_instance_unobserved")
 
@@ -597,6 +600,35 @@ def self_test():
                     report, observations, code = self.qualification_case(case)
                     check_report(report, code, case)
                     check_observations(report, observations, case)
+
+        def test_invalid_heartbeat_can_precede_running_pod_snapshot(self):
+            for case in ("future", "malformed"):
+                with self.subTest(case=case):
+                    report, observations, code = self.qualification_case(case)
+                    startup = next(item for item in report["evidence"] if item["experiment_id"] == "worker-startup")
+                    startup["worker"].pop("process_started_at")
+                    startup["worker"].pop("redis_observed_at")
+                    startup["worker"].update(running_pods=0, maximum_running_pods=0)
+                    observations["pods"][0]["process"].update(running_observed=False, started_at=[])
+                    check_report(report, code, case)
+                    check_observations(report, observations, case)
+                    for fault in ("image", "uid", "status"):
+                        changed = copy.deepcopy(report)
+                        item = next(value for value in changed["evidence"] if value["experiment_id"] == "worker-startup")
+                        if fault == "status":
+                            item["status"] = "fail"
+                        else:
+                            item["worker"]["image" if fault == "image" else "pod_uid"] = "unrelated"
+                        with self.assertRaises(helpers.QualificationError):
+                            check_report(changed, code, case)
+                            check_observations(changed, observations, case)
+            for case in ("healthy", "never", "stale", "frozen"):
+                with self.subTest(required_start_case=case):
+                    report, observations, code = self.qualification_case(case)
+                    next(item for item in report["evidence"] if item["experiment_id"] == "worker-startup")["worker"].pop("process_started_at")
+                    with self.assertRaises(helpers.QualificationError):
+                        check_report(report, code, case)
+                        check_observations(report, observations, case)
 
         def test_heartbeat_faults_cannot_qualify_crashes_or_wrong_heartbeat(self):
             for case in ("never", "stale", "frozen"):
