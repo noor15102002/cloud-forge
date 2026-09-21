@@ -5,6 +5,7 @@ Versioning once releases begin.
 
 ## Unreleased
 
+- Confirm incomplete lifecycle state with one bounded final observation when the requirement deadline interrupts a Kubernetes read; retain ERROR for unobservable or indeterminate completion and preserve earlier reports.
 - Require a fresh healthy lifecycle prerequisite, revalidate the original baseline after rollout image preparation, and keep Kubernetes observation deadline errors distinct from failed application requirements.
 - Add bounded sanitized HTTP status/failure counters and explicit sampling/censored-window metadata without changing historical reports or the verification schema.
 
