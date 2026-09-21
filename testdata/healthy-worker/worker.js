@@ -7,6 +7,24 @@ const HEARTBEAT_KEY = "cloudforge:worker:heartbeat";
 const OWNER_KEY = "cloudforge:fixture:first-worker";
 const CONTROL_TTL_SECONDS = 3600;
 const MODES = new Set(["healthy", "never", "stale", "frozen", "future", "malformed", "exit", "first-pod-only", "fail-second-start"]);
+const ORDINAL_CLAIM = `
+local field = "pod:" .. ARGV[1]
+local ordinal = redis.call("HGET", KEYS[1], field)
+if ordinal then return tonumber(ordinal) end
+ordinal = redis.call("HINCRBY", KEYS[1], "sequence", 1)
+redis.call("HSET", KEYS[1], field, ordinal)
+redis.call("EXPIRE", KEYS[1], ARGV[2])
+return ordinal
+`;
+const FIRST_OWNER_CLAIM = `
+local owner = redis.call("GET", KEYS[1])
+if not owner then
+  redis.call("SET", KEYS[1], ARGV[1], "EX", ARGV[2])
+  return 1
+end
+if owner == ARGV[1] then return 1 end
+return 0
+`;
 
 function encodeCommand(values) {
   return "*" + values.length + "\r\n" + values.map(value => {
@@ -52,6 +70,20 @@ function timestampFor(mode, now, firstTimestamp) {
   return new Date(now).toISOString();
 }
 
+async function claimControl(endpoint, mode, owner, send = command) {
+  const script = mode === "fail-second-start" ? ORDINAL_CLAIM : FIRST_OWNER_CLAIM;
+  const values = ["EVAL", script, "1", OWNER_KEY, owner, CONTROL_TTL_SECONDS];
+  const first = await send(endpoint, values);
+  // Repeat the real atomic claim before using its reply. The matrix therefore
+  // tests the same per-pod request after completion, as a lost reply would need.
+  const repeated = await send(endpoint, values);
+  if (!Number.isSafeInteger(first) || first !== repeated || first < 0 ||
+      (mode === "fail-second-start" ? first < 1 : first > 1)) {
+    throw new Error("fixture control claim was not stable");
+  }
+  return first;
+}
+
 async function main() {
   const mode = process.argv[2] || "healthy";
   if (!MODES.has(mode)) throw new Error("unsupported public fixture mode");
@@ -67,18 +99,17 @@ async function main() {
   process.once("SIGTERM", () => { stopping = true; });
   process.once("SIGINT", () => { stopping = true; });
   const firstTimestamp = new Date().toISOString();
-  let ordinal = 1;
-  if (mode === "fail-second-start") {
-    ordinal = await command(endpoint, ["INCR", OWNER_KEY]);
-    await command(endpoint, ["EXPIRE", OWNER_KEY, CONTROL_TTL_SECONDS]);
-  }
+  let ordinal;
   let ownsFirstPod;
   while (!stopping) {
     try {
+      if (mode === "fail-second-start" && ordinal === undefined) {
+        ordinal = await claimControl(endpoint, mode, os.hostname());
+      }
       if (mode === "first-pod-only" && ownsFirstPod === undefined) {
         // A replacement remains alive but never publishes. The old heartbeat
         // may persist for its remaining TTL, so it must not prove new startup.
-        ownsFirstPod = await command(endpoint, ["SET", OWNER_KEY, os.hostname(), "NX", "EX", CONTROL_TTL_SECONDS]) === "OK";
+        ownsFirstPod = await claimControl(endpoint, mode, os.hostname()) === 1;
       }
       if (mode !== "never" && (mode !== "first-pod-only" || ownsFirstPod) && (mode !== "fail-second-start" || ordinal !== 2)) {
         const payload = mode === "malformed" ? "{not-valid-json" : JSON.stringify({ at: timestampFor(mode, Date.now(), firstTimestamp),
@@ -99,4 +130,4 @@ if (require.main === module) {
   main().catch(() => { process.exitCode = 24; });
 }
 
-module.exports = { encodeCommand, timestampFor };
+module.exports = { encodeCommand, timestampFor, claimControl };

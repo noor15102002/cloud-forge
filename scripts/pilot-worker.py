@@ -725,9 +725,39 @@ def self_test():
             self.assertIsNotNone(marker)
             self.assertGreater(int(marker.group(1)), VERIFY_SECONDS + CLEANUP_SECONDS)
             self.assertEqual(int(marker.group(1)), 3600)
-            self.assertIn('["EXPIRE", OWNER_KEY, CONTROL_TTL_SECONDS]', fixture)
-            self.assertIn('["SET", OWNER_KEY, os.hostname(), "NX", "EX", CONTROL_TTL_SECONDS]', fixture)
+            self.assertIn('["EVAL", script, "1", OWNER_KEY, owner, CONTROL_TTL_SECONDS]', fixture)
             self.assertIn('["SET", HEARTBEAT_KEY, payload, "EX", "3"]', fixture)
+
+        def test_fixture_requires_stable_control_claim_replies(self):
+            # Exercise the client contract without emulating Lua or starting an
+            # application/Redis server. Real matrix claims execute twice in Redis.
+            script = r'''
+const assert = require("node:assert/strict");
+const { claimControl } = require(process.argv[1]);
+(async () => {
+  for (const [mode, reply] of [["fail-second-start", 1], ["fail-second-start", 2], ["first-pod-only", 1], ["first-pod-only", 0]]) {
+    const calls = [];
+    const send = async (_endpoint, args) => { calls.push(args); return reply; };
+    assert.equal(await claimControl(null, mode, "pod-fixture", send), reply);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0], calls[1]);
+    assert.equal(calls[0][0], "EVAL");
+    assert.equal(calls[0][2], "1");
+    assert.equal(calls[0][4], "pod-fixture");
+    assert.equal(calls[0][5], 3600);
+  }
+  let count = 0;
+  await assert.rejects(claimControl(null, "fail-second-start", "pod-fixture", async () => ++count));
+  for (const reply of [-1, 0, 1.5, "1", null]) {
+    await assert.rejects(claimControl(null, "fail-second-start", "pod-fixture", async () => reply));
+  }
+  await assert.rejects(claimControl(null, "first-pod-only", "pod-fixture", async () => 2));
+  await assert.rejects(claimControl(null, "fail-second-start", "pod-fixture", async () => { throw new Error("lost reply"); }));
+})().catch(error => { console.error(error); process.exitCode = 1; });
+'''
+            result = subprocess.run(["node", "-e", script, str(REPOSITORY / "testdata/healthy-worker/worker.js")],
+                                    capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
 
         def test_modes_are_explicit(self):
             for case in CASES:

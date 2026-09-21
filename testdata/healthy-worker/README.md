@@ -16,12 +16,17 @@ cleanup. Qualification supplies direct command arguments for intentional faults:
 | `future` | Publishes a timestamp two minutes ahead: freshness cannot be established. |
 | `malformed` | Writes a value that is not valid JSON: observation must remain an error. |
 | `exit` | Exits with code 23 before publishing. |
-| `first-pod-only` | A Redis `SET NX` claim allows only the first pod to publish. Later pods stay alive without publishing; the old heartbeat expires naturally. |
-| `fail-second-start` | A bounded Redis startup counter suppresses only the second process. Restoration and image B publish again, proving a valid failure remains visible after continuation. |
+| `first-pod-only` | An atomic Redis ownership claim allows only the first pod to publish. Later pods stay alive without publishing; the old heartbeat expires naturally. |
+| `fail-second-start` | A bounded Redis counter assigns each pod its ordinal once and suppresses only the second pod. Restoration and image B publish again, proving a valid failure remains visible after continuation. |
 
 The ownership marker is a separate fixture-only Redis key with a one-hour TTL,
 longer than the qualification's 40-minute verification and 12-minute cleanup observation
 bounds. The application heartbeat's TTL remains three seconds.
+Control initialization runs inside the same bounded Redis-operation retry loop
+as heartbeat publication. Atomic claims use the pod hostname, so retrying after
+a lost response cannot increment the ordinal twice or lose first-pod ownership.
+Each initial claim is repeated against real Redis and must return the same
+result before publication, explicitly exercising idempotency in the matrix.
 CloudForge must not treat it, or the predecessor's residual heartbeat, as proof
 that a replacement is healthy. No key deletion or repository-specific behavior
 is added to CloudForge for these tests.
