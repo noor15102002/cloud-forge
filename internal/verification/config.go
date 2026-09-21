@@ -49,7 +49,7 @@ func LoadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 	if yaml.UnmarshalStrict(data, &supplied) != nil {
 		return config, errors.New("invalid configuration object")
 	}
-	for _, key := range []string{"safety", "network", "preparation", "build", "topology", "runtime", "load", "endpoints", "experiments", "dependencies", "environment", "readiness"} {
+	for _, key := range []string{"safety", "network", "preparation", "build", "topology", "runtime", "load", "endpoints", "experiments", "dependencies", "environment", "readiness", "worker"} {
 		if string(supplied[key]) == "null" {
 			return config, errors.New("configuration sections cannot be null")
 		}
@@ -70,6 +70,9 @@ func LoadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 	}
 	var runtimeFields map[string]json.RawMessage
 	_ = json.Unmarshal(supplied["runtime"], &runtimeFields)
+	if raw, present := runtimeFields["kind"]; present && (string(raw) == "null" || string(raw) == `""`) {
+		return config, errors.New("explicit runtime.kind must be http or worker")
+	}
 	if _, present := runtimeFields["port"]; present && config.Runtime.Port == 0 {
 		return config, errors.New("explicit runtime.port must be between 1 and 65535")
 	}
@@ -95,6 +98,13 @@ func LoadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 			}
 		}
 	}
+	if config.Runtime.Kind == "worker" {
+		for _, key := range []string{"load", "endpoints", "readiness", "experiments"} {
+			if _, ok := supplied[key]; ok {
+				return config, errors.New("worker configuration cannot include HTTP, load or control sections")
+			}
+		}
+	}
 	if err := validateConfiguration(config); err != nil {
 		return config, err
 	}
@@ -102,15 +112,18 @@ func LoadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 }
 
 func validateConfiguration(config model.RuntimeConfiguration) error {
+	if err := validateWorker(config); err != nil {
+		return err
+	}
 	if err := validateExtensions(config); err != nil {
 		return err
 	}
-	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != "v1alpha2" && config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" {
-		return errors.New("configuration schema_version must be v1alpha1, v1alpha2, v1alpha3, v1alpha4 or v1alpha5")
+	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != "v1alpha2" && config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" && config.SchemaVersion != "v1alpha6" {
+		return errors.New("configuration schema_version must be v1alpha1, v1alpha2, v1alpha3, v1alpha4 v1alpha5 or v1alpha6")
 	}
 	if config.Build != nil {
-		if config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" {
-			return errors.New("build selection requires configuration schema_version v1alpha3, v1alpha4 or v1alpha5")
+		if config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" && config.SchemaVersion != "v1alpha6" {
+			return errors.New("build selection requires configuration schema_version v1alpha3, v1alpha4 v1alpha5 or v1alpha6")
 		}
 		if err := selection.Validate(*config.Build); err != nil {
 			return err

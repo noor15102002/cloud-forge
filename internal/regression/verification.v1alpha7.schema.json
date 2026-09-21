@@ -1,0 +1,1593 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/noor15102002/cloud-forge/schemas/verification.v1alpha7.schema.json",
+  "title": "CloudForge Verification Report v1alpha7",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "status",
+    "started_at",
+    "duration_ms",
+    "environment",
+    "evidence",
+    "producer"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "v1alpha7"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/status"
+    },
+    "application": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "environment": {
+      "$ref": "#/$defs/environment"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "comparison": {
+      "$ref": "#/$defs/comparison"
+    },
+    "fingerprint": {
+      "$ref": "#/$defs/fingerprint"
+    },
+    "plan": {
+      "$ref": "#/$defs/plan"
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/dependencyEvidence"
+      }
+    },
+    "producer": {
+      "$ref": "#/$defs/producer"
+    },
+    "compatibility": {
+      "$ref": "#/$defs/compatibility"
+    }
+  },
+  "$defs": {
+    "status": {
+      "enum": [
+        "pass",
+        "warn",
+        "fail",
+        "skipped",
+        "error",
+        "blocked"
+      ]
+    },
+    "severity": {
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "document": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "field": {
+          "type": "string"
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "status",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "message": {
+          "type": "string"
+        },
+        "guidance": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "status",
+        "severity",
+        "summary",
+        "observed",
+        "expected",
+        "remediation",
+        "duration_ms",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "severity": {
+          "$ref": "#/$defs/severity"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "observed": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "string"
+        },
+        "remediation": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/source"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experiment_id",
+        "title",
+        "status",
+        "summary",
+        "duration_ms",
+        "execution"
+      ],
+      "properties": {
+        "experiment_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "measurements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/measurement"
+          }
+        },
+        "topology": {
+          "$ref": "#/$defs/topology"
+        },
+        "execution": {
+          "$ref": "#/$defs/execution"
+        },
+        "recovery": {
+          "$ref": "#/$defs/recovery"
+        },
+        "worker": {
+          "$ref": "#/$defs/workerObservation"
+        }
+      }
+    },
+    "comparisonKind": {
+      "enum": [
+        "status",
+        "measurement"
+      ]
+    },
+    "comparisonChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experiment_id",
+        "kind",
+        "baseline",
+        "current",
+        "summary"
+      ],
+      "properties": {
+        "experiment_id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/comparisonKind"
+        },
+        "measurement": {
+          "type": "string"
+        },
+        "baseline": {
+          "type": "string"
+        },
+        "current": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    },
+    "comparisonUnavailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experiment_id",
+        "kind",
+        "reason"
+      ],
+      "properties": {
+        "experiment_id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/comparisonKind"
+        },
+        "measurement": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseline_run_id",
+        "status"
+      ],
+      "properties": {
+        "baseline_run_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "regressions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/comparisonChange"
+          }
+        },
+        "improvements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/comparisonChange"
+          }
+        },
+        "unavailable": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/comparisonUnavailable"
+          }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backend",
+        "kept"
+      ],
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "cluster_name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "kept": {
+          "type": "boolean"
+        }
+      }
+    },
+    "runtimeConfiguration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "enum": [
+            "v1alpha1",
+            "v1alpha2",
+            "v1alpha3",
+            "v1alpha4",
+            "v1alpha5",
+            "v1alpha6"
+          ]
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "port": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "kind": {
+              "enum": [
+                "http",
+                "worker"
+              ]
+            }
+          },
+          "required": []
+        },
+        "endpoints": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "health": {
+              "type": "string"
+            },
+            "readiness": {
+              "type": "string"
+            },
+            "load": {
+              "type": "string"
+            }
+          },
+          "required": []
+        },
+        "load": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vus": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            },
+            "duration": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "vus",
+            "duration"
+          ]
+        },
+        "experiments": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "control_path": {
+              "type": "string"
+            }
+          },
+          "required": []
+        },
+        "dependencies": {
+          "type": "object",
+          "maxProperties": 8,
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,31}$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "startup_timeout": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32,
+                "description": "Provider startup deadline; Go validation enforces dependency-specific bounds, including at most 10 minutes for ClamAV."
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          }
+        },
+        "environment": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "enum": [
+                  "dependency.redis.url",
+                  "dependency.postgresql.url",
+                  "dependency.clamav.host",
+                  "dependency.clamav.port",
+                  "disabled.http_url",
+                  "disabled.https_url",
+                  "disabled.host",
+                  "disabled.email"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "generate": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "bytes",
+                  "encoding"
+                ],
+                "properties": {
+                  "bytes": {
+                    "type": "integer",
+                    "minimum": 16,
+                    "maximum": 64
+                  },
+                  "encoding": {
+                    "enum": [
+                      "hex",
+                      "base64"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [],
+            "oneOf": [
+              {
+                "required": [
+                  "from"
+                ]
+              },
+              {
+                "required": [
+                  "value"
+                ]
+              },
+              {
+                "required": [
+                  "generate"
+                ]
+              }
+            ]
+          }
+        },
+        "readiness": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "type": "integer",
+              "minimum": 200,
+              "maximum": 299
+            },
+            "json": {
+              "type": "object",
+              "maxProperties": 16,
+              "propertyNames": {
+                "pattern": "^[a-zA-Z_][a-zA-Z0-9_]{0,63}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 64
+              }
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        "build": {
+          "$ref": "#/$defs/buildSelection"
+        },
+        "topology": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "replicas"
+          ],
+          "properties": {
+            "replicas": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "rollout": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "strategy": {
+                  "enum": [
+                    "rolling_update",
+                    "recreate"
+                  ]
+                },
+                "max_unavailable": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 5
+                },
+                "max_surge": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 5
+                }
+              }
+            }
+          }
+        },
+        "safety": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profile"
+          ],
+          "properties": {
+            "profile": {
+              "const": "bounded_backend"
+            }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "outbound"
+          ],
+          "properties": {
+            "outbound": {
+              "const": "declared_dependencies_only"
+            }
+          }
+        },
+        "preparation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": [
+                "<omitted>"
+              ]
+            },
+            "timeout": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            }
+          }
+        },
+        "worker": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "const": "<omitted>"
+              }
+            },
+            "heartbeat": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "key": {
+                  "const": "<omitted>"
+                },
+                "timestamp_field": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z_][a-zA-Z0-9_]{0,63}$"
+                },
+                "max_age": {
+                  "type": "string",
+                  "pattern": "^(?:[1-9]|[1-5][0-9]|60)s$|^1m$"
+                }
+              },
+              "required": [
+                "key",
+                "timestamp_field",
+                "max_age"
+              ]
+            }
+          },
+          "required": [
+            "command",
+            "heartbeat"
+          ]
+        }
+      },
+      "required": [
+        "schema_version"
+      ]
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu_request": {
+          "type": "string"
+        },
+        "memory_request": {
+          "type": "string"
+        },
+        "cpu_limit": {
+          "type": "string"
+        },
+        "memory_limit": {
+          "type": "string"
+        }
+      },
+      "required": []
+    },
+    "safetyBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workload_cpu": {
+          "type": "string"
+        },
+        "workload_memory": {
+          "type": "string"
+        },
+        "cluster_memory": {
+          "type": "string"
+        },
+        "build_memory": {
+          "type": "string"
+        },
+        "build_timeout": {
+          "type": "string"
+        },
+        "readiness_timeout": {
+          "type": "string"
+        },
+        "experiment_timeout": {
+          "type": "string"
+        },
+        "max_replicas": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "build_cpus": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "workload_cpu",
+        "workload_memory",
+        "cluster_memory",
+        "build_memory",
+        "build_timeout",
+        "readiness_timeout",
+        "experiment_timeout",
+        "max_replicas",
+        "build_cpus"
+      ]
+    },
+    "fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_commit": {
+          "type": "string"
+        },
+        "image_id": {
+          "type": "string"
+        },
+        "image_digest": {
+          "type": "string"
+        },
+        "cloudforge_version": {
+          "type": "string"
+        },
+        "cloudforge_commit": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "workload_hash": {
+          "type": "string"
+        },
+        "compatibility_key": {
+          "type": "string"
+        },
+        "source_dirty": {
+          "type": "boolean"
+        },
+        "cpus": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ]
+          }
+        },
+        "configuration": {
+          "$ref": "#/$defs/runtimeConfiguration"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        },
+        "budget": {
+          "$ref": "#/$defs/safetyBudget"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dependencyFingerprint"
+          }
+        },
+        "environment_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "preparation_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "worker_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "cloudforge_version",
+        "cloudforge_commit",
+        "platform",
+        "workload_hash",
+        "source_dirty",
+        "cpus",
+        "tools",
+        "configuration",
+        "resources",
+        "budget"
+      ]
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "disposition": {
+          "enum": [
+            "supported",
+            "skipped",
+            "blocked"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mutation": {
+          "type": "string"
+        },
+        "recovery_strategy": {
+          "type": "string"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "disposition",
+        "reason"
+      ]
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        },
+        "budget": {
+          "$ref": "#/$defs/safetyBudget"
+        },
+        "schema_version": {
+          "const": "v1alpha7"
+        },
+        "topology": {
+          "$ref": "#/$defs/topology"
+        },
+        "detected": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "build": {
+          "$ref": "#/$defs/buildSelection"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        },
+        "runtime_kind": {
+          "enum": [
+            "http",
+            "worker"
+          ]
+        },
+        "worker": {
+          "$ref": "#/$defs/workerContract"
+        }
+      },
+      "required": [
+        "status",
+        "capabilities",
+        "budget",
+        "schema_version"
+      ]
+    },
+    "dependencyFingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "configuration_mode": {
+          "type": "string"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        },
+        "data_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "data_timestamp": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "kind",
+        "image",
+        "digest",
+        "version",
+        "configuration_mode",
+        "resources"
+      ]
+    },
+    "dependencyEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "configuration_mode": {
+          "type": "string"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        },
+        "name": {
+          "type": "string"
+        },
+        "network_exposure": {
+          "type": "string"
+        },
+        "authentication": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "startup_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "data_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "data_timestamp": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "kind",
+        "image",
+        "version",
+        "configuration_mode",
+        "resources",
+        "name",
+        "network_exposure",
+        "authentication",
+        "reason",
+        "status",
+        "startup_ms"
+      ]
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "commit"
+      ]
+    },
+    "compatibilityCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "supported",
+            "unsupported",
+            "not_validated"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "status",
+        "reason"
+      ]
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "supported",
+            "unsupported",
+            "not_validated"
+          ]
+        },
+        "expected_kubernetes": {
+          "type": "string"
+        },
+        "observed_kubernetes": {
+          "type": "string"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/compatibilityCheck"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "expected_kubernetes",
+        "checks"
+      ]
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "purpose": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "port": {
+          "type": "string"
+        },
+        "scheme": {
+          "type": "string"
+        },
+        "grpc_service": {
+          "type": "string"
+        },
+        "initial_delay_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "period_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "success_threshold": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failure_threshold": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "termination_grace_period_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unsupported": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "purpose",
+        "type"
+      ]
+    },
+    "readinessAcceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "integer",
+          "minimum": 200,
+          "maximum": 299
+        },
+        "json": {
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": {
+            "pattern": "^[a-zA-Z_][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "enum": [
+            "source",
+            "generated",
+            "explicit_test_configuration"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "replica_origin": {
+          "enum": [
+            "source",
+            "generated",
+            "kubernetes_default",
+            "explicit_test_configuration"
+          ]
+        },
+        "strategy": {
+          "enum": [
+            "rolling_update",
+            "recreate"
+          ]
+        },
+        "strategy_origin": {
+          "enum": [
+            "source",
+            "kubernetes_default",
+            "explicit_test_configuration"
+          ]
+        },
+        "max_unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_surge": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "termination_grace_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_ready_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "probes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/probe"
+          }
+        },
+        "readiness_origin": {
+          "enum": [
+            "source",
+            "generated",
+            "worker_heartbeat"
+          ]
+        },
+        "readiness_path": {
+          "type": "string"
+        },
+        "readiness_scheme": {
+          "type": "string"
+        },
+        "readiness_acceptance": {
+          "$ref": "#/$defs/readinessAcceptance"
+        },
+        "availability_probe_connection_policy": {
+          "enum": [
+            "new_connection_per_probe",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "origin",
+        "replicas",
+        "replica_origin",
+        "strategy",
+        "strategy_origin",
+        "max_unavailable",
+        "max_surge",
+        "termination_grace_seconds",
+        "min_ready_seconds",
+        "probes",
+        "readiness_origin",
+        "availability_probe_connection_policy"
+      ]
+    },
+    "baselineCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "blocked",
+            "error"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "status",
+        "reason"
+      ]
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "pass",
+            "blocked",
+            "error"
+          ]
+        },
+        "strategy": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/baselineCheck"
+          }
+        },
+        "worker": {
+          "$ref": "#/$defs/workerObservation"
+        }
+      },
+      "required": [
+        "status",
+        "strategy",
+        "summary",
+        "duration_ms",
+        "checks"
+      ]
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "executed": {
+          "type": "boolean"
+        },
+        "mutation_attempted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "executed",
+        "mutation_attempted"
+      ]
+    },
+    "buildSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "dockerfile",
+        "context"
+      ],
+      "properties": {
+        "app": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "dockerfile": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "context": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      }
+    },
+    "workerContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "redis_json_heartbeat"
+        },
+        "claim": {
+          "const": "process_liveness_only"
+        },
+        "contract_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "max_age": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "max_ttl": {
+          "const": "1m"
+        },
+        "required_advancing_samples": {
+          "const": 2
+        }
+      },
+      "required": [
+        "kind",
+        "claim",
+        "contract_hash",
+        "max_age",
+        "max_ttl",
+        "required_advancing_samples"
+      ]
+    },
+    "heartbeatSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "redis_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "age_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ttl_ms": {
+          "type": "integer",
+          "minimum": -1
+        }
+      },
+      "required": [
+        "redis_time",
+        "timestamp",
+        "age_ms",
+        "ttl_ms"
+      ]
+    },
+    "workerObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pod_uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "previous_pod_uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "running_pods": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maximum_running_pods": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "container_restarts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "key_absent_before_start": {
+          "type": "boolean"
+        },
+        "predecessor_terminated": {
+          "type": "boolean"
+        },
+        "previous_heartbeat_gone": {
+          "type": "boolean"
+        },
+        "heartbeat_state": {
+          "enum": [
+            "",
+            "absent",
+            "awaiting_prior_expiry",
+            "missing",
+            "invalid_expiry",
+            "stale",
+            "fresh",
+            "process_baseline_unready",
+            "advancing",
+            "not_advancing",
+            "late_progress",
+            "absent_after_deadline"
+          ]
+        },
+        "samples": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/heartbeatSample"
+          }
+        },
+        "process_started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "redis_observed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "running_pods",
+        "maximum_running_pods",
+        "container_restarts",
+        "key_absent_before_start",
+        "predecessor_terminated",
+        "previous_heartbeat_gone",
+        "heartbeat_state",
+        "samples"
+      ]
+    }
+  }
+}

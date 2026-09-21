@@ -1,0 +1,19 @@
+{
+  "schema_version": "v1alpha6",
+  "runtime": { "kind": "worker" },
+  "worker": {
+    "command": ["node", "worker.js"],
+    "heartbeat": {
+      "key": "cloudforge:worker:heartbeat",
+      "timestamp_field": "at",
+      "max_age": "30s"
+    }
+  },
+  "topology": {
+    "replicas": 1,
+    "rollout": { "strategy": "recreate" }
+  },
+  "network": { "outbound": "declared_dependencies_only" },
+  "dependencies": { "redis": { "enabled": true } },
+  "environment": { "REDIS_URL": { "from": "dependency.redis.url" } }
+}

@@ -20,6 +20,9 @@ type Client struct{ runner command.Runner }
 
 // PodState contains the safe pod identity and readiness data needed by experiments.
 type PodState struct {
+	UID           string
+	Running       bool
+	StartedAt     time.Time
 	ReplicaSetUID string
 	Name          string
 	Terminating   bool
@@ -92,7 +95,7 @@ func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector s
 	}
 	states := make([]PodState, 0, len(pods.Items))
 	for _, pod := range pods.Items {
-		state := PodState{Name: pod.Name, Ready: podReady(pod), Terminating: pod.DeletionTimestamp != nil, Reason: podReason(pod)}
+		state := PodState{UID: string(pod.UID), Name: pod.Name, Ready: podReady(pod), Terminating: pod.DeletionTimestamp != nil, Reason: podReason(pod)}
 		for _, ref := range pod.OwnerReferences {
 			if ref.Kind == "ReplicaSet" && ref.Controller != nil && *ref.Controller {
 				state.ReplicaSetUID = string(ref.UID)
@@ -102,6 +105,10 @@ func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector s
 			state.Image = pod.Spec.Containers[0].Image
 		}
 		for _, status := range pod.Status.ContainerStatuses {
+			if status.Name == "application" && status.State.Running != nil {
+				state.Running = true
+				state.StartedAt = status.State.Running.StartedAt.Time
+			}
 			state.Restarts += status.RestartCount
 		}
 		states = append(states, state)

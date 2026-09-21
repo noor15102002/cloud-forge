@@ -111,8 +111,8 @@ Tracking: [#48](https://github.com/noor15102002/cloud-forge/issues/48),
 - [x] Preserve failures, provider/data fingerprints, restoration and historical reports.
 - [x] Qualify generic backend healthy/failure/network/secret-omission cases on disposable runners.
 - [x] Qualify cancellation and cleanup during new provider/preparation phases.
-- [ ] Qualify owned builder fallback after the existing Redis cancellation matrix exposed remaining resources.
-- [ ] Merge all validated changes through protected main.
+- [x] Qualify owned builder fallback after the existing Redis cancellation matrix exposed remaining resources.
+- [x] Merge all validated backend changes through protected main.
 - [ ] Run separately recorded private HTTP workload pilots with exact CLI output.
 
 See [the bounded backend contract](backend-runtime.md). Earlier milestone
@@ -127,3 +127,17 @@ orchestration and new cloud backends are not implied by this HTTP capability.
 - [ ] [Calibrate performance-regression thresholds](https://github.com/noor15102002/cloud-forge/issues/31) across repeated compatible runner environments; the current 10% timing heuristic is not statistical significance.
 - [x] [Align the bundled kubectl/Kubernetes version pair](https://github.com/noor15102002/cloud-forge/issues/35) before expanding pilots.
 - [ ] Produce reproducible release binaries and checksums.
+
+## Bounded worker heartbeat qualification
+
+Tracking: [#50](https://github.com/noor15102002/cloud-forge/issues/50),
+[milestone 11](https://github.com/noor15102002/cloud-forge/milestone/11).
+
+The implementation adds an explicit single-worker command and Redis-heartbeat
+contract, sequential nonoverlapping recovery/image replacement, restoration and
+versioned evidence. Its boundary is process liveness and heartbeat progress;
+queue jobs, business workflows and overlapping worker topologies remain outside
+this slice. See [the contract and limits](worker-runtime.md) and
+[qualification evidence with retained failures](worker-verification-evidence.md).
+Generic runtime qualification must pass before private pilot execution;
+implementation alone is not runtime evidence.

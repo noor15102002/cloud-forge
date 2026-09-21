@@ -54,9 +54,9 @@ def require_runner(environment=None, platform=None):
         raise QualificationError("runtime_requires_disposable_github_hosted_linux")
 
 
-def capture(arguments, timeout, limit=MAX_OUTPUT):
+def capture(arguments, timeout, limit=MAX_OUTPUT, environment=None):
     """Read both streams with hard memory/time bounds, never printing errors."""
-    process = subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process = subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
     streams = {process.stdout: bytearray(), process.stderr: bytearray()}
     deadline = time.monotonic() + timeout
     try:
@@ -563,7 +563,7 @@ def report_checks(report, stage):
               "application_not_started": not evidence.get("deployment-readiness", {}).get("execution", {}).get("executed", False)}
     if stage in PROVIDERS:
         checks["dependency_error"] = any(d.get("name") == stage and d.get("status") == "error" for d in report.get("dependencies", []))
-    checks["passed"] = checks["schema_version"] == "v1alpha6" and all(v is True for k, v in checks.items() if k != "schema_version")
+    checks["passed"] = checks["schema_version"] == "v1alpha7" and all(v is True for k, v in checks.items() if k != "schema_version")
     return checks
 
 
@@ -935,7 +935,7 @@ sys.exit(int(os.environ['FAKE_IMPORT_EXIT']))
                 self.assertTrue(json.loads(marker.read_text())["cloudforge_consumed_running_observation"])
 
         def test_canceled_report_cannot_fake_completed_evidence(self):
-            report = {"schema_version": "v1alpha6", "status": "error", "producer": {"version": "test", "commit": "abc123"},
+            report = {"schema_version": "v1alpha7", "status": "error", "producer": {"version": "test", "commit": "abc123"},
                       "diagnostics": [{"code": "verification_canceled"}], "evidence": [
                           {"experiment_id": "application-preparation", "status": "error", "execution": {"executed": True}},
                           {"experiment_id": "deployment-readiness", "status": "skipped", "execution": {"executed": False}}]}

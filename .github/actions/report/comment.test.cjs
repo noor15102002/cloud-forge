@@ -104,3 +104,34 @@ test('accepts v1alpha6 backend reports and upgrades an owned older comment', asy
   assert.equal(id, '10')
   assert.deepEqual(calls, [{operation: 'update', commentID: 10}])
 })
+
+test('accepts bounded v1alpha7 worker reports and rejects unknown or malformed markers', () => {
+  const workerMarker = '<!-- cloudforge-verification-report:v1alpha7 -->'
+  assert.doesNotThrow(() => validateBody(`${workerMarker}\n## Completed evidence\nWorker recovery FAIL\nHeartbeat claim: process_liveness_only`))
+  assert.throws(() => validateBody('<!-- cloudforge-verification-report:v1alpha8 -->\nFuture report'), /missing the expected/)
+  assert.throws(() => validateBody(`${workerMarker}missing newline`), /missing the expected/)
+  assert.throws(() => validateBody(`${workerMarker}\n${'a'.repeat(maximumBodyBytes)}`), /exceeds/)
+})
+
+test('upgrades each owned older report to v1alpha7 without rewriting evidence or another user\'s comment', async () => {
+  const workerMarker = '<!-- cloudforge-verification-report:v1alpha7 -->'
+  const body = `${workerMarker}\n## Completed evidence\nWorker recovery FAIL\nRestoration PASS\nWorker image replacement PASS`
+  for (let version = 1; version <= 6; version++) {
+    const calls = []
+    const github = fakeGitHub([
+      {id: 10, user: {login: 'github-actions[bot]'}, body: `<!-- cloudforge-verification-report:v1alpha${version} -->\nPrior report`},
+      {id: 11, user: {login: 'someone-else'}, body: `${workerMarker}\nOther user's report`},
+      {id: 12, user: {login: 'GITHUB-ACTIONS[BOT]'}, body: `${workerMarker}\nOwned duplicate`}
+    ], calls)
+    github.rest.issues.updateComment = async ({comment_id: commentID, body: updatedBody}) => {
+      assert.equal(updatedBody, body)
+      calls.push({operation: 'update', commentID})
+    }
+    const id = await updateComment({github, owner: 'owner', repo: 'repo', pullRequestNumber: 7, body})
+    assert.equal(id, '10')
+    assert.deepEqual(calls, [
+      {operation: 'update', commentID: 10},
+      {operation: 'delete', commentID: 12}
+    ])
+  }
+})

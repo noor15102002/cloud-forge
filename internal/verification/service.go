@@ -68,6 +68,7 @@ type Service struct {
 	now                   func() time.Time
 	newID                 func() (string, error)
 	probe                 probeFunc
+	workerPoll            time.Duration
 	poll                  time.Duration
 	trafficPoll           time.Duration
 	readinessTimeout      time.Duration
@@ -84,8 +85,9 @@ type Service struct {
 func New(runner command.Runner) *Service {
 	return &Service{
 		runner: runner, now: time.Now, newID: randomID, controlledExperiments: true, backendCapacity: checkBackendCapacity,
-		probe: httpProbe(directHTTPClient()),
-		poll:  200 * time.Millisecond, trafficPoll: 20 * time.Millisecond, readinessTimeout: readinessWindow,
+		probe:      httpProbe(directHTTPClient()),
+		workerPoll: time.Second,
+		poll:       200 * time.Millisecond, trafficPoll: 20 * time.Millisecond, readinessTimeout: readinessWindow,
 		recoveryTimeout: recoveryWindow, rolloutTimeout: recoveryWindow, baselineTimeout: recoveryWindow,
 		hpaMetricsTimeout: time.Minute, hpaScaleTimeout: time.Minute,
 		cleanupTimeout: 2 * time.Minute,
@@ -141,7 +143,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	}
 	config.Build = analysis.Build
 	out.Run.Application = analysis.Application.Name
-	out.Run.Findings = append(out.Run.Findings, analysis.Findings...)
+	out.Run.Findings = append(out.Run.Findings, verificationFindings(analysis.Findings, config)...)
 	out.Run.Diagnostics = append(out.Run.Diagnostics, analysis.Diagnostics...)
 	if !analysis.Supported {
 		out.Run.Status = model.StatusFail
@@ -352,7 +354,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	})
 
 	var prebuiltRollout *model.CommandResult
-	if backendProfile(config) && plannedCapability(out.Run.Plan, "rolling-deployment").Disposition == "supported" {
+	if (backendProfile(config) || isWorker(config)) && (plannedCapability(out.Run.Plan, "rolling-deployment").Disposition == "supported" || plannedCapability(out.Run.Plan, "worker-image-replacement").Disposition == "supported") {
 		imagesToCleanup = append(imagesToCleanup, plan.rolloutImage)
 		result := dockerClient.BuildSelected(ctx, root, plan.rolloutImage, "b", plan.config.Build)
 		prebuiltRollout = &result
@@ -382,7 +384,11 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		builderAttempted = false
 	}
 	clusterAttempted = true
-	if result := k3dClient.CreateWithMemory(ctx, plan.clusterName, nodePort, budgetFor(config).ClusterMemory); failed(result) {
+	publishedNodePort := nodePort
+	if isWorker(config) {
+		publishedNodePort = 0
+	}
+	if result := k3dClient.CreateWithMemory(ctx, plan.clusterName, publishedNodePort, budgetFor(config).ClusterMemory); failed(result) {
 		out.addCommandDiagnostic("cluster_create_failed", "k3d could not create the verification cluster.", result)
 		return out
 	}
@@ -426,6 +432,10 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	plan.dependencyFingerprints = append([]model.DependencyFingerprint{}, out.Run.Fingerprint.Dependencies...)
 	completeFingerprint(out.Run.Fingerprint)
 	if config.Preparation != nil && !s.runPreparation(ctx, kubernetesClient, plan, temporary, &out) {
+		return out
+	}
+	if isWorker(config) {
+		s.runWorkerSuite(ctx, kubernetesClient, k3dClient, plan, manifestPath, prebuiltRollout, &out)
 		return out
 	}
 	if result := kubernetesClient.Apply(ctx, plan.clusterName, manifestPath); failed(result) {
@@ -724,6 +734,9 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 	if len(application.Kubernetes.Deployments) > 1 {
 		return plan{}, errors.New("verification requires zero or one Kubernetes Deployment; select a narrower application directory")
 	}
+	if isWorker(config) {
+		return buildWorkerPlan(analysis, id, config)
+	}
 	port, portName, err := selectPort(application)
 	if config.Runtime.Port > 0 {
 		port, portName, err = config.Runtime.Port, "http", nil
@@ -911,7 +924,7 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 			Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeNodePort, Selector: labels, Ports: []corev1.ServicePort{{Name: portName, Port: port, TargetPort: intstr.FromString(portName), NodePort: nodePort, Protocol: corev1.ProtocolTCP}}},
 		},
 	}
-	if config.SchemaVersion == "v1alpha5" {
+	if advancedConfiguration(config) {
 		pod := &objects[1].(*appsv1.Deployment).Spec.Template.Spec
 		disabled := false
 		pod.AutomountServiceAccountToken = &disabled

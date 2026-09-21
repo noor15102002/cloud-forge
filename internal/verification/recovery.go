@@ -2,7 +2,6 @@ package verification
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -80,21 +79,11 @@ func (s *Service) validateBaselineFor(ctx context.Context, client *kubernetes.Cl
 			healthy := len(pods) == 1 && pods[0].Ready && !pods[0].Terminating && pods[0].Image == providerFingerprint(name).Image
 			add("dependency."+name, healthy, "The pinned provider must have one Ready, non-terminating pod satisfying its provider readiness probe; data is not reset during restoration.")
 			if healthy && name == "clamav" {
-				observed := client.ClamAVVersion(ctx, current.clusterName, namespace, pods[0].Name)
-				if failed(observed) || observed.Truncated {
+				matched, err := s.clamFingerprintMatches(ctx, client, current, pods[0].Name)
+				if err != nil {
 					return observationError()
 				}
-				version, timestamp, err := parseClamAVVersion(observed.Stdout, s.now())
-				if errors.Is(err, errUnobservedClam) {
-					return observationError()
-				}
-				matched := false
-				for _, expected := range current.dependencyFingerprints {
-					if expected.Kind == "clamav" && version == expected.DataVersion && timestamp == expected.DataTimestamp {
-						matched = true
-					}
-				}
-				add("dependency.clamav_signatures", err == nil && matched, "The active antivirus database must remain fresh and match the originally observed version/date; restoration does not change the tested dependency data.")
+				add("dependency.clamav_signatures", matched, "The active antivirus database must remain fresh and match the originally observed version/date; restoration does not change the tested dependency data.")
 			}
 
 		}

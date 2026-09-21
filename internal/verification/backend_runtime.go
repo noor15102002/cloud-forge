@@ -37,7 +37,7 @@ func applyPrivateObjects(ctx context.Context, client *kubernetes.Client, current
 }
 
 func (s *Service) startDependencies(ctx context.Context, client *kubernetes.Client, current plan, directory string, out *Outcome) bool {
-	if current.config.SchemaVersion == "v1alpha5" {
+	if advancedConfiguration(current.config) {
 		objects, err := generatedEnvironment(current.config, runIdentifier(current))
 		if err != nil {
 			out.addError("test_configuration_failed", "CloudForge could not generate isolated test configuration.", "No application deployment was attempted.")
@@ -210,4 +210,26 @@ func parseClamAVVersion(value string, now time.Time) (string, string, error) {
 		return "", "", fmt.Errorf("unaccepted signature date")
 	}
 	return match[2], timestamp.UTC().Format(time.RFC3339), nil
+}
+
+// clamFingerprintMatches shares the same immutable, fresh database requirement
+// between HTTP and worker baseline restoration.
+func (s *Service) clamFingerprintMatches(ctx context.Context, client *kubernetes.Client, current plan, pod string) (bool, error) {
+	observed := client.ClamAVVersion(ctx, current.clusterName, namespace, pod)
+	if failed(observed) || observed.Truncated {
+		return false, errUnobservedClam
+	}
+	version, timestamp, err := parseClamAVVersion(observed.Stdout, s.now())
+	if errors.Is(err, errUnobservedClam) {
+		return false, err
+	}
+	if err != nil {
+		return false, nil
+	}
+	for _, expected := range current.dependencyFingerprints {
+		if expected.Kind == "clamav" && expected.DataVersion == version && expected.DataTimestamp == timestamp {
+			return true, nil
+		}
+	}
+	return false, nil
 }

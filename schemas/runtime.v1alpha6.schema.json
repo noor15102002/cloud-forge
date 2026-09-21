@@ -1,0 +1,478 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CloudForge runtime configuration v1alpha6",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "v1alpha6"
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "kind": {
+          "enum": [
+            "http",
+            "worker"
+          ]
+        }
+      },
+      "required": []
+    },
+    "endpoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "health": {
+          "type": "string"
+        },
+        "readiness": {
+          "type": "string"
+        },
+        "load": {
+          "type": "string"
+        }
+      },
+      "required": []
+    },
+    "load": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vus": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "duration": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "vus",
+        "duration"
+      ]
+    },
+    "experiments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "control_path": {
+          "type": "string"
+        }
+      },
+      "required": []
+    },
+    "dependencies": {
+      "type": "object",
+      "maxProperties": 8,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9-]{0,31}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "startup_timeout": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "description": "Provider startup deadline; Go validation enforces dependency-specific bounds, including at most 10 minutes for ClamAV."
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      }
+    },
+    "environment": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "enum": [
+              "dependency.redis.url",
+              "dependency.postgresql.url",
+              "dependency.clamav.host",
+              "dependency.clamav.port",
+              "disabled.http_url",
+              "disabled.https_url",
+              "disabled.host",
+              "disabled.email"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "generate": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "bytes",
+              "encoding"
+            ],
+            "properties": {
+              "bytes": {
+                "type": "integer",
+                "minimum": 16,
+                "maximum": 64
+              },
+              "encoding": {
+                "enum": [
+                  "hex",
+                  "base64"
+                ]
+              }
+            }
+          }
+        },
+        "required": [],
+        "oneOf": [
+          {
+            "required": [
+              "from"
+            ]
+          },
+          {
+            "required": [
+              "value"
+            ]
+          },
+          {
+            "required": [
+              "generate"
+            ]
+          }
+        ]
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "integer",
+          "minimum": 200,
+          "maximum": 299
+        },
+        "json": {
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": {
+            "pattern": "^[a-zA-Z_][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "dockerfile",
+        "context"
+      ],
+      "properties": {
+        "app": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "dockerfile": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "context": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      }
+    },
+    "topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replicas"
+      ],
+      "properties": {
+        "replicas": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "rollout": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "strategy": {
+              "enum": [
+                "rolling_update",
+                "recreate"
+              ]
+            },
+            "max_unavailable": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "max_surge": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
+            }
+          }
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "const": "bounded_backend"
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outbound"
+      ],
+      "properties": {
+        "outbound": {
+          "const": "declared_dependencies_only"
+        }
+      }
+    },
+    "preparation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "timeout": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "heartbeat": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_./-]{1,128}$"
+            },
+            "timestamp_field": {
+              "type": "string",
+              "pattern": "^[a-zA-Z_][a-zA-Z0-9_]{0,63}$"
+            },
+            "max_age": {
+              "type": "string",
+              "pattern": "^(?:[1-9]|[1-5][0-9]|60)s$|^1m$"
+            }
+          },
+          "required": [
+            "key",
+            "timestamp_field",
+            "max_age"
+          ]
+        }
+      },
+      "required": [
+        "command",
+        "heartbeat"
+      ]
+    }
+  },
+  "required": [
+    "schema_version"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "runtime"
+        ],
+        "properties": {
+          "runtime": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "worker"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "worker",
+          "topology",
+          "dependencies",
+          "network"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "endpoints"
+              ]
+            },
+            {
+              "required": [
+                "load"
+              ]
+            },
+            {
+              "required": [
+                "readiness"
+              ]
+            },
+            {
+              "required": [
+                "experiments"
+              ]
+            }
+          ]
+        },
+        "properties": {
+          "runtime": {
+            "not": {
+              "required": [
+                "port"
+              ]
+            }
+          },
+          "topology": {
+            "required": [
+              "replicas",
+              "rollout"
+            ],
+            "properties": {
+              "replicas": {
+                "const": 1
+              },
+              "rollout": {
+                "required": [
+                  "strategy"
+                ],
+                "properties": {
+                  "strategy": {
+                    "const": "recreate"
+                  }
+                },
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "max_surge"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "max_unavailable"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "dependencies": {
+            "required": [
+              "redis"
+            ],
+            "properties": {
+              "redis": {
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "worker"
+          ]
+        },
+        "properties": {
+          "topology": {
+            "properties": {
+              "rollout": {
+                "properties": {
+                  "strategy": {
+                    "const": "rolling_update"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

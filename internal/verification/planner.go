@@ -13,6 +13,10 @@ func capabilityPlan(analysis model.AnalysisResult, current plan, config model.Ru
 		resources := current.effectiveResources
 		result.Resources = &resources
 	}
+	if isWorker(config) {
+		result.RuntimeKind = "worker"
+		result.Worker = workerContract(config)
+	}
 	result.Build = analysis.Build
 	if result.Build == nil && planErr == nil {
 		result.Build = &model.BuildSelection{App: ".", Dockerfile: "Dockerfile", Context: "."}
@@ -169,6 +173,9 @@ func capabilityPlan(analysis model.AnalysisResult, current plan, config model.Ru
 			sort.Strings(c.Prerequisites)
 		}
 	}
+	if isWorker(config) {
+		workerCapabilities(result, planErr)
+	}
 	sort.Slice(result.Capabilities, func(i, j int) bool { return result.Capabilities[i].Name < result.Capabilities[j].Name })
 	return result
 }
@@ -212,5 +219,51 @@ func appendUnexecuted(out *Outcome) {
 		case "deployment-readiness", "semantic-readiness":
 			e.Topology = out.Run.Plan.Topology
 		}
+	}
+}
+
+func workerCapabilities(result *model.VerificationPlan, planErr error) {
+	for i := range result.Capabilities {
+		capability := &result.Capabilities[i]
+		switch capability.Name {
+		case "workload":
+			if planErr == nil {
+				capability.Reason = "Run one bounded background process with explicit command and Redis heartbeat; no HTTP service or job-completion claim."
+			}
+		case "deployment-readiness", "semantic-readiness", "readiness-gating", "inflight-shutdown", "graceful-shutdown", "pod-recovery", "rolling-deployment", "load-profile", "horizontal-autoscaling":
+			capability.Disposition = "skipped"
+			capability.Reason = "Worker mode establishes only single-process heartbeat liveness; this HTTP, availability or autoscaling experiment does not apply."
+			capability.Prerequisites, capability.Limitations = nil, nil
+			capability.Mutation, capability.RecoveryStrategy = "", ""
+		}
+	}
+	for _, name := range []string{"worker-startup", "worker-recovery", "worker-image-replacement"} {
+		disposition := "supported"
+		if planErr != nil {
+			disposition = "blocked"
+		}
+		capability := model.Capability{Name: name, Disposition: disposition, Reason: "Observe one expected pod and two advancing fresh Redis heartbeats with positive bounded expiry; process liveness only.", Prerequisites: []string{"dependency-readiness", "single-worker-no-overlap", "owned-redis-heartbeat"}, Limitations: []string{"Heartbeat progress does not establish processor readiness, task completion, acknowledgements, draining or exactly-once behavior."}}
+		if name != "worker-startup" {
+			capability.Prerequisites = append(capability.Prerequisites, "worker-heartbeat-baseline")
+			capability.Mutation = "Scale to zero; wait for all prior pods and their heartbeat to disappear; start one replacement."
+			capability.RecoveryStrategy = workerRecoveryStrategy
+		}
+		if name == "worker-image-replacement" {
+			capability.Mutation = "Replace image A with image B sequentially after zero pods and key expiry; restore A afterwards. No rolling availability is measured."
+		}
+		sort.Strings(capability.Prerequisites)
+		result.Capabilities = append(result.Capabilities, capability)
+	}
+	result.Port = 0
+	result.Detected = append(result.Detected, "background-worker")
+	sort.Strings(result.Detected)
+	result.Limitations = []string{
+		"Planned support is not completed evidence.",
+		"The explicit one-replica Recreate topology is test configuration, not production topology.",
+		"There is no HTTP listener, synthetic health endpoint, Service, load test or rolling-availability claim in worker mode.",
+		"A shared heartbeat is attributed only after all predecessor pods are absent and the old key expires; process IDs are not pod identity.",
+		"Redis TIME anchors heartbeat freshness; malformed or clock-uncertain observations are execution errors.",
+		"The original process may perform background housekeeping; no synthetic business job is submitted or asserted.",
+		"Restoration validates intended process/image and heartbeat progress, not business-data equivalence.",
 	}
 }

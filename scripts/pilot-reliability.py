@@ -43,10 +43,16 @@ for origin, replicas in [("source", 1), ("source", 2), ("generated", 1)]:
         path.write_text(result.stdout)
         (args.output / f"{name}.stderr.txt").write_text(result.stderr)
         report = json.loads(result.stdout)
-        assert report["schema_version"] == "v1alpha6"
+        assert report["schema_version"] == "v1alpha7"
         assert report["producer"]["commit"] not in ["", "unknown"]
         assert all(check["status"] == "supported" for check in report["compatibility"]["checks"] if check["name"].startswith("kubectl-"))
         tools = {tool["name"]: tool["version"] for tool in report["fingerprint"]["tools"]}
+        missing_versions = [tool for tool in ("kubectl", "kubernetes") if tools.get(tool) in (None, "", "unknown")]
+        assert not missing_versions, (
+            f"Topology comparison lacks observed versions for {', '.join(missing_versions)}; "
+            f"native status={report['status']}, exit_code={result.returncode}. "
+            f"Inspect the preserved native report at {path} for the prerequisite failure."
+        )
         assert tools["kubectl"] == "1.35.5" and tools["kubernetes"] == "1.35.5+k3s1", tools
         evidence = {item["experiment_id"]: item for item in report["evidence"]}
         expected = "fail" if origin == "source" and replicas == 1 else "pass"

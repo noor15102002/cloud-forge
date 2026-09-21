@@ -2,7 +2,7 @@ package model
 
 // VerificationSchemaVersion adds isolated backend dependencies and preparation.
 // Analysis and legacy reports retain their original v1alpha1 contract.
-const VerificationSchemaVersion = "v1alpha6"
+const VerificationSchemaVersion = "v1alpha7"
 
 // DependencySpec explicitly opts a dependency into the isolated test run.
 type DependencySpec struct {
@@ -43,6 +43,8 @@ type Capability struct {
 
 // VerificationPlan exposes safe execution intent without generated credentials.
 type VerificationPlan struct {
+	RuntimeKind   string                `json:"runtime_kind,omitempty"`
+	Worker        *WorkerContract       `json:"worker,omitempty"`
 	Resources     *ResourceRequirements `json:"resources,omitempty"`
 	Build         *BuildSelection       `json:"build,omitempty"`
 	Detected      []string              `json:"detected,omitempty"`

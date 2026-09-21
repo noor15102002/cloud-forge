@@ -34,8 +34,13 @@ func (c *Client) CreateWithMemory(ctx context.Context, name string, nodePort int
 		return model.CommandResult{Command: "k3d", ExitCode: -1, FailureType: model.FailureExecution, Stderr: "Unsupported bounded cluster memory profile."}
 	}
 	portMapping := "127.0.0.1:0:" + strconv.Itoa(nodePort) + "@server:0"
+	args := []string{"cluster", "create", name, "--image", NodeImage, "--servers-memory", memory, "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false", "--runtime-label", "cloudforge.dev/owned=true@all", "--servers", "1", "--agents", "0"}
+	if nodePort > 0 {
+		args = append(args, "--port", portMapping)
+	}
+	args = append(args, "--wait", "--timeout", "90s")
 	return c.runner.Run(ctx, command.Request{
-		Name: "k3d", Args: []string{"cluster", "create", name, "--image", NodeImage, "--servers-memory", memory, "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false", "--runtime-label", "cloudforge.dev/owned=true@all", "--servers", "1", "--agents", "0", "--port", portMapping, "--wait", "--timeout", "90s"},
+		Name: "k3d", Args: args,
 		Timeout: 2 * time.Minute, OutputLimit: 128 * 1024,
 	})
 }
