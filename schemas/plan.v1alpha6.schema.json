@@ -160,6 +160,9 @@
         },
         "build": {
           "$ref": "#/$defs/buildSelection"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
         }
       },
       "required": [
@@ -377,6 +380,25 @@
           "maxLength": 512
         }
       }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu_request": {
+          "type": "string"
+        },
+        "memory_request": {
+          "type": "string"
+        },
+        "cpu_limit": {
+          "type": "string"
+        },
+        "memory_limit": {
+          "type": "string"
+        }
+      },
+      "required": []
     }
   }
 }

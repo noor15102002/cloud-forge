@@ -46,7 +46,10 @@ Each binding selects exactly one of `from`, `generate`, or a bounded harmless
 base64. Values are generated only during execution, stored in run-owned Secrets,
 and referenced from pods. No source `.env`, shell expansion, host secret import,
 or production credentials are supported. Literal credential-like settings and
-nonempty literal connection addresses are rejected.
+nonempty literal connection addresses are rejected. The restricted v5 contract
+accepts explicit `true`/`false` flag literals even when the flag name includes
+HOST; credential-like literals remain rejected. Effective per-pod resource
+requests and limits are shown in the plan before execution.
 
 `disabled.http_url`, `disabled.https_url`, `disabled.host`, and `disabled.email`
 produce reserved `.invalid` destinations for an explicitly unexercised external

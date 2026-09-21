@@ -201,3 +201,25 @@ func TestPreparationConfigurationHashChangesWithoutRevealingCommand(t *testing.T
 		t.Fatal("preparation identity missing or exposed")
 	}
 }
+
+func TestRestrictedBooleanFlagsAreNotConnectionAddresses(t *testing.T) {
+	c := backendTestConfig()
+	for _, value := range []string{"true", "false"} {
+		flag := value
+		c.Environment["TRUST_HOST"] = model.EnvironmentBinding{Value: &flag}
+		if err := validateConfiguration(c); err != nil {
+			t.Fatalf("boolean flag rejected: %v", err)
+		}
+	}
+	external := "production.example"
+	c.Environment["TRUST_HOST"] = model.EnvironmentBinding{Value: &external}
+	if validateConfiguration(c) == nil {
+		t.Fatal("external hostname accepted")
+	}
+	c = backendTestConfig()
+	flag := "true"
+	c.Environment["HOST_SECRET"] = model.EnvironmentBinding{Value: &flag}
+	if validateConfiguration(c) == nil {
+		t.Fatal("credential literal accepted")
+	}
+}

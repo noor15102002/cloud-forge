@@ -43,15 +43,16 @@ type Capability struct {
 
 // VerificationPlan exposes safe execution intent without generated credentials.
 type VerificationPlan struct {
-	Build         *BuildSelection `json:"build,omitempty"`
-	Detected      []string        `json:"detected,omitempty"`
-	Topology      *TestTopology   `json:"topology,omitempty"`
-	Limitations   []string        `json:"limitations,omitempty"`
-	SchemaVersion string          `json:"schema_version"`
-	Status        Status          `json:"status"`
-	Port          int32           `json:"port,omitempty"`
-	Capabilities  []Capability    `json:"capabilities"`
-	Budget        SafetyBudget    `json:"budget"`
+	Resources     *ResourceRequirements `json:"resources,omitempty"`
+	Build         *BuildSelection       `json:"build,omitempty"`
+	Detected      []string              `json:"detected,omitempty"`
+	Topology      *TestTopology         `json:"topology,omitempty"`
+	Limitations   []string              `json:"limitations,omitempty"`
+	SchemaVersion string                `json:"schema_version"`
+	Status        Status                `json:"status"`
+	Port          int32                 `json:"port,omitempty"`
+	Capabilities  []Capability          `json:"capabilities"`
+	Budget        SafetyBudget          `json:"budget"`
 }
 
 // DependencyEvidence keeps dependency infrastructure separate from application failures.

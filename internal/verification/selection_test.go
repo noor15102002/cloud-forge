@@ -169,6 +169,7 @@ func TestSelectedAndHistoricalReportsPreserveEvidence(t *testing.T) {
 		result := fixedService(runnerFunc(func(_ context.Context, r command.Request) model.CommandResult { return successfulCommand(r) })).Run(context.Background(), root, testOptions()).Run
 		result.SchemaVersion = version
 		result.Plan.SchemaVersion = version
+		result.Plan.Resources = nil // This field was introduced after these historical schemas.
 		if version == "v1alpha3" {
 			result.Plan.Build = nil
 		}

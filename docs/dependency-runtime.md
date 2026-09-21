@@ -4,7 +4,7 @@ CloudForge supports one containerized HTTP application and an explicitly enabled
 internal Redis dependency. It does not infer or connect to an existing service.
 A detected dependency without an explicit test declaration blocks the runtime
 plan; declare `enabled: false` only when it is unnecessary in that test mode.
-An enabled unsupported dependency is BLOCKED. No PostgreSQL, MySQL, RabbitMQ,
+An enabled unsupported dependency is BLOCKED. The original Redis slice does not include MySQL, RabbitMQ,
 Compose execution or general dependency graph is implemented.
 
 ```yaml
@@ -111,7 +111,7 @@ protocol. Dependency-loss disruption is explicitly SKIPPED in this release.
 
 ## Reports and migration
 
-Verification now emits `v1alpha4`. Selected-workload analysis uses `v1alpha2`; default analysis and doctor retain `v1alpha1`.
+Current verification emits `v1alpha6`; older verification reports remain supported. Selected-workload analysis uses `v1alpha2`; default analysis and doctor retain `v1alpha1`.
 Existing `v1alpha1` runtime config remains accepted without the new fields.
 Dependency/environment/readiness extensions require `v1alpha2` or `v1alpha3` config. All four
 verification report versions remain readable through `cloudforge report` and
@@ -138,3 +138,10 @@ Deployment, Service and namespace after failure, timeout or cancellation, along
 with owned images/builders and private configuration. `--keep-environment`
 explicitly retains a created cluster for inspection; SIGKILL/host/daemon failure
 can still require manual owned-resource recovery. No global prune is used.
+
+## Backend extension
+
+The current v1alpha5 input contract also supports fixed PostgreSQL/pgvector and
+ClamAV providers, generated values, preparation and explicit capacity/network
+controls. See [backend verification](backend-runtime.md); the Redis configuration
+examples and default profile above remain valid.

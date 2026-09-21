@@ -99,8 +99,9 @@ func validateExtensions(config model.RuntimeConfiguration) error {
 					return errors.New("credential-like environment literals are not supported")
 				}
 			}
+			booleanFlag := advanced && restricted && (*binding.Value == "true" || *binding.Value == "false")
 			for _, part := range []string{"URL", "URI", "HOST", "ENDPOINT"} {
-				if strings.Contains(name, part) && *binding.Value != "" {
+				if strings.Contains(name, part) && *binding.Value != "" && !booleanFlag {
 					return errors.New("connection settings must use generated dependency bindings or an empty disabled value")
 				}
 			}

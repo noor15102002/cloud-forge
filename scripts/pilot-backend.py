@@ -145,10 +145,43 @@ def qualify_network(kube, run_id, output):
         if not alive:
             raise RuntimeError("network deny observations lost their live positive control")
     finally:
-        kube("delete", "pod", *names.values(), "--ignore-not-found", "--wait=true", "--timeout=10s", timeout=13)
-        kube("delete", "networkpolicy", control_policy, "--ignore-not-found", "--wait=true", "--timeout=10s", timeout=13)
-        observations["cleanup"] = True
+        # A denied connection only means isolation while a positive control is
+        # alive. Retain bounded container state before deleting the canary so a
+        # helper crash is distinguishable from CNI denial; never fetch pod logs.
+        pending_exception = sys.exc_info()[0] is not None
+        try:
+            pod = json.loads(kube("get", "pod", names["canary"], "--output", "json", timeout=5))
+            status = pod.get("status", {})
+            containers = []
+            for container in status.get("containerStatuses", []):
+                item = {"name": container["name"], "ready": container.get("ready", False),
+                        "restart_count": container.get("restartCount", 0)}
+                for field, target in (("state", "state"), ("lastState", "previous_state")):
+                    state = container.get(field, {})
+                    for kind in ("running", "waiting", "terminated"):
+                        if kind in state:
+                            item[target] = {"kind": kind}
+                            if kind == "terminated":
+                                item[target].update(exit_code=state[kind].get("exitCode"), signal=state[kind].get("signal"))
+                            break
+                containers.append(item)
+            observations["canary_state_before_cleanup"] = {"observed": True, "phase": status.get("phase"),
+                                                           "containers": containers, "logs_collected": False}
+        except Exception as error:
+            observations["canary_state_before_cleanup"] = {"observed": False, "error_type": type(error).__name__,
+                                                           "logs_collected": False}
+        cleanup_errors = []
+        for resource, targets in (("pod", list(names.values())), ("networkpolicy", [control_policy])):
+            try:
+                kube("delete", resource, *targets, "--ignore-not-found", "--wait=true", "--timeout=10s", timeout=13)
+            except Exception as error:
+                cleanup_errors.append({"resource": resource, "error_type": type(error).__name__})
+        observations["cleanup"] = not cleanup_errors
+        if cleanup_errors:
+            observations["cleanup_errors"] = cleanup_errors
         write_json(output / "network-enforcement.json", observations)
+        if cleanup_errors and not pending_exception:
+            raise RuntimeError("network qualification probe cleanup failed")
 
 
 def inspect(binary, fixture, output):

@@ -897,6 +897,9 @@
         },
         "build": {
           "$ref": "#/$defs/buildSelection"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
         }
       },
       "required": [

@@ -9,6 +9,10 @@ import (
 
 func capabilityPlan(analysis model.AnalysisResult, current plan, config model.RuntimeConfiguration, planErr error) *model.VerificationPlan {
 	result := &model.VerificationPlan{SchemaVersion: model.VerificationSchemaVersion, Status: model.StatusPass, Port: current.config.Runtime.Port, Budget: budgetFor(config), Capabilities: []model.Capability{}}
+	if planErr == nil {
+		resources := current.effectiveResources
+		result.Resources = &resources
+	}
 	result.Build = analysis.Build
 	if result.Build == nil && planErr == nil {
 		result.Build = &model.BuildSelection{App: ".", Dockerfile: "Dockerfile", Context: "."}

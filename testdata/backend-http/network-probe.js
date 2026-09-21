@@ -4,7 +4,18 @@
 const net = require("node:net");
 const mode = process.argv[2];
 if (mode === "listen") {
-  net.createServer(socket => socket.end("canary\n")).listen(8081, "0.0.0.0");
+  const server = net.createServer(socket => {
+    // TCP readiness and connectivity probes may reset immediately after connect.
+    // A client reset must not kill the positive control for later deny checks.
+    socket.on("error", () => socket.destroy());
+    socket.end("canary\n");
+  });
+  const host = process.argv[3] ?? "0.0.0.0";
+  const port = Number(process.argv[4] ?? 8081);
+  server.listen(port, host, () => {
+    const address = server.address();
+    process.stdout.write(JSON.stringify({ listening: true, address: address.address, port: address.port }) + "\n");
+  });
 } else if (mode === "idle") {
   setInterval(() => {}, 60_000);
 } else if (mode === "tcp") {

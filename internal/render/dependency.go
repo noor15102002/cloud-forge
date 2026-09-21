@@ -18,6 +18,11 @@ func PlanText(w io.Writer, plan model.VerificationPlan) error {
 		return err
 	}
 
+	if r := plan.Resources; r != nil {
+		if _, err := fmt.Fprintf(w, "  Effective per-pod resources: requests %s CPU / %s memory; limits %s CPU / %s memory.\n", terminalText(r.CPURequest), terminalText(r.MemoryRequest), terminalText(r.CPULimit), terminalText(r.MemoryLimit)); err != nil {
+			return err
+		}
+	}
 	if plan.Topology != nil {
 		if _, err := fmt.Fprintf(w, "  Planned topology: %s\n", terminalText(topologyDescription(plan.Topology))); err != nil {
 			return err
@@ -83,6 +88,11 @@ func PlanMarkdown(w io.Writer, plan model.VerificationPlan) error {
 	}
 	if plan.Build != nil {
 		if _, err := fmt.Fprintf(w, "\n**Build selection (repository-relative):** app `%s`, Dockerfile `%s`, context `%s`.\n", markdownText(plan.Build.App), markdownText(plan.Build.Dockerfile), markdownText(plan.Build.Context)); err != nil {
+			return err
+		}
+	}
+	if r := plan.Resources; r != nil {
+		if _, err := fmt.Fprintf(w, "\n**Effective per-pod resources:** requests %s CPU / %s memory; limits %s CPU / %s memory.\n", markdownText(r.CPURequest), markdownText(r.MemoryRequest), markdownText(r.CPULimit), markdownText(r.MemoryLimit)); err != nil {
 			return err
 		}
 	}
