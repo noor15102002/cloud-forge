@@ -884,6 +884,12 @@ func successRunner() command.Runner {
 
 func successfulCommand(request command.Request) model.CommandResult {
 	result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+	if request.Name == "docker" && len(request.Args) > 2 && request.Args[1] == "inspect" &&
+		(request.Args[0] == "container" || request.Args[0] == "volume") &&
+		strings.HasPrefix(request.Args[len(request.Args)-1], "buildx_buildkit_cloudforge-") {
+		result.ExitCode, result.FailureType = 1, model.FailureExit
+		result.Stderr = "Error: No such object: " + request.Args[len(request.Args)-1]
+	}
 	if request.Name == "kubectl" && containsArgument(request.Args, "/readyz") {
 		result.Stdout = "ok"
 	}

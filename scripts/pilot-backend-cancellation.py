@@ -29,7 +29,7 @@ from unittest.mock import patch
 HOLD_SECONDS = 90
 OBSERVATION_SECONDS = 600
 VERIFY_SECONDS = 2400
-CLEANUP_SECONDS = 240
+CLEANUP_SECONDS = 720
 MAX_OUTPUT = 256 * 1024
 IMPORT_STREAM_LIMIT = 64 * 1024
 STAGES = ("clamav", "postgresql", "preparation")
@@ -110,21 +110,22 @@ def validate_public_import(arguments, fixture, stage):
             raise QualificationError("import_observer_public_fixture_changed")
 
 
-def tee_import(arguments, directory, stage, stdout, stderr):
+def tee_command(arguments, directory, stage, stdout, stderr, *,
+                scope="bundled_public_backend_fixture_only", tool="k3d", name="k3d-import", native_timeout_seconds=180):
     """Forward every byte while retaining bounded original stream tails.
 
-    CloudForge owns the existing three-minute import timeout and process group.
+    CloudForge owns the unchanged native command timeout and process group.
     No observer timeout, retry, or auxiliary Docker command changes that result.
     Atomic incremental snapshots retain partial evidence after SIGKILL; only a
     completed child wait records an exit code. Streams may contain ANSI bytes.
     """
     started = time.monotonic()
-    record = {"scope": "bundled_public_backend_fixture_only", "stage": stage, "tool": "k3d",
-              "arguments": arguments[1:], "exit_code": None, "completion_observed": False,
+    record = {"scope": scope, "stage": stage, "tool": tool,
+              "arguments": arguments[1:], "exit_code": None, "completion_observed": False, "actual_command_executed": None,
               "retention": "last_bytes_of_each_original_stream", "stream_limit_bytes": IMPORT_STREAM_LIMIT,
-              "deadline_owner": "cloudforge_command_runner", "native_timeout_seconds": 180,
+              "deadline_owner": "cloudforge_command_runner", "native_timeout_seconds": native_timeout_seconds,
               "retry_performed": False, "received_signal": None, "streams": {}}
-    prefix = "k3d-import-" + str(time.time_ns())
+    prefix = name + "-" + str(time.time_ns())
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     totals = {"stdout": 0, "stderr": 0}
     write_failed = False
@@ -148,11 +149,13 @@ def tee_import(arguments, directory, stage, stdout, stderr):
             pending.replace(path)
         except OSError:
             # Missing/incomplete auxiliary artifacts cannot become a different
-            # exit code or failure classification for the actual import.
+            # exit code or failure classification for the actual command.
             write_failed = True
 
     persist()
     process = subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    record["actual_command_executed"] = True
+    persist()
     destinations = {process.stdout: ("stdout", stdout), process.stderr: ("stderr", stderr)}
     original_handlers = {}
 
@@ -206,7 +209,7 @@ def k3d_wrapper(arguments):
     stage = os.environ[ENV_PREFIX + "STAGE"]
     fixture = Path(os.environ[ENV_PREFIX + "FIXTURE"])
     validate_public_import(arguments, fixture, stage)
-    code = tee_import([real, *arguments], Path(os.environ[ENV_PREFIX + "IMPORT_OUTPUT"]), stage,
+    code = tee_command([real, *arguments], Path(os.environ[ENV_PREFIX + "IMPORT_OUTPUT"]), stage,
                       sys.stdout.buffer, sys.stderr.buffer)
     if code < 0:
         received = -code

@@ -241,7 +241,7 @@ def run_case(binary, fixture, base_config, name, output, repository):
             except (subprocess.TimeoutExpired, KeyboardInterrupt):
                 process.send_signal(signal.SIGINT)
                 try:
-                    process.wait(timeout=180)
+                    process.wait(timeout=720)
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
