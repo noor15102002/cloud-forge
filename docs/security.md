@@ -110,3 +110,11 @@ revalidated before each build. Docker still controls build-context processing
 and `.dockerignore`; CloudForge does not sandbox Dockerfile instructions, freeze
 a concurrently modified checkout, or sanitize a deliberately broad context.
 Use clean reviewed checkouts and disposable runners for unfamiliar code.
+
+## Backend test isolation
+
+Backend verification generates disposable credentials and keeps them in run-owned
+Kubernetes Secrets. It collects no application or preparation logs. Egress
+policies restrict supported backend runs, subject to Kubernetes node/host traffic
+exceptions; they are not an arbitrary-code sandbox. See
+[backend boundaries](backend-runtime.md) for precise guarantees and exclusions.

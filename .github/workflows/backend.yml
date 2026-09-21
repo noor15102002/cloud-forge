@@ -1,0 +1,50 @@
+name: Bounded backend runtime
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - 'README.md'
+      - 'CHANGELOG.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [healthy, preparation-failure, missing-key, missing-schema]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.1
+      - name: Reserve disposable runner storage
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo rm -rf -- /usr/share/dotnet /usr/local/lib/android /opt/ghc
+      - name: Install pinned runtime tools
+        run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
+      - name: Qualify the isolated backend contract
+        env:
+          BACKEND_CASE: ${{ matrix.case }}
+        run: |
+          go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
+          python3 scripts/pilot-backend.py /tmp/cloudforge "$RUNNER_TEMP/backend-evidence" --run --case "$BACKEND_CASE"
+      - name: Preserve original CLI evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: backend-${{ matrix.case }}
+          path: ${{ runner.temp }}/backend-evidence
+      - name: Check owned resource cleanup
+        if: always()
+        run: bash scripts/pilot-cleanup-check.sh

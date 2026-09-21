@@ -10,6 +10,7 @@ type ToolVersion struct {
 type RunFingerprint struct {
 	Dependencies      []DependencyFingerprint `json:"dependencies,omitempty"`
 	EnvironmentHash   string                  `json:"environment_hash,omitempty"`
+	PreparationHash   string                  `json:"preparation_hash,omitempty"`
 	SourceCommit      string                  `json:"source_commit,omitempty"`
 	SourceDirty       bool                    `json:"source_dirty"`
 	ImageID           string                  `json:"image_id,omitempty"`

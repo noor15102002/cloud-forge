@@ -131,3 +131,9 @@ Runtime configuration `v1alpha4` adds bounded replica and rollout overrides.
 They are labeled as explicit test configuration, preserving supported source
 probes and per-pod resources. See [controlled topology comparison](controlled-topology.md)
 for defaults, safety limits, HPA exclusions and interpretation of paired evidence.
+
+## Backend configuration
+
+The strict `v1alpha5` contract adds fixed backend providers, generated test values,
+one-time preparation, and a bounded backend profile. See [isolated backend
+verification](backend-runtime.md) for its limits and network boundary.

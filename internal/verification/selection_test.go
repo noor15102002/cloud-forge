@@ -211,7 +211,7 @@ func TestPublishedSelectionConfigurationAndPlanSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, data := range map[string][]byte{"runtime.v1alpha3": config, "plan.v1alpha5": planned} {
+	for name, data := range map[string][]byte{"runtime.v1alpha3": config, "plan.v1alpha6": planned} {
 		var document any
 		if err := json.Unmarshal(data, &document); err != nil {
 			t.Fatal(err)

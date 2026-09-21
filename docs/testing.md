@@ -122,3 +122,10 @@ It requires successful A/B rollout and restoration, records a real build failure
 with an app-only context, interrupts the custom Dockerfile build, checks source
 hashes, and proves cleanup preserves a pre-existing container/network/volume and
 kubeconfig. Reports and assertions are uploaded as separate artifacts.
+
+## Backend qualification
+
+The Bounded backend runtime workflow exercises `testdata/backend-http` with real
+PostgreSQL/pgvector, Redis, ClamAV, preparation, failure cases, live CNI controls,
+secret omission and cleanup. Its original CLI output is retained even on failure.
+See [the backend contract](backend-runtime.md).

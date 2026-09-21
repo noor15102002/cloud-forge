@@ -99,7 +99,7 @@ func TestSemanticReadinessContract(t *testing.T) {
 }
 
 func TestDependencyPlanBlocksUnknownBeforeCommands(t *testing.T) {
-	root := dependencyTestRoot(t, "dependencies: {postgresql: {enabled: true}}")
+	root := dependencyTestRoot(t, "dependencies: {rabbitmq: {enabled: true}}")
 	called := false
 	service := fixedService(runnerFunc(func(_ context.Context, r command.Request) model.CommandResult {
 		called = true

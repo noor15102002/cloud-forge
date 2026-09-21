@@ -3,6 +3,9 @@ package model
 // RuntimeConfiguration is the explicit, bounded verification contract.
 type RuntimeConfiguration struct {
 	Build         *BuildSelection               `json:"build,omitempty"`
+	Safety        *SafetySettings               `json:"safety,omitempty"`
+	Network       *NetworkSettings              `json:"network,omitempty"`
+	Preparation   *PreparationSettings          `json:"preparation,omitempty"`
 	Topology      *TopologySettings             `json:"topology,omitempty"`
 	Dependencies  map[string]DependencySpec     `json:"dependencies,omitempty"`
 	Environment   map[string]EnvironmentBinding `json:"environment,omitempty"`
@@ -12,6 +15,23 @@ type RuntimeConfiguration struct {
 	Endpoints     EndpointSettings              `json:"endpoints"`
 	Load          LoadSettings                  `json:"load"`
 	Experiments   ExperimentSettings            `json:"experiments"`
+}
+
+// SafetySettings selects a qualified fixed budget, never arbitrary host limits.
+type SafetySettings struct {
+	Profile string `json:"profile"`
+}
+
+// NetworkSettings restricts application and preparation traffic to declared providers.
+type NetworkSettings struct {
+	Outbound string `json:"outbound"`
+}
+
+// PreparationSettings runs one bounded command in image A before application startup.
+// The command is omitted from reports; its hash remains part of compatibility.
+type PreparationSettings struct {
+	Command []string `json:"command"`
+	Timeout string   `json:"timeout,omitempty"`
 }
 
 // TopologySettings replaces only the replica count and rollout policy for a
