@@ -123,6 +123,8 @@ and repeatable plans without Docker. `--run` is restricted to disposable
 GitHub-hosted runners and exercises the generic healthy/failure cases. The
 backend workflow retains original CLI stdout, stderr, exit codes, strict reports,
 secret-omission checks, policy readbacks, CNI observations, and cleanup results.
+Observed outcomes and retained failed attempts are recorded in
+[backend qualification evidence](backend-verification-evidence.md).
 
 A healthy dependency setup does not force application availability to PASS.
 Original failure evidence remains present after successful restoration, and

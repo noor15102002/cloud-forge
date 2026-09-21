@@ -241,6 +241,10 @@ def kubectl_wrapper(arguments):
         raise QualificationError("invalid_stage")
     if stage in PROVIDERS and "apply" in arguments and "--filename" in arguments:
         path = Path(arguments[arguments.index("--filename") + 1])
+        if stage == "postgresql" and path.name in ("workload.yaml", "preparation.yaml"):
+            # A missed interruption must fail qualification before an app whose
+            # unrelated provider was intentionally omitted could be launched.
+            raise QualificationError("postgresql_interruption_missed_before_application")
         if path.name == "dependency-" + stage + ".yaml":
             context_identity(arguments)
             if not path.parent.name.startswith("cloudforge-verify-") or path.is_symlink():
@@ -283,6 +287,18 @@ def hashes(directory):
 def fixture_copy(source, target, stage):
     shutil.copytree(source, target)
     hold = {"seconds": HOLD_SECONDS, "scope": "public_fixture_copy_only"}
+    if stage == "postgresql":
+        # This interruption must reach PostgreSQL even when an unrelated
+        # antivirus signature service cannot start. The complete provider set
+        # remains covered by the healthy/failure/preparation qualification.
+        # No application startup is claimed with this narrowed configuration.
+        config = json.loads((target / "cloudforge.yaml").read_text())
+        del config["dependencies"]["clamav"]
+        del config["environment"]["CLAMAV_HOST"]
+        del config["environment"]["CLAMAV_PORT"]
+        write_json(target / "cloudforge.yaml", config)
+        hold["unrelated_provider_omitted"] = "clamav"
+        hold["application_execution_permitted"] = False
     if stage == "preparation":
         script = target / "prepare.js"
         text = script.read_text()
@@ -557,6 +573,26 @@ def self_test():
                 delay_probes("startupProbe: {}")
             with self.assertRaises(QualificationError):
                 delay_probes(delay_probes(fixture))
+
+        def test_postgresql_interruption_has_no_antivirus_prerequisite(self):
+            source = Path(__file__).resolve().parents[1] / "testdata/backend-http"
+            before = hashes(source)
+            with tempfile.TemporaryDirectory() as temporary:
+                target = Path(temporary) / "fixture"
+                hold = fixture_copy(source, target, "postgresql")
+                config = json.loads((target / "cloudforge.yaml").read_text())
+                self.assertNotIn("clamav", config["dependencies"])
+                self.assertNotIn("CLAMAV_HOST", config["environment"])
+                self.assertNotIn("CLAMAV_PORT", config["environment"])
+                self.assertTrue(config["dependencies"]["postgresql"]["enabled"])
+                self.assertEqual(config["environment"]["DATABASE_URL"]["from"], "dependency.postgresql.url")
+                self.assertFalse(hold["application_execution_permitted"])
+                self.assertEqual(hashes(source), before)
+            environment = {ENV_PREFIX + "STAGE": "postgresql", ENV_PREFIX + "REAL_KUBECTL": "/must-not-run"}
+            with patch.dict(os.environ, environment), patch(__name__ + ".require_runner"):
+                for name in ("workload.yaml", "preparation.yaml"):
+                    with self.assertRaisesRegex(QualificationError, "interruption_missed_before_application"):
+                        kubectl_wrapper(["apply", "--filename", "/tmp/cloudforge-verify-test/" + name])
 
         def test_bounded_capture(self):
             result = capture([sys.executable, "-c", "import sys;print('ok');print('err',file=sys.stderr)"], 5)

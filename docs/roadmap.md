@@ -109,7 +109,7 @@ Tracking: [#48](https://github.com/noor15102002/cloud-forge/issues/48),
 - [x] Add pinned PostgreSQL/pgvector and ClamAV providers with observed readiness.
 - [x] Add bounded image-A preparation, capacity preflight and runtime egress restrictions.
 - [x] Preserve failures, provider/data fingerprints, restoration and historical reports.
-- [ ] Qualify generic backend healthy/failure/network/secret-omission cases on disposable runners.
+- [x] Qualify generic backend healthy/failure/network/secret-omission cases on disposable runners.
 - [ ] Qualify cancellation and cleanup during new provider/preparation phases.
 - [ ] Merge all validated changes through protected main.
 - [ ] Run separately recorded private HTTP workload pilots with exact CLI output.
