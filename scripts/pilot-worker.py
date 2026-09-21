@@ -30,7 +30,7 @@ WORKER_IDS = ("worker-startup", "worker-recovery", "worker-image-replacement")
 HTTP_IDS = ("deployment-readiness", "semantic-readiness", "graceful-shutdown", "pod-recovery", "rolling-deployment", "load-profile", "horizontal-autoscaling", "readiness-gating", "inflight-shutdown")
 ENV_PREFIX = "CF_WORKER_QUALIFY_"
 VERIFY_SECONDS = 2400
-CLEANUP_SECONDS = 240
+CLEANUP_SECONDS = 720
 
 
 def save(path, value):

@@ -20,7 +20,7 @@ cleanup. Qualification supplies direct command arguments for intentional faults:
 | `fail-second-start` | A bounded Redis startup counter suppresses only the second process. Restoration and image B publish again, proving a valid failure remains visible after continuation. |
 
 The ownership marker is a separate fixture-only Redis key with a one-hour TTL,
-longer than the qualification's 40-minute verification and four-minute cleanup
+longer than the qualification's 40-minute verification and 12-minute cleanup observation
 bounds. The application heartbeat's TTL remains three seconds.
 CloudForge must not treat it, or the predecessor's residual heartbeat, as proof
 that a replacement is healthy. No key deletion or repository-specific behavior

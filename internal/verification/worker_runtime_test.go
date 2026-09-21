@@ -37,7 +37,7 @@ environment:
 func workerFixture(t *testing.T) (string, plan) {
 	t.Helper()
 	root := t.TempDir()
-	for name, value := range map[string]string{"cloudforge.yaml": workerTestConfiguration, "package.json": `{"name":"worker-reference","dependencies":{"redis":"5.0.0"}}`, "Dockerfile": "FROM node:24-alpine\nUSER node\nEXPOSE 8080\n"} {
+	for name, value := range map[string]string{"cloudforge.yaml": workerTestConfiguration, "package.json": `{"name":"worker-reference","dependencies":{"redis":"5.0.0"}}`, "Dockerfile": "FROM node:24-alpine\nUSER node\n"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(value), 0600); err != nil {
 			t.Fatal(err)
 		}

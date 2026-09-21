@@ -143,7 +143,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	}
 	config.Build = analysis.Build
 	out.Run.Application = analysis.Application.Name
-	out.Run.Findings = append(out.Run.Findings, analysis.Findings...)
+	out.Run.Findings = append(out.Run.Findings, verificationFindings(analysis.Findings, config)...)
 	out.Run.Diagnostics = append(out.Run.Diagnostics, analysis.Diagnostics...)
 	if !analysis.Supported {
 		out.Run.Status = model.StatusFail
