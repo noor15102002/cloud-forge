@@ -5,6 +5,7 @@ const os = require("node:os");
 
 const HEARTBEAT_KEY = "cloudforge:worker:heartbeat";
 const OWNER_KEY = "cloudforge:fixture:first-worker";
+const CONTROL_TTL_SECONDS = 3600;
 const MODES = new Set(["healthy", "never", "stale", "frozen", "future", "malformed", "exit", "first-pod-only", "fail-second-start"]);
 
 function encodeCommand(values) {
@@ -69,7 +70,7 @@ async function main() {
   let ordinal = 1;
   if (mode === "fail-second-start") {
     ordinal = await command(endpoint, ["INCR", OWNER_KEY]);
-    await command(endpoint, ["EXPIRE", OWNER_KEY, "300"]);
+    await command(endpoint, ["EXPIRE", OWNER_KEY, CONTROL_TTL_SECONDS]);
   }
   let ownsFirstPod;
   while (!stopping) {
@@ -77,7 +78,7 @@ async function main() {
       if (mode === "first-pod-only" && ownsFirstPod === undefined) {
         // A replacement remains alive but never publishes. The old heartbeat
         // may persist for its remaining TTL, so it must not prove new startup.
-        ownsFirstPod = await command(endpoint, ["SET", OWNER_KEY, os.hostname(), "NX", "EX", "300"]) === "OK";
+        ownsFirstPod = await command(endpoint, ["SET", OWNER_KEY, os.hostname(), "NX", "EX", CONTROL_TTL_SECONDS]) === "OK";
       }
       if (mode !== "never" && (mode !== "first-pod-only" || ownsFirstPod) && (mode !== "fail-second-start" || ordinal !== 2)) {
         const payload = mode === "malformed" ? "{not-valid-json" : JSON.stringify({ at: timestampFor(mode, Date.now(), firstTimestamp),
