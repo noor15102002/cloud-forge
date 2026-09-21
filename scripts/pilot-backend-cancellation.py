@@ -17,6 +17,7 @@ import re
 import selectors
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,7 @@ OBSERVATION_SECONDS = 600
 VERIFY_SECONDS = 2400
 CLEANUP_SECONDS = 240
 MAX_OUTPUT = 256 * 1024
+IMPORT_STREAM_LIMIT = 64 * 1024
 STAGES = ("clamav", "postgresql", "preparation")
 PROVIDERS = {"clamav": "cf-dependency-clamav", "postgresql": "cf-dependency-postgres"}
 ENV_PREFIX = "CF_BACKEND_CANCEL_"
@@ -81,6 +83,137 @@ def capture(arguments, timeout, limit=MAX_OUTPUT, environment=None):
             process.wait(timeout=5)
         for stream in streams:
             stream.close()
+
+
+def validate_public_import(arguments, fixture, stage):
+    """Allow recording only the exact bundled public fixture and import tuple."""
+    require_runner()
+    if stage not in STAGES or len(arguments) != 7 or arguments[:2] != ["image", "import"] or arguments[3] != "--cluster" or arguments[5:] != ["--mode", "direct"]:
+        raise QualificationError("import_observer_requires_known_public_import")
+    cluster, image = arguments[4], arguments[2]
+    match = re.fullmatch(r"cloudforge-([a-z0-9][a-z0-9-]{0,80})", cluster)
+    if not match or image not in ("cloudforge/backend-http:" + match.group(1) + "-a", "cloudforge/backend-http:" + match.group(1) + "-b"):
+        raise QualificationError("import_observer_refused_unrelated_image")
+    if (fixture.is_symlink() or fixture.name != "fixture"
+            or not fixture.parent.name.startswith("cf-backend-cancellation-")
+            or fixture.resolve() != fixture):
+        raise QualificationError("import_observer_refused_unrelated_source")
+    for path in fixture.rglob("*"):
+        mode = path.lstat().st_mode
+        if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+            raise QualificationError("import_observer_refused_nonregular_source")
+    source = Path(__file__).resolve().parent.parent / "testdata/backend-http"
+    with tempfile.TemporaryDirectory(prefix="cf-public-import-proof-") as temporary:
+        expected = Path(temporary) / "fixture"
+        fixture_copy(source, expected, stage)
+        if hashes(fixture) != hashes(expected):
+            raise QualificationError("import_observer_public_fixture_changed")
+
+
+def tee_import(arguments, directory, stage, stdout, stderr):
+    """Forward every byte while retaining bounded original stream tails.
+
+    CloudForge owns the existing three-minute import timeout and process group.
+    No observer timeout, retry, or auxiliary Docker command changes that result.
+    Atomic incremental snapshots retain partial evidence after SIGKILL; only a
+    completed child wait records an exit code. Streams may contain ANSI bytes.
+    """
+    started = time.monotonic()
+    record = {"scope": "bundled_public_backend_fixture_only", "stage": stage, "tool": "k3d",
+              "arguments": arguments[1:], "exit_code": None, "completion_observed": False,
+              "retention": "last_bytes_of_each_original_stream", "stream_limit_bytes": IMPORT_STREAM_LIMIT,
+              "deadline_owner": "cloudforge_command_runner", "native_timeout_seconds": 180,
+              "retry_performed": False, "received_signal": None, "streams": {}}
+    prefix = "k3d-import-" + str(time.time_ns())
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    totals = {"stdout": 0, "stderr": 0}
+    write_failed = False
+
+    def persist():
+        nonlocal write_failed
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            for name, data in buffers.items():
+                path = directory / (prefix + "." + name + ".tail.txt")
+                pending = path.with_suffix(path.suffix + ".pending")
+                pending.write_bytes(data)
+                pending.replace(path)
+                record["streams"][name] = {"observed_bytes": totals[name], "retained_bytes": len(data),
+                                            "truncated": totals[name] > len(data), "file": path.name}
+            record["duration_ms"] = round((time.monotonic() - started) * 1000)
+            record["artifact_write_error"] = write_failed
+            path = directory / (prefix + ".json")
+            pending = path.with_suffix(".pending")
+            write_json(pending, record)
+            pending.replace(path)
+        except OSError:
+            # Missing/incomplete auxiliary artifacts cannot become a different
+            # exit code or failure classification for the actual import.
+            write_failed = True
+
+    persist()
+    process = subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    destinations = {process.stdout: ("stdout", stdout), process.stderr: ("stderr", stderr)}
+    original_handlers = {}
+
+    def relay(received, _frame):
+        record["received_signal"] = received
+        try:
+            process.send_signal(received)
+        except ProcessLookupError:
+            pass
+
+    try:
+        for received in (signal.SIGINT, signal.SIGTERM):
+            original_handlers[received] = signal.signal(received, relay)
+        with selectors.DefaultSelector() as selected:
+            for stream in destinations:
+                selected.register(stream, selectors.EVENT_READ)
+            while selected.get_map():
+                for key, _ in selected.select(0.1):
+                    chunk = os.read(key.fileobj.fileno(), 8192)
+                    if not chunk:
+                        selected.unregister(key.fileobj)
+                        continue
+                    name, destination = destinations[key.fileobj]
+                    destination.write(chunk)
+                    destination.flush()
+                    totals[name] += len(chunk)
+                    buffers[name].extend(chunk)
+                    if len(buffers[name]) > IMPORT_STREAM_LIMIT:
+                        del buffers[name][:-IMPORT_STREAM_LIMIT]
+                    persist()
+        record["exit_code"] = process.wait()
+        record["completion_observed"] = True
+        persist()
+        return process.returncode
+    finally:
+        for received, handler in original_handlers.items():
+            signal.signal(received, handler)
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        for stream in destinations:
+            stream.close()
+
+
+def k3d_wrapper(arguments):
+    require_runner()
+    real = os.environ[ENV_PREFIX + "REAL_K3D"]
+    if arguments[:2] != ["image", "import"]:
+        # In particular, never capture kubeconfig retrieval or cluster commands.
+        os.execv(real, [real, *arguments])
+    stage = os.environ[ENV_PREFIX + "STAGE"]
+    fixture = Path(os.environ[ENV_PREFIX + "FIXTURE"])
+    validate_public_import(arguments, fixture, stage)
+    code = tee_import([real, *arguments], Path(os.environ[ENV_PREFIX + "IMPORT_OUTPUT"]), stage,
+                      sys.stdout.buffer, sys.stderr.buffer)
+    if code < 0:
+        received = -code
+        if received not in (signal.SIGKILL, signal.SIGSTOP):
+            signal.signal(received, signal.SIG_DFL)
+        os.kill(os.getpid(), received)
+    return code
 
 
 def context_identity(arguments):
@@ -241,6 +374,10 @@ def kubectl_wrapper(arguments):
         raise QualificationError("invalid_stage")
     if stage in PROVIDERS and "apply" in arguments and "--filename" in arguments:
         path = Path(arguments[arguments.index("--filename") + 1])
+        if stage == "postgresql" and path.name in ("workload.yaml", "preparation.yaml"):
+            # A missed interruption must fail qualification before an app whose
+            # unrelated provider was intentionally omitted could be launched.
+            raise QualificationError("postgresql_interruption_missed_before_application")
         if path.name == "dependency-" + stage + ".yaml":
             context_identity(arguments)
             if not path.parent.name.startswith("cloudforge-verify-") or path.is_symlink():
@@ -283,6 +420,18 @@ def hashes(directory):
 def fixture_copy(source, target, stage):
     shutil.copytree(source, target)
     hold = {"seconds": HOLD_SECONDS, "scope": "public_fixture_copy_only"}
+    if stage == "postgresql":
+        # This interruption must reach PostgreSQL even when an unrelated
+        # antivirus signature service cannot start. The complete provider set
+        # remains covered by the healthy/failure/preparation qualification.
+        # No application startup is claimed with this narrowed configuration.
+        config = json.loads((target / "cloudforge.yaml").read_text())
+        del config["dependencies"]["clamav"]
+        del config["environment"]["CLAMAV_HOST"]
+        del config["environment"]["CLAMAV_PORT"]
+        write_json(target / "cloudforge.yaml", config)
+        hold["unrelated_provider_omitted"] = "clamav"
+        hold["application_execution_permitted"] = False
     if stage == "preparation":
         script = target / "prepare.js"
         text = script.read_text()
@@ -419,6 +568,9 @@ def runtime(binary, fixture, output, repository, private, stage, qualification):
     real = shutil.which("kubectl")
     if not real:
         raise QualificationError("kubectl_missing")
+    real_k3d = shutil.which("k3d")
+    if not real_k3d:
+        raise QualificationError("k3d_missing")
     image_match = re.search(r"(?m)^FROM (\S+@sha256:[a-f0-9]{64})$", (fixture / "Dockerfile").read_text())
     if not image_match:
         raise QualificationError("sentinel_requires_pinned_public_fixture_image")
@@ -427,10 +579,16 @@ def runtime(binary, fixture, output, repository, private, stage, qualification):
     wrapper = wrapper_dir / "kubectl"
     wrapper.write_text("#!/usr/bin/env python3\nimport os,sys\nos.execv(sys.executable,[sys.executable,os.environ['CF_BACKEND_CANCEL_HARNESS'],'__kubectl',*sys.argv[1:]])\n")
     wrapper.chmod(0o700)
+    import_wrapper = wrapper_dir / "k3d"
+    import_wrapper.write_text("#!/usr/bin/env python3\nimport os,sys\nos.execv(sys.executable,[sys.executable,os.environ['CF_BACKEND_CANCEL_HARNESS'],'__k3d',*sys.argv[1:]])\n")
+    import_wrapper.chmod(0o700)
     marker = private / "observed-start.json"
     environment = dict(os.environ, TMPDIR=str(private), PATH=str(wrapper_dir) + os.pathsep + os.environ["PATH"])
     environment.update({ENV_PREFIX + "HARNESS": str(Path(__file__).resolve()), ENV_PREFIX + "REAL_KUBECTL": real,
-                        ENV_PREFIX + "STAGE": stage, ENV_PREFIX + "MARKER": str(marker), ENV_PREFIX + "STATE": str(private / "preparation-state.json")})
+                        ENV_PREFIX + "STAGE": stage, ENV_PREFIX + "MARKER": str(marker), ENV_PREFIX + "STATE": str(private / "preparation-state.json"),
+                        ENV_PREFIX + "REAL_K3D": real_k3d, ENV_PREFIX + "FIXTURE": str(fixture), ENV_PREFIX + "IMPORT_OUTPUT": str(output / "image-import")})
+    qualification["import_observation"] = {"scope": "bundled_public_backend_fixture_only", "stream_limit_bytes": IMPORT_STREAM_LIMIT,
+                                           "retention": "bounded_original_stream_tails", "retry_performed": False}
     command = [binary, "verify", str(fixture), "--format", "json"]
     write_json(output / "command.json", command)
     with existing_state(image_match.group(1)) as state:
@@ -493,6 +651,167 @@ def runtime(binary, fixture, output, repository, private, stage, qualification):
 def self_test():
     """Pure/injected checks: no Docker, Kubernetes, fixture execution or network."""
     class Tests(unittest.TestCase):
+        @contextmanager
+        def fake_import(self, mode="exit", code=17):
+            with tempfile.TemporaryDirectory(prefix="cf-backend-cancellation-") as temporary:
+                root = Path(temporary).resolve()
+                fixture = root / "fixture"
+                fixture_copy(Path(__file__).resolve().parents[1] / "testdata/backend-http", fixture, "postgresql")
+                fake = root / "fake-k3d"
+                fake.write_text("""#!/usr/bin/env python3
+import os, signal, sys, time
+from pathlib import Path
+Path(os.environ['FAKE_IMPORT_CALLED']).write_text('called')
+mode = os.environ['FAKE_IMPORT_MODE']
+count = 200000 if mode == 'large' else 0
+sys.stdout.buffer.write(b'O' * count + b'\\x1b[31mimport-out\\x00\\n')
+sys.stdout.buffer.flush()
+sys.stderr.buffer.write(b'E' * count + b'\\x1b[32mimport-err\\x00\\n')
+sys.stderr.buffer.flush()
+if mode == 'signal':
+    os.kill(os.getpid(), signal.SIGTERM)
+if mode == 'wait':
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    while True:
+        time.sleep(0.1)
+sys.exit(int(os.environ['FAKE_IMPORT_EXIT']))
+""")
+                fake.chmod(0o700)
+                output = root / "image-import"
+                environment = dict(os.environ, GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux",
+                                   FAKE_IMPORT_MODE=mode, FAKE_IMPORT_EXIT=str(code), FAKE_IMPORT_CALLED=str(root / "called"))
+                environment.update({ENV_PREFIX + "STAGE": "postgresql", ENV_PREFIX + "REAL_K3D": str(fake),
+                                    ENV_PREFIX + "FIXTURE": str(fixture), ENV_PREFIX + "IMPORT_OUTPUT": str(output)})
+                arguments = ["image", "import", "cloudforge/backend-http:test-run-a", "--cluster", "cloudforge-test-run", "--mode", "direct"]
+                command = [sys.executable, __file__, "__k3d", *arguments]
+                yield root, output, environment, arguments, command
+
+        def import_record(self, output):
+            records = list(output.glob("*.json"))
+            self.assertEqual(len(records), 1)
+            return json.loads(records[0].read_text())
+
+        def test_import_original_streams_and_exit(self):
+            for code in (0, 17):
+                with self.subTest(code=code), self.fake_import(code=code) as (_, output, environment, arguments, command):
+                    result = subprocess.run(command, env=environment, capture_output=True, timeout=5)
+                    self.assertEqual(result.returncode, code)
+                    self.assertEqual(result.stdout, b"\x1b[31mimport-out\x00\n")
+                    self.assertEqual(result.stderr, b"\x1b[32mimport-err\x00\n")
+                    record = self.import_record(output)
+                    self.assertEqual(record["arguments"], arguments)
+                    self.assertEqual(record["exit_code"], code)
+                    self.assertTrue(record["completion_observed"])
+                    self.assertFalse(record["retry_performed"])
+                    for name, raw in (("stdout", result.stdout), ("stderr", result.stderr)):
+                        stream = record["streams"][name]
+                        self.assertFalse(stream["truncated"])
+                        self.assertEqual(stream["observed_bytes"], len(raw))
+                        self.assertEqual((output / stream["file"]).read_bytes(), raw)
+
+        def test_import_bounded_tail_does_not_truncate_forwarded_streams(self):
+            with self.fake_import(mode="large") as (_, output, environment, _, command):
+                result = subprocess.run(command, env=environment, capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 17)
+                self.assertEqual(result.stdout, b"O" * 200000 + b"\x1b[31mimport-out\x00\n")
+                self.assertEqual(result.stderr, b"E" * 200000 + b"\x1b[32mimport-err\x00\n")
+                record = self.import_record(output)
+                for name, raw in (("stdout", result.stdout), ("stderr", result.stderr)):
+                    stream = record["streams"][name]
+                    self.assertTrue(stream["truncated"])
+                    self.assertEqual(stream["observed_bytes"], len(raw))
+                    self.assertEqual(stream["retained_bytes"], IMPORT_STREAM_LIMIT)
+                    self.assertEqual((output / stream["file"]).read_bytes(), raw[-IMPORT_STREAM_LIMIT:])
+                self.assertTrue(all(path.stat().st_size <= IMPORT_STREAM_LIMIT for path in output.iterdir()))
+
+        def test_import_child_termination_preserved(self):
+            with self.fake_import(mode="signal") as (_, output, environment, _, command):
+                result = subprocess.run(command, env=environment, capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, -signal.SIGTERM)
+                record = self.import_record(output)
+                self.assertEqual(record["exit_code"], -signal.SIGTERM)
+                self.assertTrue(record["completion_observed"])
+                self.assertEqual(result.stderr, b"\x1b[32mimport-err\x00\n")
+
+        def test_import_cancellation_and_hard_kill_keep_honest_partial_evidence(self):
+            for received in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+                with self.subTest(received=received), self.fake_import(mode="wait") as (_, output, environment, _, command):
+                    process = subprocess.Popen(command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                    try:
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline:
+                            records = list(output.glob("*.json"))
+                            if records and json.loads(records[0].read_text())["streams"].get("stderr", {}).get("observed_bytes", 0):
+                                break
+                            time.sleep(0.01)
+                        else:
+                            self.fail("fake import did not produce a bounded running observation")
+                        if received == signal.SIGKILL:
+                            os.killpg(process.pid, received)  # Matches CloudForge's process-group cancellation.
+                        else:
+                            process.send_signal(received)  # Wrapper must relay to its child.
+                        stdout, stderr = process.communicate(timeout=5)
+                        self.assertEqual(process.returncode, -received)
+                        self.assertEqual(stdout, b"\x1b[31mimport-out\x00\n")
+                        self.assertEqual(stderr, b"\x1b[32mimport-err\x00\n")
+                        record = self.import_record(output)
+                        if received == signal.SIGKILL:
+                            self.assertIsNone(record["exit_code"])
+                            self.assertFalse(record["completion_observed"])
+                        else:
+                            self.assertEqual(record["exit_code"], -received)
+                            self.assertEqual(record["received_signal"], received)
+                            self.assertTrue(record["completion_observed"])
+                    finally:
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        process.communicate(timeout=5)
+
+        def test_import_other_operations_pass_through_without_capture(self):
+            with self.fake_import() as (root, output, environment, _, _):
+                result = subprocess.run([sys.executable, __file__, "__k3d", "kubeconfig", "get", "private-cluster"],
+                                        env=environment, capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 17)
+                self.assertEqual(result.stdout, b"\x1b[31mimport-out\x00\n")
+                self.assertEqual(result.stderr, b"\x1b[32mimport-err\x00\n")
+                self.assertTrue((root / "called").exists())
+                self.assertFalse(output.exists())
+
+        def test_import_guard_rejects_other_sources_before_tool_or_artifacts(self):
+            cases = ("runner", "image", "arguments", "fixture", "symlink", "fifo")
+            for case in cases:
+                with self.subTest(case=case), self.fake_import() as (root, output, environment, _, command):
+                    if case == "runner":
+                        environment["RUNNER_ENVIRONMENT"] = "self-hosted"
+                    elif case == "image":
+                        command[5] = "private-source/secret-canary:test"
+                    elif case == "arguments":
+                        command.append("--untrusted=secret-canary")
+                    elif case == "fixture":
+                        (root / "fixture/package.json").write_text("secret-canary")
+                    elif case == "symlink":
+                        target = root / "fixture/package.json"
+                        original = root / "original.json"
+                        target.rename(original)
+                        target.symlink_to(original)
+                    else:
+                        os.mkfifo(root / "fixture/nonregular")
+                    result = subprocess.run(command, env=environment, capture_output=True, timeout=5)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, b"")
+                    self.assertNotIn(b"secret-canary", result.stderr)
+                    self.assertFalse((root / "called").exists())
+                    self.assertFalse(output.exists())
+
+        def test_import_artifact_failure_preserves_import_exit(self):
+            with self.fake_import() as (_, output, environment, _, command):
+                output.write_text("not a directory")
+                result = subprocess.run(command, env=environment, capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 17)
+                self.assertEqual(result.stdout, b"\x1b[31mimport-out\x00\n")
+                self.assertEqual(result.stderr, b"\x1b[32mimport-err\x00\n")
+                self.assertEqual(output.read_text(), "not a directory")
+
         def test_guard(self):
             good = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux"}
             require_runner(good, "linux")
@@ -557,6 +876,26 @@ def self_test():
                 delay_probes("startupProbe: {}")
             with self.assertRaises(QualificationError):
                 delay_probes(delay_probes(fixture))
+
+        def test_postgresql_interruption_has_no_antivirus_prerequisite(self):
+            source = Path(__file__).resolve().parents[1] / "testdata/backend-http"
+            before = hashes(source)
+            with tempfile.TemporaryDirectory() as temporary:
+                target = Path(temporary) / "fixture"
+                hold = fixture_copy(source, target, "postgresql")
+                config = json.loads((target / "cloudforge.yaml").read_text())
+                self.assertNotIn("clamav", config["dependencies"])
+                self.assertNotIn("CLAMAV_HOST", config["environment"])
+                self.assertNotIn("CLAMAV_PORT", config["environment"])
+                self.assertTrue(config["dependencies"]["postgresql"]["enabled"])
+                self.assertEqual(config["environment"]["DATABASE_URL"]["from"], "dependency.postgresql.url")
+                self.assertFalse(hold["application_execution_permitted"])
+                self.assertEqual(hashes(source), before)
+            environment = {ENV_PREFIX + "STAGE": "postgresql", ENV_PREFIX + "REAL_KUBECTL": "/must-not-run"}
+            with patch.dict(os.environ, environment), patch(__name__ + ".require_runner"):
+                for name in ("workload.yaml", "preparation.yaml"):
+                    with self.assertRaisesRegex(QualificationError, "interruption_missed_before_application"):
+                        kubectl_wrapper(["apply", "--filename", "/tmp/cloudforge-verify-test/" + name])
 
         def test_bounded_capture(self):
             result = capture([sys.executable, "-c", "import sys;print('ok');print('err',file=sys.stderr)"], 5)
@@ -624,6 +963,12 @@ def self_test():
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "__k3d":
+        try:
+            return k3d_wrapper(sys.argv[2:])
+        except (OSError, ValueError, TypeError, AttributeError, IndexError, KeyError, QualificationError, subprocess.SubprocessError):
+            print("public fixture import observer could not establish bounded evidence", file=sys.stderr)
+            return 2
     if len(sys.argv) > 1 and sys.argv[1] == "__kubectl":
         try:
             return kubectl_wrapper(sys.argv[2:])
