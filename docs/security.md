@@ -47,6 +47,21 @@ gets its own bounded context, so one failed removal cannot consume the timeout
 for later resources. A partially created cluster is always deleted; the keep
 flag applies only after cluster creation succeeds.
 
+The BuildKit container carries an explicit run marker. Before removing its
+builder, CloudForge records the exact container ID and the identity of its
+mounted cache volume. If ordinary removal fails, a separate attempt after
+cluster teardown may remove only those verified remnants. Changed ownership,
+missing proof or an unobservable daemon prevents deletion; CloudForge never
+prunes builders or removes resources by a broad name prefix. Original cleanup
+errors remain in the report even if the fallback succeeds.
+
+Cleanup operations have independent finite deadlines. Qualification runners
+allow up to 12 minutes after interruption to preserve the final report across
+the existing worst-case removal deadlines and the 30-second builder fallback.
+This observation window does not extend application execution or individual
+cleanup command deadlines. A failing or unreachable Docker daemon can still
+prevent cleanup; such errors and independently observed leftovers are retained.
+
 Each run uses private kubeconfig and Docker builder configuration. The default
 kubectl context and builder remain unchanged. Workload limits include rollout
 surge and HPA maxima; a private BuildKit builder bounds build CPU and memory.

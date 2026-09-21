@@ -16,8 +16,9 @@ import (
 
 // Client builds application images through the Docker CLI.
 type Client struct {
-	runner  command.Runner
-	builder string
+	runner           command.Runner
+	builder          string
+	builderOwnership *builderOwnership
 }
 
 // New creates a Docker CLI adapter.

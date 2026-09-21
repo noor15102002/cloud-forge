@@ -1,46 +1,177 @@
 #!/usr/bin/env python3
-"""Interrupt real tool execution on a disposable runner and check owned cleanup."""
+"""Interrupt bundled public fixtures and retain original bounded cleanup evidence.
+
+Public fixture validation and stream teeing add small wrapper overhead inside
+CloudForge's original command deadlines; no retry, new runtime API call, traffic
+change or command timeout extension is performed by the cleanup observer.
+"""
 import argparse
 from contextlib import contextmanager
+import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
+import stat
 import subprocess
+import sys
 import tempfile
 import time
 
-parser = argparse.ArgumentParser()
-parser.add_argument("binary")
-parser.add_argument("output", type=Path)
-parser.add_argument("--stages", nargs="+", default=["build", "cluster", "readiness", "load"], choices=["build", "cluster", "readiness", "load", "redis"])
-parser.add_argument("--monorepo", action="store_true", help="Exercise selected custom Dockerfile cancellation (build stage only)")
-args = parser.parse_args()
-if args.monorepo and args.stages != ["build"]:
-    parser.error("--monorepo requires --stages build")
-args.binary = str(Path(args.binary).resolve())
-args.output.mkdir(parents=True, exist_ok=True)
-original_kubeconfig = Path.home() / ".kube" / "config"
-original_bytes = original_kubeconfig.read_bytes() if original_kubeconfig.exists() else None
+REPOSITORY = Path(__file__).resolve().parent.parent
+spec = importlib.util.spec_from_file_location("bounded_command_evidence", REPOSITORY / "scripts/pilot-backend-cancellation.py")
+helpers = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(helpers)
+STAGES = ("build", "cluster", "readiness", "load", "redis")
+CLEANUP_SECONDS = 720
+RUN_NAME = re.compile(r"cloudforge-[a-f0-9]{8,32}")
+INJECTED_EXIT = 70
+INJECTED_ERROR = b"CloudForge public qualification intentionally withheld the first builder removal.\n"
+PREFIX = "CLOUDFORGE_PILOT_"
 
-wrapper = '''#!/usr/bin/env python3
-import json, os, pathlib, re, subprocess, sys
-tool = pathlib.Path(sys.argv[0]).name
-arguments = sys.argv[1:]
-stage = os.environ['CLOUDFORGE_PILOT_STAGE']
-if stage == 'redis' and tool == 'kubectl' and 'apply' in arguments and arguments[-1].endswith('dependency-redis.yaml'):
-    path = pathlib.Path(arguments[-1])
-    path.write_text(re.sub(r'(?m)^(\\s+)periodSeconds: 1$', r'\\1initialDelaySeconds: 60\\n\\1periodSeconds: 1', path.read_text()))
-selected = (stage == 'redis' and tool == 'kubectl' and 'rollout' in arguments and 'deployment/cf-dependency-redis' in arguments) or (stage == 'build' and tool == 'docker' and 'build' in arguments) or (stage == 'cluster' and tool == 'k3d' and 'create' in arguments) or (stage == 'readiness' and tool == 'kubectl' and 'rollout' in arguments and 'status' in arguments) or (stage == 'load' and tool == 'k6' and 'run' in arguments)
-process = subprocess.Popen([os.environ['CLOUDFORGE_REAL_' + tool.upper()], *arguments])
-if selected:
-    pathlib.Path(os.environ['CLOUDFORGE_PILOT_MARKER']).write_text(json.dumps({'tool':tool,'pid':process.pid}))
-sys.exit(process.wait())
-'''
+
+def fixture_copy(target, stage, monorepo):
+    source = REPOSITORY / "testdata" / ("monorepo" if monorepo else "healthy-node-redis" if stage == "redis" else "healthy-node")
+    shutil.copytree(source, target)
+    if stage == "build":
+        dockerfile = target / ("apps/http/Containerfile.release" if monorepo else "Dockerfile")
+        dockerfile.write_text(dockerfile.read_text().replace("WORKDIR /app", "RUN sleep 60\nWORKDIR /app"))
+    if stage == "readiness":
+        server = target / "server.js"
+        server.write_text(server.read_text().replace("let ready = true", "let ready = false"))
+    config = target / "cloudforge.yaml"
+    config.write_text(config.read_text().split("experiments:")[0])
+
+
+def validate_public_fixture(fixture, stage, monorepo):
+    helpers.require_runner()
+    if stage not in STAGES or (monorepo and stage != "build"):
+        raise helpers.QualificationError("cleanup_capture_unknown_fixture_mode")
+    if (fixture.is_symlink() or fixture.name != "app" or not fixture.parent.name.startswith("cloudforge-cancel-")
+            or fixture.resolve() != fixture):
+        raise helpers.QualificationError("cleanup_capture_requires_bundled_public_fixture")
+    for path in fixture.rglob("*"):
+        mode = path.lstat().st_mode
+        if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+            raise helpers.QualificationError("cleanup_capture_nonregular_source")
+    with tempfile.TemporaryDirectory(prefix="cf-public-cleanup-proof-") as temporary:
+        expected = Path(temporary) / "app"
+        fixture_copy(expected, stage, monorepo)
+        if helpers.hashes(expected) != helpers.hashes(fixture):
+            raise helpers.QualificationError("cleanup_capture_public_fixture_changed")
+
+
+def created_run(tool, arguments):
+    if tool == "docker" and len(arguments) == 8 and arguments[:3] == ["buildx", "create", "--name"]:
+        name = arguments[3]
+        base = "memory=2g,cpu-period=100000,cpu-quota=200000"
+        if (RUN_NAME.fullmatch(name) and arguments[4:7] == ["--driver", "docker-container", "--driver-opt"]
+                and arguments[7] in (base, base + ",env.CLOUDFORGE_RUN_ID=" + name)):
+            return name
+    if tool == "k3d" and len(arguments) >= 4 and arguments[:2] == ["cluster", "create"] and RUN_NAME.fullmatch(arguments[2]):
+        # Only register the name; no create output, runtime flags or credentials
+        # are retained by the cleanup observer.
+        return arguments[2]
+    return None
+
+
+def cleanup_operation(tool, arguments, owner):
+    if not isinstance(owner, str) or not RUN_NAME.fullmatch(owner):
+        return None
+    if tool == "docker" and arguments == ["buildx", "rm", "--force", owner]:
+        return "builder-remove", 60
+    if tool == "k3d" and arguments == ["cluster", "delete", owner]:
+        return "cluster-delete", 120
+    return None
+
+
+def finish_signal(code):
+    if code < 0:
+        received = -code
+        if received not in (signal.SIGKILL, signal.SIGSTOP):
+            signal.signal(received, signal.SIG_DFL)
+        os.kill(os.getpid(), received)
+    return code
+
+
+def retain_cleanup(output, stage):
+    """Preserve cleanup observations even when qualification itself failed."""
+    try:
+        result = subprocess.run(["bash", str(REPOSITORY / "scripts/pilot-cleanup-check.sh")], capture_output=True, timeout=30)
+        (output / f"cancel-{stage}.cleanup.stdout.txt").write_bytes(result.stdout)
+        (output / f"cancel-{stage}.cleanup.stderr.txt").write_bytes(result.stderr)
+        helpers.write_json(output / f"cancel-{stage}.cleanup.exit.json", {"exit_code": result.returncode, "completion_observed": True})
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        helpers.write_json(output / f"cancel-{stage}.cleanup.exit.json", {"exit_code": None, "completion_observed": False})
+        return False
+
+
+def tool_wrapper(tool, arguments):
+    helpers.require_runner()
+    if tool not in ("docker", "k3d", "kubectl", "k6"):
+        raise helpers.QualificationError("cleanup_capture_unknown_tool")
+    real = os.environ["CLOUDFORGE_REAL_" + tool.upper()]
+    stage = os.environ[PREFIX + "STAGE"]
+    fixture = Path(os.environ[PREFIX + "FIXTURE"])
+    monorepo = os.environ.get(PREFIX + "MONOREPO") == "true"
+    validate_public_fixture(fixture, stage, monorepo)
+    if os.environ.get(PREFIX + "FORCE_BUILDER_FAILURE") == "true" and (stage != "redis" or monorepo):
+        raise helpers.QualificationError("builder_fault_requires_public_redis_case")
+    owner_path = Path(os.environ[PREFIX + "OWNER"])
+    owner = json.loads(owner_path.read_text())["run_name"] if owner_path.exists() else None
+    created = created_run(tool, arguments)
+    if created:
+        if owner not in (None, created):
+            raise helpers.QualificationError("cleanup_capture_multiple_run_names")
+        owner = created
+        helpers.write_json(owner_path, {"run_name": owner})
+    operation = cleanup_operation(tool, arguments, owner)
+    if operation:
+        output = Path(os.environ[PREFIX + "CLEANUP_OUTPUT"])
+        if os.environ.get(PREFIX + "FORCE_BUILDER_FAILURE") == "true" and operation[0] == "builder-remove":
+            if stage != "redis" or monorepo:
+                raise helpers.QualificationError("builder_fault_requires_public_redis_case")
+            marker = Path(os.environ[PREFIX + "INJECTION"])
+            if not marker.exists():
+                # A declared separate qualification case, never an ordinary run.
+                # This records a withheld command, not an observed Docker error.
+                record = {"scope": "bundled_public_redis_fixture_only", "injected": True,
+                          "actual_command_executed": False, "tool": tool, "arguments": arguments,
+                          "exit_code": INJECTED_EXIT, "retry_performed": False,
+                          "reason": "intentionally_withheld_first_builder_removal"}
+                helpers.write_json(marker, record)
+                output.mkdir(parents=True, exist_ok=True)
+                helpers.write_json(output / "injected-builder-removal.json", record)
+                (output / "injected-builder-removal.stderr.txt").write_bytes(INJECTED_ERROR)
+                sys.stderr.buffer.write(INJECTED_ERROR)
+                sys.stderr.buffer.flush()
+                return INJECTED_EXIT
+        return finish_signal(helpers.tee_command([real, *arguments], output, stage, sys.stdout.buffer, sys.stderr.buffer,
+                scope="bundled_public_cancellation_fixture_only", tool=tool, name=operation[0], native_timeout_seconds=operation[1]))
+    if stage == "redis" and tool == "kubectl" and "apply" in arguments and arguments[-1].endswith("dependency-redis.yaml"):
+        path = Path(arguments[-1])
+        if path.is_symlink() or path.resolve().parent.parent != fixture.parent:
+            raise helpers.QualificationError("redis_hold_requires_owned_temporary_manifest")
+        path.write_text(re.sub(r"(?m)^(\s+)periodSeconds: 1$", r"\1initialDelaySeconds: 60\n\1periodSeconds: 1", path.read_text()))
+    selected = ((stage == "redis" and tool == "kubectl" and "rollout" in arguments and "deployment/cf-dependency-redis" in arguments)
+                or (stage == "build" and tool == "docker" and "build" in arguments)
+                or (stage == "cluster" and tool == "k3d" and "create" in arguments)
+                or (stage == "readiness" and tool == "kubectl" and "rollout" in arguments and "status" in arguments)
+                or (stage == "load" and tool == "k6" and "run" in arguments))
+    if not selected:
+        os.execv(real, [real, *arguments])
+    process = subprocess.Popen([real, *arguments])
+    helpers.write_json(Path(os.environ[PREFIX + "MARKER"]), {"tool": tool, "pid": process.pid})
+    return finish_signal(process.wait())
+
 
 @contextmanager
 def existing_state():
+    original_kubeconfig = Path.home() / ".kube" / "config"
+    original_bytes = original_kubeconfig.read_bytes() if original_kubeconfig.exists() else None
     """Use recognizable pre-existing state to prove cleanup ownership boundaries."""
     name = "pilot-existing-" + str(os.getpid())
     created = []
@@ -69,65 +200,119 @@ def existing_state():
             original_kubeconfig.write_bytes(original_bytes)
 
 
-with existing_state() as (sentinel_name, baseline_kubeconfig, sentinel_ids):
-    for stage in args.stages:
-        with tempfile.TemporaryDirectory(prefix="cloudforge-cancel-") as temporary:
-            root = Path(temporary)
-            app = root / "app"
-            shutil.copytree("testdata/monorepo" if args.monorepo else ("testdata/healthy-node-redis" if stage == "redis" else "testdata/healthy-node"), app)
-            # Keep each targeted phase long enough to establish an actual interruption.
-            if stage == "build":
-                dockerfile = app / ("apps/http/Containerfile.release" if args.monorepo else "Dockerfile")
-                dockerfile.write_text(dockerfile.read_text().replace("WORKDIR /app", "RUN sleep 60\nWORKDIR /app"))
-            if stage == "readiness":
-                server = app / "server.js"
-                server.write_text(server.read_text().replace("let ready = true", "let ready = false"))
-            config = app / "cloudforge.yaml"
-            config.write_text(config.read_text().split("experiments:")[0])
-            bin_dir = root / "bin"
-            bin_dir.mkdir()
-            environment = dict(os.environ, TMPDIR=str(root))
-            for tool in ["docker", "k3d", "kubectl", "k6"]:
-                real = shutil.which(tool)
-                assert real, tool
-                environment["CLOUDFORGE_REAL_" + tool.upper()] = real
-                file = bin_dir / tool
-                file.write_text(wrapper)
-                file.chmod(0o700)
-            marker = root / "started.json"
-            environment.update(PATH=str(bin_dir) + os.pathsep + os.environ["PATH"], CLOUDFORGE_PILOT_STAGE=stage, CLOUDFORGE_PILOT_MARKER=str(marker))
-            report_path = args.output / f"cancel-{stage}.json"
-            with report_path.open("w") as stdout, (args.output / f"cancel-{stage}.stderr").open("w") as stderr:
-                process = subprocess.Popen([args.binary, "verify", str(app), "--format", "json"], stdout=stdout, stderr=stderr, env=environment)
+def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
+    with tempfile.TemporaryDirectory(prefix="cloudforge-cancel-") as temporary:
+        root = Path(temporary).resolve()
+        app = root / "app"
+        fixture_copy(app, stage, args.monorepo)
+        validate_public_fixture(app, stage, args.monorepo)
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        environment = dict(os.environ, TMPDIR=str(root))
+        for tool in ("docker", "k3d", "kubectl", "k6"):
+            real = shutil.which(tool)
+            if not real:
+                raise helpers.QualificationError("runtime_tool_missing")
+            environment["CLOUDFORGE_REAL_" + tool.upper()] = real
+            file = bin_dir / tool
+            file.write_text("#!/usr/bin/env python3\nimport os,pathlib,sys\nos.execv(sys.executable,[sys.executable,os.environ['CLOUDFORGE_PILOT_HARNESS'],'__tool',pathlib.Path(sys.argv[0]).name,*sys.argv[1:]])\n")
+            file.chmod(0o700)
+        marker = root / "started.json"
+        environment.update(PATH=str(bin_dir) + os.pathsep + os.environ["PATH"], **{
+            PREFIX + "HARNESS": str(Path(__file__).resolve()), PREFIX + "STAGE": stage,
+            PREFIX + "FIXTURE": str(app), PREFIX + "MONOREPO": str(args.monorepo).lower(),
+            PREFIX + "MARKER": str(marker), PREFIX + "OWNER": str(root / "owner.json"),
+            PREFIX + "CLEANUP_OUTPUT": str(args.output / ("cleanup-commands-" + stage)),
+            PREFIX + "FORCE_BUILDER_FAILURE": str(args.force_builder_cleanup_failure).lower(),
+            PREFIX + "INJECTION": str(root / "injected-builder-failure.json")})
+        report_path = args.output / f"cancel-{stage}.json"
+        command = [args.binary, "verify", str(app), "--format", "json"]
+        helpers.write_json(args.output / f"cancel-{stage}.command.json", {"argv": command,
+            "force_builder_cleanup_failure": args.force_builder_cleanup_failure, "outer_cleanup_wait_seconds": CLEANUP_SECONDS})
+        process, interrupted_at, cleanup_passed = None, None, False
+        try:
+            with report_path.open("wb") as stdout, (args.output / f"cancel-{stage}.stderr").open("wb") as stderr:
+                process = subprocess.Popen(command, stdout=stdout, stderr=stderr, env=environment)
                 deadline = time.monotonic() + 600
                 while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
                     time.sleep(0.1)
                 if not marker.exists():
-                    process.send_signal(signal.SIGINT)
-                    process.wait(timeout=180)
-                    raise AssertionError(f"{stage}: target phase was not reached")
+                    raise helpers.QualificationError("target_cancellation_phase_not_reached")
                 time.sleep(2)
-                assert process.poll() is None, f"{stage}: verification ended before interruption"
+                if process.poll() is not None:
+                    raise helpers.QualificationError("verification_ended_before_interruption")
+                interrupted_at = time.monotonic()
                 process.send_signal(signal.SIGINT)
-                assert process.wait(timeout=180) == 2, f"{stage}: cancellation was not classified as execution error"
-            report = json.loads(report_path.read_text())
-            assert report["status"] == "error", report
-            assert any(item["code"] == "verification_canceled" for item in report["diagnostics"]), "Missing cancellation classification"
-            evidence = {item["experiment_id"]: item for item in report["evidence"]}
-            target = {"build": "container-build", "readiness": "deployment-readiness", "load": "load-profile"}.get(stage)
-            if target:
-                assert evidence[target]["execution"]["executed"], "Started experiment was presented as never executed"
-                assert evidence[target]["status"] == "error", evidence[target]
-            assert not list(root.glob("cloudforge-verify-*")), "Temporary kubeconfig/runtime directory leaked"
-            if stage == "redis":
-                assert report["dependencies"][0]["status"] == "error"
-                assert not any(item["experiment_id"] == "deployment-readiness" and item["status"] == "pass" for item in report["evidence"])
-            subprocess.run(["bash", "scripts/pilot-cleanup-check.sh"], check=True)
-            current_bytes = original_kubeconfig.read_bytes() if original_kubeconfig.exists() else None
-            assert current_bytes == baseline_kubeconfig, "User kubeconfig changed"
-            for kind, expected in sentinel_ids.items():
-                actual = subprocess.check_output(["docker", kind, "inspect", "--format", "{{.Id}}" if kind != "volume" else "{{.Name}}", sentinel_name], text=True).strip()
-                assert actual == expected, f"Unrelated {kind} changed"
-            running = subprocess.check_output(["docker", "container", "inspect", "--format", "{{.State.Running}}", sentinel_name], text=True).strip()
-            assert running == "true", "Unrelated container was stopped"
-            print(f"{stage}: interrupted real subprocess; owned resources removed; kubeconfig unchanged", flush=True)
+                if process.wait(timeout=CLEANUP_SECONDS) != 2:
+                    raise helpers.QualificationError("cancellation_not_classified_as_execution_error")
+        finally:
+            if process is not None and process.poll() is None:
+                if interrupted_at is None:
+                    interrupted_at = time.monotonic()
+                    process.send_signal(signal.SIGINT)
+                try:
+                    process.wait(timeout=max(0, CLEANUP_SECONDS - (time.monotonic() - interrupted_at)))
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=10)
+            if process is not None:
+                helpers.write_json(args.output / f"cancel-{stage}.exit.json", {"exit_code": process.returncode})
+            cleanup_passed = retain_cleanup(args.output, stage)
+        report = json.loads(report_path.read_text())
+        assert report["status"] == "error", "Unexpected native status"
+        assert any(item["code"] == "verification_canceled" for item in report["diagnostics"]), "Missing cancellation classification"
+        if args.force_builder_cleanup_failure:
+            assert Path(environment[PREFIX + "INJECTION"]).exists(), "Declared builder fault was not exercised"
+            assert any(item["code"] == "builder_cleanup_failed" for item in report["diagnostics"]), "Original injected cleanup failure disappeared"
+            assert not any(item["code"] == "builder_remnant_cleanup_failed" for item in report["diagnostics"]), "Builder fallback failed"
+        evidence = {item["experiment_id"]: item for item in report["evidence"]}
+        target = {"build": "container-build", "readiness": "deployment-readiness", "load": "load-profile"}.get(stage)
+        if target:
+            assert evidence[target]["execution"]["executed"], "Started experiment was presented as never executed"
+            assert evidence[target]["status"] == "error", "Started experiment lost ERROR"
+        assert not list(root.glob("cloudforge-verify-*")), "Temporary kubeconfig/runtime directory leaked"
+        if stage == "redis":
+            assert report["dependencies"][0]["status"] == "error"
+            assert not any(item["experiment_id"] == "deployment-readiness" and item["status"] == "pass" for item in report["evidence"])
+        assert cleanup_passed, "CloudForge-owned resources remain after cleanup or could not be observed"
+        current_config = Path.home() / ".kube" / "config"
+        current_bytes = current_config.read_bytes() if current_config.exists() else None
+        assert current_bytes == baseline_kubeconfig, "User kubeconfig changed"
+        for kind, expected in sentinel_ids.items():
+            actual = subprocess.check_output(["docker", kind, "inspect", "--format", "{{.Id}}" if kind != "volume" else "{{.Name}}", sentinel_name], text=True).strip()
+            assert actual == expected, f"Unrelated {kind} changed"
+        running = subprocess.check_output(["docker", "container", "inspect", "--format", "{{.State.Running}}", sentinel_name], text=True).strip()
+        assert running == "true", "Unrelated container was stopped"
+        print(f"{stage}: interrupted real subprocess; owned resources removed; kubeconfig unchanged", flush=True)
+
+
+def main():
+    if sys.argv[1:2] == ["__tool"]:
+        return tool_wrapper(sys.argv[2], sys.argv[3:])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("binary")
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--stages", nargs="+", default=list(STAGES[:-1]), choices=STAGES)
+    parser.add_argument("--monorepo", action="store_true", help="Exercise selected custom Dockerfile cancellation (build stage only)")
+    parser.add_argument("--force-builder-cleanup-failure", action="store_true", help="Separate public Redis cancellation case: withhold first builder removal, retain ERROR, require owned fallback cleanup")
+    args = parser.parse_args()
+    if args.monorepo and args.stages != ["build"]:
+        parser.error("--monorepo requires --stages build")
+    if args.force_builder_cleanup_failure and (args.stages != ["redis"] or args.monorepo):
+        parser.error("--force-builder-cleanup-failure requires only --stages redis")
+    helpers.require_runner()  # Before output directories, Docker or kubeconfig access.
+    args.binary = str(Path(args.binary).resolve())
+    args.output = args.output.resolve()
+    args.output.mkdir(parents=True, exist_ok=True)
+    with existing_state() as (sentinel_name, baseline, identities):
+        for stage in args.stages:
+            run_stage(args, stage, sentinel_name, baseline, identities)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except helpers.QualificationError as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(2)

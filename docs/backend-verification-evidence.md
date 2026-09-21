@@ -74,3 +74,32 @@ Local formatting, race tests, vet, lint, builds and schema/history checks passed
 Govulncheck reported no called or imported-package vulnerabilities, with one
 advisory in an unused required module. Protected merge and a packaged Action run
 on the actual merged revision remain required before private pilots.
+
+## Completed backend matrix and subsequent cleanup finding
+
+The [fourth backend matrix](https://github.com/noor15102002/cloud-forge/actions/runs/35627106331)
+qualified all seven cases on head `a455103b72b8eee153404bf293d120f03ec25280`.
+The native reports identify actual PR merge revision
+`3aefbad81690ccc370df616f4540e2d896068828`. The healthy result remained WARN for
+nine scanner findings; all backend lifecycle and restoration evidence passed.
+The deliberate application failures retained FAIL/BLOCKED, while all three
+observed provider/preparation interruptions retained cancellation ERROR and
+passed independent cleanup and unrelated-state checks. Successful imports in
+this matrix do not establish the cause of the earlier import errors.
+
+A separate [existing Redis cancellation check](https://github.com/noor15102002/cloud-forge/actions/runs/35627106534/job/106424049110)
+on that same revision reached its intended interruption, but failed cleanup.
+The native report retained builder removal failure, a cluster deletion timeout
+and a cluster-remnant cleanup error. Independent inspection found the named
+BuildKit container and its cache volume still present. The underlying Docker
+failure was not captured, so its cause remains unconfirmed.
+
+This exposed a missing builder fallback. The follow-up records an explicit
+run marker and the builder's container-to-volume ownership before removal,
+then permits bounded cleanup of only that recorded identity after cluster
+teardown. A successful fallback preserves the original cleanup error. A
+separate disposable test deliberately fails the first removal and must prove
+actual final cleanup and preservation of unrelated resources. Public fixture
+cleanup stream capture retains the real tool failure without collecting
+application, provider or credential output. Qualification of this follow-up
+remains required before merging.

@@ -46,7 +46,11 @@ jobs:
 
   redis-cancellation:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [observed, forced-builder-cleanup]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,15 +60,25 @@ jobs:
           go-version: 1.27.1
       - name: Install pinned tools
         run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
+      - name: Check cleanup capture guards and failure preservation
+        run: |
+          python3 scripts/test-pilot-cancellation.py
+          python3 scripts/pilot-backend-cancellation.py --self-test
       - name: Interrupt Redis startup and preserve unrelated state
+        env:
+          CLEANUP_CASE: ${{ matrix.case }}
         run: |
           go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
-          python3 scripts/pilot-cancellation.py /tmp/cloudforge "$RUNNER_TEMP/dependency-cancellation" --stages redis
+          extra=()
+          if [ "$CLEANUP_CASE" = forced-builder-cleanup ]; then
+            extra+=(--force-builder-cleanup-failure)
+          fi
+          python3 scripts/pilot-cancellation.py /tmp/cloudforge "$RUNNER_TEMP/dependency-cancellation" --stages redis "${extra[@]}"
       - name: Preserve evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: dependency-cancellation
+          name: dependency-cancellation-${{ matrix.case }}
           path: ${{ runner.temp }}/dependency-cancellation
       - name: Check cleanup
         if: always()

@@ -253,8 +253,16 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 					return dockerClient.RemoveClusterRemnants(cleanupCtx, plan.clusterName, kind)
 				})
 				if failed(result) {
-					out.addError("cluster_remnant_cleanup_failed", "CloudForge could not remove a run-owned cluster remnant.", "Inspect resources with the reported run name and app=k3d ownership label before retrying cleanup.")
+					out.addError("cluster_remnant_cleanup_failed", "CloudForge could not remove a run-owned cluster remnant.", commandGuidance(result, nil))
 				}
+			}
+		}
+		if builderAttempted {
+			result := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult {
+				return dockerClient.RemoveBuilderRemnants(cleanupCtx)
+			})
+			if failed(result) {
+				out.addError("builder_remnant_cleanup_failed", "CloudForge could not verify removal of its owned builder remnants.", commandGuidance(result, nil))
 			}
 		}
 		for _, image := range imagesToCleanup {
@@ -273,7 +281,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		if builderAttempted {
 			result := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult { return dockerClient.RemoveBuilder(cleanupCtx) })
 			if failed(result) {
-				out.addError("builder_cleanup_failed", "CloudForge could not remove its owned builder.", "Remove the named cloudforge builder after checking its ownership.")
+				out.addError("builder_cleanup_failed", "CloudForge could not remove its owned builder.", commandGuidance(result, nil))
 			}
 		}
 	}()
