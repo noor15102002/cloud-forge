@@ -137,6 +137,7 @@ The implementation adds an explicit single-worker command and Redis-heartbeat
 contract, sequential nonoverlapping recovery/image replacement, restoration and
 versioned evidence. Its boundary is process liveness and heartbeat progress;
 queue jobs, business workflows and overlapping worker topologies remain outside
-this slice. See [the contract and limits](worker-runtime.md). Generic runtime
-qualification must pass before a private application pilot is authorized to use it;
+this slice. See [the contract and limits](worker-runtime.md) and
+[qualification evidence with retained failures](worker-verification-evidence.md).
+Generic runtime qualification must pass before private pilot execution;
 implementation alone is not runtime evidence.
