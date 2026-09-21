@@ -4,7 +4,7 @@
 on standard error, so reports can be redirected without contamination.
 
 `cloudforge report <verification.json> --format text|json|markdown` validates a
-saved report against the bounded `v1alpha1`, `v1alpha2`, `v1alpha3`, `v1alpha4`, `v1alpha5`, `v1alpha6` or `v1alpha7` contract and renders it without
+saved report against the bounded `v1alpha1`, `v1alpha2`, `v1alpha3`, `v1alpha4`, `v1alpha5`, `v1alpha6`, `v1alpha7` or `v1alpha8` contract and renders it without
 analyzing, building, or executing repository code. The trusted GitHub reporter
 uses this command for pull-request artifacts. Its exit status describes loading
 and rendering only; the original run and comparison statuses remain in the
@@ -12,8 +12,8 @@ report.
 
 ## JSON
 
-Use `--format json` for automation. JSON is the canonical `v1alpha7` contract;
-its schema is [`schemas/verification.v1alpha7.schema.json`](../schemas/verification.v1alpha7.schema.json).
+Use `--format json` for automation. JSON is the canonical `v1alpha8` contract;
+its schema is [`schemas/verification.v1alpha8.schema.json`](../schemas/verification.v1alpha8.schema.json).
 CloudForge sorts evidence, measurements, findings, and diagnostics before
 serialization. Consumers must use field names and must not depend on object key
 order.
@@ -57,7 +57,7 @@ cloudforge verify . --format json > baseline.json
 cloudforge verify . --baseline baseline.json --format json > current.json
 ```
 
-The baseline must be a regular `v1alpha1`, `v1alpha2`, `v1alpha3`, `v1alpha4`, `v1alpha5`, `v1alpha6` or `v1alpha7` JSON file no larger than 4 MiB.
+The baseline must be a regular `v1alpha1`, `v1alpha2`, `v1alpha3`, `v1alpha4`, `v1alpha5`, `v1alpha6`, `v1alpha7` or `v1alpha8` JSON file no larger than 4 MiB.
 CloudForge validates the complete document against the embedded public schema
 and rejects incompatible versions, missing required fields, unknown fields,
 duplicate experiment IDs, and duplicate measurement names before building or
@@ -100,7 +100,7 @@ interactive output stays concise.
 
 Use `--format markdown` to produce a self-contained report suitable for a pull
 request comment. It begins with the stable
-`cloudforge-verification-report:v1alpha7` marker, summarizes every experiment,
+`cloudforge-verification-report:v1alpha8` marker, summarizes every experiment,
 and places measurements and up to 25 detailed findings in collapsible sections. Dynamic text
 is escaped to prevent repository metadata from introducing links, mentions, or
 HTML into the rendered comment. Markdown shows at most 25 findings and directs
@@ -117,7 +117,7 @@ finding. BLOCKED exits 1; cancellation or execution ERROR exits 2. No optional
 capability is promoted from SKIPPED to PASS. A supported plan entry is intent.
 
 `verify --plan` emits a standalone deterministic plan (see
-`schemas/plan.v1alpha7.schema.json`) without running commands. Its JSON is not a
+`schemas/plan.v1alpha8.schema.json`) without running commands. Its JSON is not a
 verification baseline. Reports include pinned dependency identity/resources/mode
 in fingerprints; literal environment values and readiness response bodies are
 omitted. Readiness evidence records transport, status and assertion matches.
@@ -150,3 +150,11 @@ Real observed response PASS/FAIL results remain intact even if another runtime
 observation fails. Loading a historical report never changes its original status.
 
 Version `v1alpha7` adds bounded worker process-liveness contracts and normalized heartbeat evidence, including restoration observations. Configuration `v1alpha6` selects worker mode. Earlier reports retain their schema and observed outcomes when loaded or rendered; worker contract hashes affect comparison compatibility. See [worker verification](worker-runtime.md) for the exact claim boundary.
+
+Version `v1alpha8` adds the optional explicit HTTP probe policy in plans and
+runtime fingerprints. Configuration `v1alpha7` accepts bounded whole-millisecond
+`probes.interval`; omitted settings preserve existing behavior. Different pacing
+policies are not compatible regression baselines. Slower sampling can miss short
+outages, and HTTP 429 remains a real observed failure under the tested policy.
+See [bounded HTTP probe pacing](probe-pacing.md). Historical reports retain their
+original policy, schema and measurements.

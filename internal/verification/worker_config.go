@@ -15,7 +15,7 @@ var workerAgePattern = regexp.MustCompile(`^(?:[1-9]|[1-5][0-9]|60)s$|^1m$`)
 var workerKeyPattern = regexp.MustCompile(`^[A-Za-z0-9:_./-]{1,128}$`)
 
 func advancedConfiguration(config model.RuntimeConfiguration) bool {
-	return config.SchemaVersion == "v1alpha5" || config.SchemaVersion == "v1alpha6"
+	return config.SchemaVersion == "v1alpha5" || config.SchemaVersion == "v1alpha6" || config.SchemaVersion == "v1alpha7"
 }
 func isWorker(config model.RuntimeConfiguration) bool { return config.Runtime.Kind == "worker" }
 
@@ -23,8 +23,8 @@ func validateWorker(config model.RuntimeConfiguration) error {
 	if config.Runtime.Kind != "" && config.Runtime.Kind != "http" && config.Runtime.Kind != "worker" {
 		return errors.New("runtime.kind must be http or worker")
 	}
-	if (config.Runtime.Kind != "" || config.Worker != nil) && config.SchemaVersion != "v1alpha6" {
-		return errors.New("explicit runtime.kind and worker settings require configuration schema_version v1alpha6")
+	if (config.Runtime.Kind != "" || config.Worker != nil) && config.SchemaVersion != "v1alpha6" && config.SchemaVersion != "v1alpha7" {
+		return errors.New("explicit runtime.kind and worker settings require configuration schema_version v1alpha6 or v1alpha7")
 	}
 	if !isWorker(config) {
 		if config.Worker != nil {
@@ -35,7 +35,7 @@ func validateWorker(config model.RuntimeConfiguration) error {
 	if config.Worker == nil {
 		return errors.New("worker runtime requires an explicit command and heartbeat contract")
 	}
-	if config.Runtime.Port != 0 || config.Readiness != nil || config.Endpoints != (model.EndpointSettings{}) || config.Experiments.ControlPath != "" {
+	if config.Runtime.Port != 0 || config.Readiness != nil || config.Probes != nil || config.Endpoints != (model.EndpointSettings{}) || config.Experiments.ControlPath != "" {
 		return errors.New("worker runtime cannot include a port, HTTP readiness, load endpoint or control protocol")
 	}
 	if !config.Dependencies["redis"].Enabled || config.Network == nil || config.Network.Outbound != "declared_dependencies_only" {

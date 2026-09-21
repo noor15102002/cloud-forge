@@ -43,7 +43,7 @@ for origin, replicas in [("source", 1), ("source", 2), ("generated", 1)]:
         path.write_text(result.stdout)
         (args.output / f"{name}.stderr.txt").write_text(result.stderr)
         report = json.loads(result.stdout)
-        assert report["schema_version"] == "v1alpha7"
+        assert report["schema_version"] == "v1alpha8"
         assert report["producer"]["commit"] not in ["", "unknown"]
         assert all(check["status"] == "supported" for check in report["compatibility"]["checks"] if check["name"].startswith("kubectl-"))
         tools = {tool["name"]: tool["version"] for tool in report["fingerprint"]["tools"]}

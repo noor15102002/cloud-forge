@@ -49,9 +49,15 @@ func LoadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 	if yaml.UnmarshalStrict(data, &supplied) != nil {
 		return config, errors.New("invalid configuration object")
 	}
-	for _, key := range []string{"safety", "network", "preparation", "build", "topology", "runtime", "load", "endpoints", "experiments", "dependencies", "environment", "readiness", "worker"} {
+	for _, key := range []string{"safety", "network", "preparation", "build", "topology", "runtime", "load", "endpoints", "experiments", "dependencies", "environment", "readiness", "worker", "probes"} {
 		if string(supplied[key]) == "null" {
 			return config, errors.New("configuration sections cannot be null")
+		}
+	}
+	if raw, present := supplied["probes"]; present {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) != nil || len(fields["interval"]) == 0 || fields["interval"][0] != '"' {
+			return config, errors.New("probes.interval must be an explicit duration string")
 		}
 	}
 	var topologyFields map[string]json.RawMessage
@@ -99,7 +105,7 @@ func LoadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 		}
 	}
 	if config.Runtime.Kind == "worker" {
-		for _, key := range []string{"load", "endpoints", "readiness", "experiments"} {
+		for _, key := range []string{"load", "endpoints", "readiness", "experiments", "probes"} {
 			if _, ok := supplied[key]; ok {
 				return config, errors.New("worker configuration cannot include HTTP, load or control sections")
 			}
@@ -108,6 +114,7 @@ func LoadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 	if err := validateConfiguration(config); err != nil {
 		return config, err
 	}
+	config.Probes = effectiveProbes(config.Probes)
 	return config, nil
 }
 
@@ -118,12 +125,15 @@ func validateConfiguration(config model.RuntimeConfiguration) error {
 	if err := validateExtensions(config); err != nil {
 		return err
 	}
-	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != "v1alpha2" && config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" && config.SchemaVersion != "v1alpha6" {
-		return errors.New("configuration schema_version must be v1alpha1, v1alpha2, v1alpha3, v1alpha4 v1alpha5 or v1alpha6")
+	if err := validateProbes(config); err != nil {
+		return err
+	}
+	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != "v1alpha2" && config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" && config.SchemaVersion != "v1alpha6" && config.SchemaVersion != "v1alpha7" {
+		return errors.New("configuration schema_version must be v1alpha1, v1alpha2, v1alpha3, v1alpha4, v1alpha5, v1alpha6 or v1alpha7")
 	}
 	if config.Build != nil {
-		if config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" && config.SchemaVersion != "v1alpha6" {
-			return errors.New("build selection requires configuration schema_version v1alpha3, v1alpha4 v1alpha5 or v1alpha6")
+		if config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" && config.SchemaVersion != "v1alpha6" && config.SchemaVersion != "v1alpha7" {
+			return errors.New("build selection requires configuration schema_version v1alpha3, v1alpha4, v1alpha5, v1alpha6 or v1alpha7")
 		}
 		if err := selection.Validate(*config.Build); err != nil {
 			return err

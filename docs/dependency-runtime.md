@@ -111,9 +111,9 @@ protocol. Dependency-loss disruption is explicitly SKIPPED in this release.
 
 ## Reports and migration
 
-Current verification emits `v1alpha7`; older verification reports remain supported. Selected-workload analysis uses `v1alpha2`; default analysis and doctor retain `v1alpha1`.
+Current verification emits `v1alpha8`; older verification reports remain supported. Selected-workload analysis uses `v1alpha2`; default analysis and doctor retain `v1alpha1`.
 Existing `v1alpha1` runtime config remains accepted without the new fields.
-Dependency/environment/readiness extensions require `v1alpha2` or `v1alpha3` config. All four
+Dependency/environment/readiness extensions require `v1alpha2` or later config. All eight
 verification report versions remain readable through `cloudforge report` and
 the trusted GitHub reporter. Old schemas are retained unchanged.
 

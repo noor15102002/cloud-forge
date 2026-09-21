@@ -2,6 +2,7 @@ package verification
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -94,7 +95,19 @@ func (s *Service) validateBaselineFor(ctx context.Context, client *kubernetes.Cl
 			}
 			return finish()
 		}
-		status, probeErr := s.probe(ctx, current.readinessURL)
+		status, probeErr := s.pacedProbe(ctx, current.readinessURL)
+		if errors.Is(probeErr, errProbePacingInterrupted) {
+			if parent.Err() != nil {
+				return observationError()
+			}
+			// Preserve the last completed baseline attempt. Reaching our own
+			// deadline while waiting to probe cannot erase a valid unhealthy
+			// observation or invent a new HTTP failure.
+			if len(result.Checks) == 0 {
+				result.Checks = append(checks, model.BaselineCheck{Name: "service_reachable", Status: model.StatusBlocked, Reason: "The paced HTTP request did not start before the baseline deadline; Service readiness was not established."})
+			}
+			return finish()
+		}
 		add("service_reachable", status >= 200 && status < 300, fmt.Sprintf("Service HTTP readiness status %d; expected 2xx.", status))
 		if current.config.Readiness != nil {
 			add("semantic_readiness", probeErr == nil && status >= 200 && status < 300, "The configured HTTP/JSON readiness contract must be satisfied.")

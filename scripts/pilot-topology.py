@@ -52,7 +52,7 @@ for replicas in (1, 2):
                 process.wait(timeout=720)
                 raise
         report = json.loads((output / "report.json").read_text())
-        assert report["schema_version"] == "v1alpha7" and report["producer"]["commit"] not in ("", "unknown")
+        assert report["schema_version"] == "v1alpha8" and report["producer"]["commit"] not in ("", "unknown")
         assert code in (0, 1) and report["status"] in ("pass", "warn", "fail")
         evidence = {e["experiment_id"]: e for e in report["evidence"]}
         for name in ("container-build", "deployment-readiness", "semantic-readiness"):

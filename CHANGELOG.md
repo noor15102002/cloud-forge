@@ -3,6 +3,16 @@
 All notable changes will be documented here. CloudForge follows Semantic
 Versioning once releases begin.
 
+## Unreleased — bounded HTTP observation
+
+- Add explicit 20ms–5s HTTP probe pacing shared across readiness and lifecycle
+  observations, with plan explanations and incompatible-baseline detection.
+- Preserve measured HTTP failures, bounded cancellation, and historical reports;
+  input v1alpha7 and report/plan v1alpha8 describe the new optional policy.
+- Record sanitized current/previous application-container termination snapshots
+  for HTTP readiness and worker observations without application logs or messages.
+- Add a generic rate-limited HTTP comparison and cancellation qualification gate.
+
 ## Unreleased — isolated backend contract
 
 - Add fixed PostgreSQL/pgvector and ClamAV providers, generated test configuration,

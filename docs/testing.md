@@ -137,3 +137,16 @@ See [the backend contract](backend-runtime.md).
 ## Bounded worker qualification
 
 The worker runtime workflow and `scripts/pilot-worker.py` exercise `testdata/healthy-worker` with advancing, missing, stale, frozen, malformed and future timestamps, container exit, a heartbeat produced only by the original pod, recoverable replacement failure, and cancellation during startup or replacement. Qualification preserves raw CLI output and requires actual owned pod identities, old-key expiry, fresh advancing samples, restoration and cleanup. A heartbeat result establishes process liveness; no fixture case proves business-job completion. Injected runner tests separately cover container restarts, post-import baseline checks, observer deadlines, provider fingerprint changes, safe serialization and historical report loading.
+
+## Bounded HTTP probe pacing
+
+The reliability workflow's `probe-pacing` job compares unchanged rate-limited
+Python fixture bytes with omitted pacing and an explicit two-second interval.
+The default case must preserve observed HTTP 429 failure evidence; the explicit
+case must complete readiness, lifecycle observations and restoration without
+429, while retaining any other measured availability FAIL. The harness records
+original CLI streams/exit codes, deterministic plans, source and image filesystem
+hashes, policy fingerprints and ownership cleanup. It also runs the existing
+readiness-cancellation harness with fixed two-second pacing and unchanged-state
+sentinels. Pure helper tests protect the fixture rate limit, evidence assertions,
+and cancellation fixture guards. See [the pacing contract](probe-pacing.md).

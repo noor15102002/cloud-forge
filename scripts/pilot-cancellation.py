@@ -32,7 +32,9 @@ INJECTED_ERROR = b"CloudForge public qualification intentionally withheld the fi
 PREFIX = "CLOUDFORGE_PILOT_"
 
 
-def fixture_copy(target, stage, monorepo):
+def fixture_copy(target, stage, monorepo, probe_pacing=False):
+    if probe_pacing and (stage != "readiness" or monorepo):
+        raise helpers.QualificationError("probe_pacing_requires_public_readiness_case")
     source = REPOSITORY / "testdata" / ("monorepo" if monorepo else "healthy-node-redis" if stage == "redis" else "healthy-node")
     shutil.copytree(source, target)
     if stage == "build":
@@ -43,9 +45,12 @@ def fixture_copy(target, stage, monorepo):
         server.write_text(server.read_text().replace("let ready = true", "let ready = false"))
     config = target / "cloudforge.yaml"
     config.write_text(config.read_text().split("experiments:")[0])
+    if probe_pacing:
+        config.write_text(config.read_text().replace("schema_version: v1alpha1", "schema_version: v1alpha7", 1)
+                          + "\nprobes:\n  interval: 2s\n")
 
 
-def validate_public_fixture(fixture, stage, monorepo):
+def validate_public_fixture(fixture, stage, monorepo, probe_pacing=False):
     helpers.require_runner()
     if stage not in STAGES or (monorepo and stage != "build"):
         raise helpers.QualificationError("cleanup_capture_unknown_fixture_mode")
@@ -58,7 +63,7 @@ def validate_public_fixture(fixture, stage, monorepo):
             raise helpers.QualificationError("cleanup_capture_nonregular_source")
     with tempfile.TemporaryDirectory(prefix="cf-public-cleanup-proof-") as temporary:
         expected = Path(temporary) / "app"
-        fixture_copy(expected, stage, monorepo)
+        fixture_copy(expected, stage, monorepo, probe_pacing)
         if helpers.hashes(expected) != helpers.hashes(fixture):
             raise helpers.QualificationError("cleanup_capture_public_fixture_changed")
 
@@ -131,7 +136,10 @@ def tool_wrapper(tool, arguments):
     stage = os.environ[PREFIX + "STAGE"]
     fixture = Path(os.environ[PREFIX + "FIXTURE"])
     monorepo = os.environ.get(PREFIX + "MONOREPO") == "true"
-    validate_public_fixture(fixture, stage, monorepo)
+    pacing_value = os.environ.get(PREFIX + "PROBE_PACING", "false")
+    if pacing_value not in ("false", "true"):
+        raise helpers.QualificationError("probe_pacing_requires_fixed_public_policy")
+    validate_public_fixture(fixture, stage, monorepo, pacing_value == "true")
     if os.environ.get(PREFIX + "FORCE_BUILDER_FAILURE") == "true" and (stage != "redis" or monorepo):
         raise helpers.QualificationError("builder_fault_requires_public_redis_case")
     owner_path = Path(os.environ[PREFIX + "OWNER"])
@@ -223,8 +231,9 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
     with tempfile.TemporaryDirectory(prefix="cloudforge-cancel-") as temporary:
         root = Path(temporary).resolve()
         app = root / "app"
-        fixture_copy(app, stage, args.monorepo)
-        validate_public_fixture(app, stage, args.monorepo)
+        probe_pacing = getattr(args, "probe_pacing", False)
+        fixture_copy(app, stage, args.monorepo, probe_pacing)
+        validate_public_fixture(app, stage, args.monorepo, probe_pacing)
         bin_dir = root / "bin"
         bin_dir.mkdir()
         environment = dict(os.environ, TMPDIR=str(root))
@@ -240,6 +249,7 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
         environment.update(PATH=str(bin_dir) + os.pathsep + os.environ["PATH"], **{
             PREFIX + "HARNESS": str(Path(__file__).resolve()), PREFIX + "STAGE": stage,
             PREFIX + "FIXTURE": str(app), PREFIX + "MONOREPO": str(args.monorepo).lower(),
+            PREFIX + "PROBE_PACING": str(probe_pacing).lower(),
             PREFIX + "MARKER": str(marker), PREFIX + "OWNER": str(root / "owner.json"),
             PREFIX + "IMPORT_OUTPUT": str(args.output / ("import-commands-" + stage)),
             PREFIX + "CLEANUP_OUTPUT": str(args.output / ("cleanup-commands-" + stage)),
@@ -248,7 +258,8 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
         report_path = args.output / f"cancel-{stage}.json"
         command = [args.binary, "verify", str(app), "--format", "json"]
         helpers.write_json(args.output / f"cancel-{stage}.command.json", {"argv": command,
-            "force_builder_cleanup_failure": args.force_builder_cleanup_failure, "outer_cleanup_wait_seconds": CLEANUP_SECONDS})
+            "force_builder_cleanup_failure": args.force_builder_cleanup_failure, "outer_cleanup_wait_seconds": CLEANUP_SECONDS,
+            "probe_policy": {"interval": "2s"} if probe_pacing else None})
         process, interrupted_at, cleanup_passed = None, None, False
         try:
             with report_path.open("wb") as stdout, (args.output / f"cancel-{stage}.stderr").open("wb") as stderr:
@@ -281,6 +292,9 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
         report = json.loads(report_path.read_text())
         assert report["status"] == "error", "Unexpected native status"
         assert any(item["code"] == "verification_canceled" for item in report["diagnostics"]), "Missing cancellation classification"
+        if probe_pacing:
+            assert report["plan"]["probes"] == {"interval": "2s"}, "Configured pacing missing from plan"
+            assert report["fingerprint"]["configuration"]["probes"] == {"interval": "2s"}, "Configured pacing missing from fingerprint"
         if args.force_builder_cleanup_failure:
             assert Path(environment[PREFIX + "INJECTION"]).exists(), "Declared builder fault was not exercised"
             assert any(item["code"] == "builder_cleanup_failed" for item in report["diagnostics"]), "Original injected cleanup failure disappeared"
@@ -314,12 +328,15 @@ def main():
     parser.add_argument("output", type=Path)
     parser.add_argument("--stages", nargs="+", default=list(STAGES[:-1]), choices=STAGES)
     parser.add_argument("--monorepo", action="store_true", help="Exercise selected custom Dockerfile cancellation (build stage only)")
+    parser.add_argument("--probe-pacing", action="store_true", help="Fixed public readiness-cancellation case with explicit two-second HTTP probe pacing")
     parser.add_argument("--force-builder-cleanup-failure", action="store_true", help="Separate public Redis cancellation case: withhold first builder removal, retain ERROR, require owned fallback cleanup")
     args = parser.parse_args()
     if args.monorepo and args.stages != ["build"]:
         parser.error("--monorepo requires --stages build")
     if args.force_builder_cleanup_failure and (args.stages != ["redis"] or args.monorepo):
         parser.error("--force-builder-cleanup-failure requires only --stages redis")
+    if args.probe_pacing and (args.stages != ["readiness"] or args.monorepo or args.force_builder_cleanup_failure):
+        parser.error("--probe-pacing requires only --stages readiness")
     helpers.require_runner()  # Before output directories, Docker or kubeconfig access.
     args.binary = str(Path(args.binary).resolve())
     args.output = args.output.resolve()

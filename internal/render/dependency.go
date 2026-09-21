@@ -32,6 +32,11 @@ func PlanText(w io.Writer, plan model.VerificationPlan) error {
 			return err
 		}
 	}
+	if plan.Probes != nil {
+		if _, err := fmt.Fprintf(w, "  CloudForge HTTP probes: %s\n", terminalText(probePolicyDescription(plan.Probes))); err != nil {
+			return err
+		}
+	}
 	if len(plan.Detected) > 0 {
 		if _, err := fmt.Fprintf(w, "  Detected: %s\n", terminalText(strings.Join(plan.Detected, ", "))); err != nil {
 			return err
@@ -119,6 +124,11 @@ func PlanMarkdown(w io.Writer, plan model.VerificationPlan) error {
 			return err
 		}
 	}
+	if plan.Probes != nil {
+		if _, err := fmt.Fprintf(w, "\n**CloudForge HTTP probes:** %s\n", markdownText(probePolicyDescription(plan.Probes))); err != nil {
+			return err
+		}
+	}
 	for _, limit := range plan.Limitations {
 		if _, err := fmt.Fprintf(w, "\n- Limitation: %s\n", markdownText(limit)); err != nil {
 			return err
@@ -140,6 +150,10 @@ func buildText(w io.Writer, build *model.BuildSelection) error {
 	}
 	_, err := fmt.Fprintf(w, "Build selection (repository-relative): app=%s dockerfile=%s context=%s\n", terminalText(build.App), terminalText(build.Dockerfile), terminalText(build.Context))
 	return err
+}
+
+func probePolicyDescription(probes *model.ProbeSettings) string {
+	return fmt.Sprintf("minimum request-start interval %s (explicit test configuration), shared across readiness and availability requests. Kubernetes probes, explicit control requests and k6 are unchanged. Slower sampling can miss shorter outages.", probes.Interval)
 }
 
 func topologyDescription(t *model.TestTopology) string {

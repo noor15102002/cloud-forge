@@ -69,7 +69,7 @@ func TestWorkerPlanIsDeterministicExplicitAndHasNoHTTPPrerequisites(t *testing.T
 		t.Fatalf("invalid/nondeterministic worker plan: %+v", first.Run.Diagnostics)
 	}
 	p := first.Run.Plan
-	if p.SchemaVersion != "v1alpha7" || p.RuntimeKind != "worker" || p.Port != 0 || p.Worker == nil || p.Worker.Claim != "process_liveness_only" || p.Topology.Origin != "explicit_test_configuration" || p.Topology.Strategy != "recreate" || p.Topology.Replicas != 1 || p.Topology.ReadinessOrigin != "worker_heartbeat" {
+	if p.SchemaVersion != model.VerificationSchemaVersion || p.RuntimeKind != "worker" || p.Port != 0 || p.Worker == nil || p.Worker.Claim != "process_liveness_only" || p.Topology.Origin != "explicit_test_configuration" || p.Topology.Strategy != "recreate" || p.Topology.Replicas != 1 || p.Topology.ReadinessOrigin != "worker_heartbeat" {
 		t.Fatalf("wrong worker semantics: %+v", p)
 	}
 	for _, c := range p.Capabilities {
@@ -83,7 +83,7 @@ func TestWorkerPlanIsDeterministicExplicitAndHasNoHTTPPrerequisites(t *testing.T
 		}
 	}
 	compiler := jsonschema.NewCompiler()
-	schema, err := compiler.Compile(filepath.Join("..", "..", "schemas", "plan.v1alpha7.schema.json"))
+	schema, err := compiler.Compile(filepath.Join("..", "..", "schemas", "plan.v1alpha8.schema.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

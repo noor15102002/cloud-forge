@@ -80,8 +80,8 @@ Both `analyze . --config pilot.yaml` and `verify . --plan --config pilot.yaml`
 inspect that selection without executing code. `verify . --config pilot.yaml`
 uses the same build inputs for both lifecycle images.
 
-Verification JSON is the canonical report and uses the versioned `v1alpha7` schema
-defined in [`schemas/verification.v1alpha7.schema.json`](schemas/verification.v1alpha7.schema.json).
+Verification JSON is the canonical report and uses the versioned `v1alpha8` schema
+defined in [`schemas/verification.v1alpha8.schema.json`](schemas/verification.v1alpha8.schema.json).
 Collections are sorted for repeatable output; consumers must not depend on JSON
 object key ordering. Verification also supports concise terminal output and a
 Markdown report suitable for a pull-request comment.
@@ -94,7 +94,7 @@ relative regressions. A detected regression exits with status `1`; missing,
 skipped, nonnumeric, or unit-incompatible evidence is reported as unavailable
 instead of being treated as a regression. Environment and effective workload
 fingerprints must also be complete and compatible. Baselines are read before repository
-code executes and must be strict, bounded `v1alpha1`, `v1alpha2`, `v1alpha3`, `v1alpha4`, `v1alpha5`, `v1alpha6` or `v1alpha7` JSON files.
+code executes and must be strict, bounded `v1alpha1`, `v1alpha2`, `v1alpha3`, `v1alpha4`, `v1alpha5`, `v1alpha6`, `v1alpha7` or `v1alpha8` JSON files.
 
 `verify` builds the root Dockerfile (or the explicit selected Dockerfile/context), creates a uniquely named k3d cluster,
 imports the image, provisions and waits for explicitly enabled supported dependencies,

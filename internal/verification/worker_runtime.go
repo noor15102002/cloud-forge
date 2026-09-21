@@ -21,6 +21,7 @@ type workerResult struct {
 	summary       string
 	observation   model.WorkerObservation
 	duration      time.Duration
+	podSnapshot   []kubernetes.PodState
 }
 
 func workerSelector(current plan) string {
@@ -34,8 +35,14 @@ func workerFailure(status model.Status, reason string, observation model.WorkerO
 
 // waitWorkerEmpty never deletes or overwrites the heartbeat. A replacement can
 // start only after all prior pod objects are gone and Redis confirms key absence.
-func (s *Service) waitWorkerEmpty(parent context.Context, client *kubernetes.Client, current plan, timeout time.Duration, observation model.WorkerObservation) workerResult {
+func (s *Service) waitWorkerEmpty(parent context.Context, client *kubernetes.Client, current plan, timeout time.Duration, observation model.WorkerObservation) (result workerResult) {
 	started := time.Now()
+	var snapshot []kubernetes.PodState
+	defer func() {
+		if result.podSnapshot == nil {
+			result.podSnapshot = snapshot
+		}
+	}()
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	for ctx.Err() == nil {
@@ -46,6 +53,7 @@ func (s *Service) waitWorkerEmpty(parent context.Context, client *kubernetes.Cli
 			}
 			return workerFailure(model.StatusError, "Worker termination could not be observed reliably.", observation, started)
 		}
+		snapshot = pods
 		running := 0
 		for _, pod := range pods {
 			if pod.Running {
@@ -86,7 +94,7 @@ func (s *Service) waitWorkerEmpty(parent context.Context, client *kubernetes.Cli
 
 // workerPod establishes expected controller, image, UID, replicas and dependency
 // readiness independently from the application's heartbeat payload.
-func (s *Service) workerPod(ctx context.Context, client *kubernetes.Client, current plan, image string, observation *model.WorkerObservation) (bool, string, error) {
+func (s *Service) workerPod(ctx context.Context, client *kubernetes.Client, current plan, image string, observation *model.WorkerObservation, snapshot *[]kubernetes.PodState) (bool, string, error) {
 	deployment, res, err := client.ObserveDeployment(ctx, current.clusterName, namespace, current.workloadName)
 	if failed(res) || err != nil {
 		return false, "", fmt.Errorf("deployment observation unavailable")
@@ -99,6 +107,7 @@ func (s *Service) workerPod(ctx context.Context, client *kubernetes.Client, curr
 	if failed(res) || err != nil {
 		return false, "", fmt.Errorf("pod observation unavailable")
 	}
+	*snapshot = pods
 	running := 0
 	for _, pod := range pods {
 		if pod.Running {
@@ -161,15 +170,21 @@ func (s *Service) workerPod(ctx context.Context, client *kubernetes.Client, curr
 	return true, "", nil
 }
 
-func (s *Service) waitWorker(parent context.Context, client *kubernetes.Client, current plan, image string, timeout time.Duration, observation model.WorkerObservation) workerResult {
+func (s *Service) waitWorker(parent context.Context, client *kubernetes.Client, current plan, image string, timeout time.Duration, observation model.WorkerObservation) (result workerResult) {
 	started := time.Now()
+	var snapshot []kubernetes.PodState
+	defer func() {
+		if result.podSnapshot == nil {
+			result.podSnapshot = snapshot
+		}
+	}()
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	maxAge, _ := time.ParseDuration(current.config.Worker.Heartbeat.MaxAge)
 	var previousTimestamp, previousRedisTime, lastProducerTime time.Time
 	advancing := 0
 	for ctx.Err() == nil {
-		running, violation, err := s.workerPod(ctx, client, current, image, &observation)
+		running, violation, err := s.workerPod(ctx, client, current, image, &observation, &snapshot)
 		if err != nil {
 			if ctx.Err() != nil && parent.Err() == nil {
 				return s.workerDeadline(parent, client, current, image, observation, lastProducerTime, previousRedisTime, started)
@@ -218,7 +233,7 @@ func (s *Service) waitWorker(parent context.Context, client *kubernetes.Client, 
 		}
 		if advancing >= 2 {
 			// The Redis read must not straddle an unobserved container restart.
-			stable, violation, err := s.workerPod(ctx, client, current, image, &observation)
+			stable, violation, err := s.workerPod(ctx, client, current, image, &observation, &snapshot)
 			if err != nil {
 				var prerequisite workerPrerequisiteError
 				if errors.As(err, &prerequisite) {
@@ -256,6 +271,7 @@ func workerEvidence(id string, result workerResult, mutation bool, current plan)
 		{Name: "maximum_running_workers", Value: strconv.Itoa(observation.MaximumRunningPods), Unit: "pods"},
 		{Name: "container_restarts", Value: strconv.Itoa(int(observation.ContainerRestarts)), Unit: "restarts"},
 	}}
+	evidence.Measurements = append(evidence.Measurements, podTerminationMeasurements(result.podSnapshot)...)
 	if result.deadline {
 		evidence.Measurements = append(evidence.Measurements, model.Measurement{Name: "requirement_deadline_exceeded", Value: "true"}, model.Measurement{Name: "final_state_observed_after_deadline", Value: strconv.FormatBool(result.finalObserved)}, model.Measurement{Name: "final_observation_limit_ms", Value: "5000", Unit: "ms"})
 	}
@@ -267,14 +283,18 @@ func (s *Service) workerTransition(parent context.Context, client *kubernetes.Cl
 	ctx, cancel := context.WithTimeout(parent, s.recoveryTimeout)
 	defer cancel()
 	observation := model.WorkerObservation{PreviousPodUID: previousUID, Samples: []model.HeartbeatSample{}}
+	var snapshot []kubernetes.PodState
 	failure := func(reason string) workerResult {
-		return workerFailure(model.StatusError, reason, observation, started)
+		result := workerFailure(model.StatusError, reason, observation, started)
+		result.podSnapshot = snapshot
+		return result
 	}
 	if failed(client.ScaleWorker(ctx, current.clusterName, namespace, current.workloadName, 0)) {
 		return failure("CloudForge could not request a zero-worker transition.")
 	}
 	empty := s.waitWorkerEmpty(parent, client, current, time.Until(started.Add(s.recoveryTimeout)), observation)
 	observation = empty.observation
+	snapshot = empty.podSnapshot
 	if empty.status != model.StatusPass {
 		empty.duration = time.Since(started)
 		return empty
@@ -292,6 +312,9 @@ func (s *Service) workerTransition(parent context.Context, client *kubernetes.Cl
 		}
 	}
 	result := s.waitWorker(parent, client, current, image, time.Until(started.Add(s.recoveryTimeout)), observation)
+	if result.podSnapshot == nil {
+		result.podSnapshot = snapshot
+	}
 	result.duration = time.Since(started)
 	return result
 }
@@ -326,7 +349,11 @@ func (s *Service) runWorkerSuite(ctx context.Context, client *kubernetes.Client,
 	if failed(client.Apply(ctx, current.clusterName, manifest)) {
 		initial.status, initial.summary = model.StatusError, "The worker deployment could not be created reliably."
 	} else {
-		initial = s.waitWorker(ctx, client, current, current.image, s.readinessTimeout, initial.observation)
+		observed := s.waitWorker(ctx, client, current, current.image, s.readinessTimeout, initial.observation)
+		if observed.podSnapshot == nil {
+			observed.podSnapshot = initial.podSnapshot
+		}
+		initial = observed
 	}
 	initial.duration = time.Since(start)
 	out.Run.Evidence = append(out.Run.Evidence, workerEvidence("worker-startup", initial, true, current))
@@ -350,6 +377,7 @@ func (s *Service) runWorkerSuite(ctx context.Context, client *kubernetes.Client,
 				status = model.StatusBlocked
 			}
 			recordNotExecuted(out, current, id, status, "Required worker baseline could not be established.")
+			out.Run.Evidence[len(out.Run.Evidence)-1].Measurements = podTerminationMeasurements(baseline.podSnapshot)
 			blocked = "The worker baseline is unavailable; dependent experiments were not started."
 			continue
 		}
@@ -357,26 +385,36 @@ func (s *Service) runWorkerSuite(ctx context.Context, client *kubernetes.Client,
 		if id == "worker-image-replacement" {
 			if buildB == nil || failed(*buildB) {
 				recordNotExecuted(out, current, id, model.StatusBlocked, "Image B was not built successfully; sequential replacement could not be tested.")
+				out.Run.Evidence[len(out.Run.Evidence)-1].Measurements = podTerminationMeasurements(baseline.podSnapshot)
 				continue
 			}
 			if failed(cluster.ImportImage(ctx, current.clusterName, current.rolloutImage)) {
 				recordNotExecuted(out, current, id, model.StatusError, "Image B could not be imported reliably; worker state was not changed.")
+				out.Run.Evidence[len(out.Run.Evidence)-1].Measurements = podTerminationMeasurements(baseline.podSnapshot)
 				continue
 			}
 			// Importing image B can disturb the node; establish image A's
 			// baseline again before attributing a subsequent mutation result.
-			baseline = s.waitWorker(ctx, client, current, current.image, s.baselineTimeout, model.WorkerObservation{Samples: []model.HeartbeatSample{}})
+			observed := s.waitWorker(ctx, client, current, current.image, s.baselineTimeout, model.WorkerObservation{Samples: []model.HeartbeatSample{}})
+			if observed.podSnapshot == nil {
+				observed.podSnapshot = baseline.podSnapshot
+			}
+			baseline = observed
 			if baseline.status != model.StatusPass {
 				status := baseline.status
 				if status == model.StatusFail {
 					status = model.StatusBlocked
 				}
 				recordNotExecuted(out, current, id, status, "The image A baseline was not established after image B preparation; no worker replacement was attempted.")
+				out.Run.Evidence[len(out.Run.Evidence)-1].Measurements = podTerminationMeasurements(baseline.podSnapshot)
 				continue
 			}
 			image = current.rolloutImage
 		}
 		result := s.workerTransition(ctx, client, current, image, baseline.observation.PodUID, "")
+		if result.podSnapshot == nil {
+			result.podSnapshot = baseline.podSnapshot
+		}
 		evidence := workerEvidence(id, result, true, current)
 		if ctx.Err() == nil {
 			previousUID := result.observation.PodUID

@@ -142,3 +142,13 @@ for defaults, safety limits, HPA exclusions and interpretation of paired evidenc
 The strict `v1alpha5` contract adds fixed backend providers, generated test values,
 one-time preparation, and a bounded backend profile. See [isolated backend
 verification](backend-runtime.md) for its limits and network boundary.
+
+## HTTP probe pacing
+
+The strict `v1alpha7` contract adds optional `probes: {interval: 2s}` for HTTP
+workloads. It sets a shared minimum interval between CloudForge readiness and
+availability request starts; it does not modify Kubernetes probes, explicit
+control requests, k6, accepted statuses or experiment deadlines. Omitting it
+preserves existing sampling. See [bounded HTTP probe pacing](probe-pacing.md)
+for bounds, rate-limit interpretation, fingerprint compatibility and the risk
+of missing short outages with slower sampling.

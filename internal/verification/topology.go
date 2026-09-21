@@ -43,7 +43,7 @@ func validateTopology(config model.RuntimeConfiguration) error {
 	if value == nil {
 		return nil
 	}
-	if config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" && config.SchemaVersion != "v1alpha6" {
+	if config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" && config.SchemaVersion != "v1alpha6" && config.SchemaVersion != "v1alpha7" {
 		return errors.New("explicit test topology requires configuration schema_version v1alpha4")
 	}
 	if value.Replicas < 1 || value.Replicas > safetyBudget().MaxReplicas {
