@@ -32,7 +32,11 @@ keeps synthetic version `b` unready.
 Runtime tests also cover readiness HTTP retries, successful replacement after
 a temporary unready state, request failures during deletion, recovery timeout,
 final health, graceful termination traffic, version rollout transitions,
-broken shutdown and rollout fixtures, and cancellation-safe cleanup.
+broken shutdown and rollout fixtures, and cancellation-safe cleanup. Deadline
+regressions interrupt an in-progress rollout read, then separately cover an
+observed unready state, late healthy state, final API timeout, malformed response,
+and cancellation. A full verifier test preserves the resulting FAIL through
+restoration, later load evidence, cleanup, and strict saved-report loading.
 
 The k6 adapter tests valid and malformed summary exports. HPA tests use official
 Kubernetes status types and injected runners to cover metrics availability,

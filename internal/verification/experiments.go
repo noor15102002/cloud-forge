@@ -80,6 +80,8 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 	parent := ctx
 	ctx, cancelExperiment := context.WithTimeout(ctx, s.recoveryTimeout)
 	defer cancelExperiment()
+	observation := lifecycleObservation{parent: parent, experiment: ctx}
+	defer observation.close()
 	selector := "app.kubernetes.io/name=" + current.workloadName
 	pods, commandResult, err := client.ObservePods(ctx, current.clusterName, namespace, selector)
 	if err != nil || failed(commandResult) {
@@ -132,11 +134,10 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 	ready, total := 0, 0
 	var restarts int32
 	recovered := false
+	deadlineReached := false
 	for {
-		if recoveryCtx.Err() != nil {
-			goto shutdownComplete
-		}
-		observed, result, observeErr := client.ObservePods(recoveryCtx, current.clusterName, namespace, selector)
+		observed, result, expired, observeErr := observation.pods(client, current, selector)
+		deadlineReached = expired
 		if observeErr != nil || failed(result) {
 			stopTraffic()
 			traffic := <-trafficDone
@@ -145,17 +146,18 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 		ready, total, restarts = summarizePods(observed)
 		minimumReady = min(minimumReady, ready)
 		if ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) {
-			recovered = true
+			recovered = !deadlineReached
+			break
+		}
+		if deadlineReached {
 			break
 		}
 		select {
 		case <-recoveryCtx.Done():
-			goto shutdownComplete
 		case <-time.After(s.poll):
 		}
 	}
 
-shutdownComplete:
 	_, _ = waitForSample(ctx, sampled, terminationCompleted)
 	stopTraffic()
 	traffic := <-trafficDone
@@ -163,9 +165,12 @@ shutdownComplete:
 	if parent.Err() != nil {
 		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_canceled", "Graceful shutdown was canceled before completion.", parent.Err().Error(), traffic)
 	}
-	finalStatus, finalErr := s.probe(ctx, current.healthURL)
+	finalStatus, finalErr := s.probe(observation.context(), current.healthURL)
 	if finalErr != nil {
 		finalStatus = 0
+	}
+	if parent.Err() != nil {
+		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_canceled", "Graceful shutdown was canceled before completion.", parent.Err().Error(), traffic)
 	}
 	inFlight := overlappingRequests(traffic.Samples, terminationStarted, terminationCompleted)
 	measurements := []model.Measurement{
@@ -182,6 +187,10 @@ shutdownComplete:
 		{Name: "final_http_status", Value: strconv.Itoa(finalStatus)},
 	}
 	measurements = append(measurements, traffic.diagnostics()...)
+	measurements = append(measurements, lifecycleDeadlineMeasurements(deadlineReached)...)
+	if deadlineReached && ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) && traffic.Failures == 0 {
+		return lifecycleCompletionUnobserved("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_completion_unobserved", "The replacement was ready only when observed after the deadline; completion within the required window was not established.", duration, traffic, measurements)
+	}
 	if !recovered || traffic.Failures > 0 || finalStatus < 200 || finalStatus >= 300 {
 		return lifecycleFailure("graceful-shutdown", "Graceful shutdown under traffic", "runtime.graceful-shutdown", "The application dropped traffic or did not recover cleanly after SIGTERM.", "Inspect SIGTERM handling, readiness removal, connection draining, replica count, and termination grace period.", duration, traffic, measurements)
 	}
@@ -194,6 +203,8 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 	parent := ctx
 	ctx, cancelExperiment := context.WithTimeout(ctx, s.rolloutTimeout)
 	defer cancelExperiment()
+	observation := lifecycleObservation{parent: parent, experiment: ctx}
+	defer observation.close()
 	title := "Rolling deployment under traffic"
 	if failed(buildResult) {
 		if isApplicationBuildFailure(buildResult) {
@@ -263,11 +274,10 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 	minimumReady := baselineReady
 	previousReady, previousTarget := baselineReady, 0
 	completed := false
+	deadlineReached := false
 	for {
-		if rolloutCtx.Err() != nil {
-			goto rolloutComplete
-		}
-		pods, result, observeErr := client.ObservePods(rolloutCtx, current.clusterName, namespace, selector)
+		pods, result, expired, observeErr := observation.pods(client, current, selector)
+		deadlineReached = expired
 		if observeErr != nil || failed(result) {
 			stopTraffic()
 			traffic := <-trafficDone
@@ -287,17 +297,18 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 			minimumReady = ready
 		}
 		if total == int(current.desiredReplicas) && ready == int(current.desiredReplicas) && targetReady == int(current.desiredReplicas) {
-			completed = true
+			completed = !deadlineReached
+			break
+		}
+		if deadlineReached {
 			break
 		}
 		select {
 		case <-rolloutCtx.Done():
-			goto rolloutComplete
 		case <-time.After(s.poll):
 		}
 	}
 
-rolloutComplete:
 	completedAt := time.Now()
 	_, _ = waitForSample(ctx, sampled, completedAt)
 	stopTraffic()
@@ -306,9 +317,12 @@ rolloutComplete:
 	if parent.Err() != nil {
 		return lifecycleExecutionError("rolling-deployment", title, "rollout_canceled", "Rolling deployment was canceled before completion.", parent.Err().Error(), traffic)
 	}
-	finalStatus, finalErr := s.probe(ctx, current.healthURL)
+	finalStatus, finalErr := s.probe(observation.context(), current.healthURL)
 	if finalErr != nil {
 		finalStatus = 0
+	}
+	if parent.Err() != nil {
+		return lifecycleExecutionError("rolling-deployment", title, "rollout_canceled", "Rolling deployment was canceled before completion.", parent.Err().Error(), traffic)
 	}
 	measurements := []model.Measurement{
 		{Name: "source_version", Value: "a"},
@@ -326,6 +340,10 @@ rolloutComplete:
 		{Name: "final_http_status", Value: strconv.Itoa(finalStatus)},
 	}
 	measurements = append(measurements, traffic.diagnostics()...)
+	measurements = append(measurements, lifecycleDeadlineMeasurements(deadlineReached)...)
+	if deadlineReached && ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) && targetReady == int(current.desiredReplicas) && traffic.Failures == 0 {
+		return lifecycleCompletionUnobserved("rolling-deployment", title, "rollout_completion_unobserved", "Version B was ready only when observed after the deadline; completion within the required window was not established.", duration, traffic, measurements)
+	}
 	if !completed || traffic.Failures > 0 || finalStatus < 200 || finalStatus >= 300 {
 		return lifecycleFailure("rolling-deployment", title, "runtime.rolling-deployment", "Version B did not roll out without failed traffic.", "Inspect version B readiness, rolling update strategy, capacity, and application startup behavior.", duration, traffic, measurements)
 	}
@@ -338,6 +356,8 @@ func (s *Service) runPodRecovery(ctx context.Context, client *kubernetes.Client,
 	parent := ctx
 	ctx, cancelExperiment := context.WithTimeout(ctx, s.recoveryTimeout)
 	defer cancelExperiment()
+	observation := lifecycleObservation{parent: parent, experiment: ctx}
+	defer observation.close()
 	selector := "app.kubernetes.io/name=" + current.workloadName
 	pods, commandResult, err := client.ObservePods(ctx, current.clusterName, namespace, selector)
 	if err != nil || failed(commandResult) {
@@ -404,11 +424,10 @@ trafficContinued:
 	ready, total := 0, 0
 	var restarts int32
 	recovered := false
+	deadlineReached := false
 	for {
-		if recoveryCtx.Err() != nil {
-			goto complete
-		}
-		observed, result, observeErr := client.ObservePods(recoveryCtx, current.clusterName, namespace, selector)
+		observed, result, expired, observeErr := observation.pods(client, current, selector)
+		deadlineReached = expired
 		if observeErr != nil || failed(result) {
 			stopTraffic()
 			traffic := <-trafficDone
@@ -417,26 +436,30 @@ trafficContinued:
 		ready, total, restarts = summarizePods(observed)
 		minimumReady = min(minimumReady, ready)
 		if ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) {
-			recovered = true
+			recovered = !deadlineReached
+			break
+		}
+		if deadlineReached {
 			break
 		}
 		select {
 		case <-recoveryCtx.Done():
-			goto complete
 		case <-time.After(s.poll):
 		}
 	}
 
-complete:
 	replacementDuration := elapsedMilliseconds(time.Since(recoveryStarted))
 	stopTraffic()
 	traffic := <-trafficDone
 	if parent.Err() != nil {
 		return recoveryExecutionError("pod_recovery_canceled", "Pod recovery was canceled before completion.", parent.Err().Error(), traffic)
 	}
-	finalStatus, finalErr := s.probe(ctx, current.healthURL)
+	finalStatus, finalErr := s.probe(observation.context(), current.healthURL)
 	if finalErr != nil {
 		finalStatus = 0
+	}
+	if parent.Err() != nil {
+		return recoveryExecutionError("pod_recovery_canceled", "Pod recovery was canceled before completion.", parent.Err().Error(), traffic)
 	}
 	status := model.StatusPass
 	summary := "The Deployment replaced a deleted pod while serving healthy traffic."
@@ -460,6 +483,10 @@ complete:
 		},
 	}
 	evidence.Measurements = append(evidence.Measurements, traffic.diagnostics()...)
+	evidence.Measurements = append(evidence.Measurements, lifecycleDeadlineMeasurements(deadlineReached)...)
+	if deadlineReached && ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) && traffic.Failures == 0 {
+		return lifecycleCompletionUnobserved("pod-recovery", "Pod recovery under traffic", "pod_recovery_completion_unobserved", "The replacement was ready only when observed after the deadline; completion within the required window was not established.", replacementDuration, traffic, evidence.Measurements)
+	}
 	finding := model.Finding{
 		ID: "runtime.pod-recovery", Category: "reliability", Status: status, Severity: model.SeverityHigh,
 		Summary: summary, Observed: fmt.Sprintf("%d failed requests, %d ms downtime, HTTP %d", traffic.Failures, traffic.MaxDowntimeMS, finalStatus),
