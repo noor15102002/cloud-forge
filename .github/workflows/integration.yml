@@ -84,18 +84,6 @@ jobs:
             any(.diagnostics[]; .code == "rolling_deployment_failed" and .status == "fail")
           ' /tmp/cloudforge-broken-rollout.json
 
-      - name: Confirm cluster cleanup
+      - name: Confirm all owned Docker resources were removed
         if: ${{ always() }}
-        run: |
-          leaked="$(k3d cluster list --no-headers | awk '$1 ~ /^cloudforge-/ {print $1}')"
-          if [ -n "$leaked" ]; then
-            for cluster in $leaked; do
-              k3d cluster delete "$cluster" || true
-            done
-            echo "CloudForge left one or more disposable clusters behind: $leaked" >&2
-            remaining="$(k3d cluster list --no-headers | awk '$1 ~ /^cloudforge-/ {print $1}')"
-            if [ -n "$remaining" ]; then
-              echo "Cleanup retry could not remove: $remaining" >&2
-            fi
-            exit 1
-          fi
+        run: bash scripts/pilot-cleanup-check.sh
