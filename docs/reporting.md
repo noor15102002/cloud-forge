@@ -18,6 +18,35 @@ CloudForge sorts evidence, measurements, findings, and diagnostics before
 serialization. Consumers must use field names and must not depend on object key
 order.
 
+Lifecycle availability measurements include `probe_http_status_<code>` counts
+and `probe_failure_<class>` counts. Status codes are bounded to 100–599. Failure
+classes are restricted to `timeout`, `connection_refused`, `connection_reset`,
+`connection_closed`, `transport_error`, `http_status`, `invalid_http_status`,
+`body_unreadable`, `body_limit`, `invalid_json`, and `semantic_mismatch`. Only
+observed categories are emitted, in sorted order. At most 500 status counters and
+11 failure counters can appear; raw errors, URLs, response bodies and assertion
+values are omitted. These descriptive counters use existing measurement entries
+and do not change the report schema or historical loading.
+
+`probe_timeout_ms` and `probe_poll_interval_ms` describe the bounded probe policy.
+The sampler is serial: slow requests reduce the sampling frequency.
+`downtime_ms` retains its existing convention, from the first failed response's
+completion to a later successful response's completion, or the observation end.
+It does not locate the exact outage onset, include the first failed request's
+duration, or prove continuous unavailability between samples.
+`downtime_window_censored=true` means the final failed window ended without an
+observed recovery. CloudForge-canceled requests are excluded from request and
+failure counts. Historical measurements are never recalculated.
+
+Each lifecycle mutation requires a successful fresh Service/readiness probe.
+A failed pre-mutation probe produces BLOCKED, with `prerequisite_request_count`
+and `prerequisite_failed_requests`; it does not become an application failure or
+trigger deletion/rollout. The intended baseline is also revalidated after image B
+preparation, because builds/imports can affect runtime capacity. A lost Kubernetes
+observation is ERROR even when its command reaches the experiment deadline;
+valid observations that never reach the required state remain FAIL. Partial
+traffic evidence is retained in both cases.
+
 ## Baselines and regressions
 
 Save a canonical report from a trusted default-branch run and pass it explicitly

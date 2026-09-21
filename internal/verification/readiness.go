@@ -23,6 +23,7 @@ type readinessCheck struct {
 	Matches       map[string]bool
 	Reason        string
 	Success       bool
+	FailureClass  string
 }
 type readinessChecker struct {
 	client     *http.Client
@@ -42,7 +43,7 @@ func (c *readinessChecker) probe(ctx context.Context, url string) (int, error) {
 	}
 	c.mu.Unlock()
 	if !check.Success {
-		return check.HTTPStatus, errors.New("readiness acceptance did not match")
+		return check.HTTPStatus, &readinessProbeError{class: semanticFailureClass(check)}
 	}
 	return check.HTTPStatus, nil
 }
@@ -55,6 +56,7 @@ func (c *readinessChecker) check(ctx context.Context, url string) readinessCheck
 	request.Close = true // Semantic availability uses the same fresh-connection policy.
 	response, err := c.client.Do(request)
 	if err != nil {
+		result.FailureClass = probeFailureClass(0, err)
 		return result
 	}
 	defer func() { _ = response.Body.Close() }()

@@ -191,8 +191,10 @@ func (s *Service) prepareExperiment(ctx context.Context, client *kubernetes.Clie
 }
 
 func (s *Service) finishExperiment(ctx context.Context, client *kubernetes.Client, current plan, manifestPath string, out *Outcome, result recoveryOutcome, removeHPA bool, blocked *string) {
-	result.Evidence.Execution = &model.ExperimentExecution{Executed: true, MutationAttempted: result.MutationAttempted}
-	if result.Evidence.Status == model.StatusSkipped && !result.MutationAttempted {
+	if result.Evidence.Execution == nil {
+		result.Evidence.Execution = &model.ExperimentExecution{Executed: true, MutationAttempted: result.MutationAttempted}
+	}
+	if (result.Evidence.Status == model.StatusSkipped || result.Evidence.Status == model.StatusBlocked) && !result.MutationAttempted {
 		result.Evidence.Execution.Executed = false
 	}
 	result.Evidence.Topology = current.topology

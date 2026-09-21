@@ -26,6 +26,10 @@ type trafficObservation struct {
 	MaxDowntimeMS  int64
 	LastHTTPStatus int
 	Samples        []trafficSample
+	FailureClasses map[string]int
+	HTTPStatuses   map[int]int
+	PollMS         int64
+	WindowCensored bool
 }
 
 type trafficSample struct {
@@ -97,6 +101,10 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 		traffic := <-trafficDone
 		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_canceled", "Graceful shutdown was canceled before traffic started.", ctx.Err().Error(), traffic)
 	}
+	if initialSample.Failed {
+		stopTraffic()
+		return trafficPrerequisiteBlocked("graceful-shutdown", "Graceful shutdown under traffic", <-trafficDone)
+	}
 
 	terminationStarted, ok := waitForRequestStart(ctx, started, initialSample.CompletedAt)
 	if !ok {
@@ -125,10 +133,10 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 	var restarts int32
 	recovered := false
 	for {
-		observed, result, observeErr := client.ObservePods(recoveryCtx, current.clusterName, namespace, selector)
-		if recoveryCtx.Err() != nil && parent.Err() == nil {
+		if recoveryCtx.Err() != nil {
 			goto shutdownComplete
 		}
+		observed, result, observeErr := client.ObservePods(recoveryCtx, current.clusterName, namespace, selector)
 		if observeErr != nil || failed(result) {
 			stopTraffic()
 			traffic := <-trafficDone
@@ -173,6 +181,7 @@ shutdownComplete:
 		{Name: "container_restarts", Value: strconv.FormatInt(int64(restarts), 10), Unit: "restarts"},
 		{Name: "final_http_status", Value: strconv.Itoa(finalStatus)},
 	}
+	measurements = append(measurements, traffic.diagnostics()...)
 	if !recovered || traffic.Failures > 0 || finalStatus < 200 || finalStatus >= 300 {
 		return lifecycleFailure("graceful-shutdown", "Graceful shutdown under traffic", "runtime.graceful-shutdown", "The application dropped traffic or did not recover cleanly after SIGTERM.", "Inspect SIGTERM handling, readiness removal, connection draining, replica count, and termination grace period.", duration, traffic, measurements)
 	}
@@ -195,6 +204,27 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 	if result := k3dClient.ImportImage(ctx, current.clusterName, current.rolloutImage); failed(result) {
 		return lifecycleExecutionError("rolling-deployment", title, "rollout_image_import_failed", "k3d could not import the version B image.", commandGuidance(result, nil), trafficObservation{})
 	}
+	// Building/importing B can change node capacity or application health after
+	// prepareExperiment's baseline check. Re-establish the intended A baseline
+	// before attributing any interruption to the rollout mutation.
+	baselineBudget := s.baselineTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		baselineBudget = min(baselineBudget, time.Until(deadline))
+	}
+	// Keep the remaining experiment budget as this check's own deadline, so
+	// valid unhealthy observations expire as BLOCKED, while parent cancellation
+	// and failed API observations remain ERROR.
+	baseline := s.validateBaselineFor(parent, client, current, baselineBudget)
+	if baseline.Status != model.StatusPass {
+		result := lifecycleBlocked("rolling-deployment", title, "The original runtime baseline was not established after preparing image B; rollout was not started.")
+		result.Evidence.Status = baseline.Status
+		result.Evidence.Recovery = &baseline
+		result.Evidence.Execution = &model.ExperimentExecution{Executed: false}
+		if baseline.Status == model.StatusError {
+			result.ExitCode = 2
+		}
+		return result
+	}
 	selector := "app.kubernetes.io/name=" + current.workloadName
 	before, beforeResult, beforeErr := client.ObservePods(ctx, current.clusterName, namespace, selector)
 	if beforeErr != nil || failed(beforeResult) {
@@ -206,10 +236,15 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 	sampled := make(chan trafficSample, 1)
 	trafficDone := make(chan trafficObservation, 1)
 	go func() { trafficDone <- s.collectTraffic(trafficCtx, current.readinessURL, sampled, nil) }()
-	if _, ok := waitForSample(ctx, sampled, time.Time{}); !ok {
+	initialSample, ok := waitForSample(ctx, sampled, time.Time{})
+	if !ok {
 		stopTraffic()
 		traffic := <-trafficDone
 		return lifecycleExecutionError("rolling-deployment", title, "rollout_canceled", "Rolling deployment was canceled before traffic started.", ctx.Err().Error(), traffic)
+	}
+	if initialSample.Failed {
+		stopTraffic()
+		return trafficPrerequisiteBlocked("rolling-deployment", title, <-trafficDone)
 	}
 
 	rolloutStarted := time.Now()
@@ -229,10 +264,10 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 	previousReady, previousTarget := baselineReady, 0
 	completed := false
 	for {
-		pods, result, observeErr := client.ObservePods(rolloutCtx, current.clusterName, namespace, selector)
-		if rolloutCtx.Err() != nil && parent.Err() == nil {
+		if rolloutCtx.Err() != nil {
 			goto rolloutComplete
 		}
+		pods, result, observeErr := client.ObservePods(rolloutCtx, current.clusterName, namespace, selector)
 		if observeErr != nil || failed(result) {
 			stopTraffic()
 			traffic := <-trafficDone
@@ -290,6 +325,7 @@ rolloutComplete:
 		{Name: "downtime_ms", Value: strconv.FormatInt(traffic.MaxDowntimeMS, 10), Unit: "ms"},
 		{Name: "final_http_status", Value: strconv.Itoa(finalStatus)},
 	}
+	measurements = append(measurements, traffic.diagnostics()...)
 	if !completed || traffic.Failures > 0 || finalStatus < 200 || finalStatus >= 300 {
 		return lifecycleFailure("rolling-deployment", title, "runtime.rolling-deployment", "Version B did not roll out without failed traffic.", "Inspect version B readiness, rolling update strategy, capacity, and application startup behavior.", duration, traffic, measurements)
 	}
@@ -323,7 +359,11 @@ func (s *Service) runPodRecovery(ctx context.Context, client *kubernetes.Client,
 	trafficDone := make(chan trafficObservation, 1)
 	go func() { trafficDone <- s.collectTraffic(trafficCtx, current.readinessURL, sampled, nil) }()
 	select {
-	case <-sampled:
+	case initialSample := <-sampled:
+		if initialSample.Failed {
+			stopTraffic()
+			return trafficPrerequisiteBlocked("pod-recovery", "Pod recovery under traffic", <-trafficDone)
+		}
 	case <-ctx.Done():
 		stopTraffic()
 		traffic := <-trafficDone
@@ -365,10 +405,10 @@ trafficContinued:
 	var restarts int32
 	recovered := false
 	for {
-		observed, result, observeErr := client.ObservePods(recoveryCtx, current.clusterName, namespace, selector)
-		if recoveryCtx.Err() != nil && parent.Err() == nil {
+		if recoveryCtx.Err() != nil {
 			goto complete
 		}
+		observed, result, observeErr := client.ObservePods(recoveryCtx, current.clusterName, namespace, selector)
 		if observeErr != nil || failed(result) {
 			stopTraffic()
 			traffic := <-trafficDone
@@ -419,6 +459,7 @@ complete:
 			{Name: "container_restarts", Value: strconv.FormatInt(int64(restarts), 10), Unit: "restarts"},
 		},
 	}
+	evidence.Measurements = append(evidence.Measurements, traffic.diagnostics()...)
 	finding := model.Finding{
 		ID: "runtime.pod-recovery", Category: "reliability", Status: status, Severity: model.SeverityHigh,
 		Summary: summary, Observed: fmt.Sprintf("%d failed requests, %d ms downtime, HTTP %d", traffic.Failures, traffic.MaxDowntimeMS, finalStatus),
@@ -438,7 +479,7 @@ complete:
 }
 
 func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<- trafficSample, started chan<- time.Time) trafficObservation {
-	result := trafficObservation{}
+	result := trafficObservation{FailureClasses: map[string]int{}, HTTPStatuses: map[int]int{}, PollMS: s.trafficPoll.Milliseconds()}
 	ticker := time.NewTicker(s.trafficPoll)
 	defer ticker.Stop()
 	var failureStarted time.Time
@@ -454,15 +495,22 @@ func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<-
 		now := time.Now()
 		if ctx.Err() != nil {
 			if !failureStarted.IsZero() {
+				result.WindowCensored = true
 				result.MaxDowntimeMS = maxInt64(result.MaxDowntimeMS, elapsedMilliseconds(now.Sub(failureStarted)))
 			}
 			return result
 		}
 		result.Requests++
 		result.LastHTTPStatus = status
+		// Fixed status bounds and a closed set of failure classes prevent a
+		// response or transport error from creating unbounded/raw diagnostics.
+		if status >= 100 && status <= 599 {
+			result.HTTPStatuses[status]++
+		}
 		requestFailed := err != nil || status < 200 || status >= 300
 		if requestFailed {
 			result.Failures++
+			result.FailureClasses[probeFailureClass(status, err)]++
 			if failureStarted.IsZero() {
 				failureStarted = now
 			}
@@ -479,6 +527,7 @@ func (s *Service) collectTraffic(ctx context.Context, url string, sampled chan<-
 		select {
 		case <-ctx.Done():
 			if !failureStarted.IsZero() {
+				result.WindowCensored = true
 				result.MaxDowntimeMS = maxInt64(result.MaxDowntimeMS, elapsedMilliseconds(time.Since(failureStarted)))
 			}
 			return result
@@ -558,6 +607,7 @@ func lifecycleFailure(experimentID, title, findingID, summary, guidance string, 
 			{Name: "failed_requests", Value: strconv.Itoa(traffic.Failures), Unit: "requests"},
 			{Name: "downtime_ms", Value: strconv.FormatInt(traffic.MaxDowntimeMS, 10), Unit: "ms"},
 		}
+		measurements = append(measurements, traffic.diagnostics()...)
 	}
 	evidence := model.Evidence{ExperimentID: experimentID, Title: title, Status: model.StatusFail, Summary: summary, DurationMS: duration, Measurements: measurements}
 	finding := model.Finding{
@@ -576,6 +626,7 @@ func lifecycleExecutionError(experimentID, title, code, summary, guidance string
 		{Name: "downtime_ms", Value: strconv.FormatInt(traffic.MaxDowntimeMS, 10), Unit: "ms"},
 	}
 	measurements = append(measurements, additional...)
+	measurements = append(measurements, traffic.diagnostics()...)
 	evidence := model.Evidence{
 		ExperimentID: experimentID, Title: title, Status: model.StatusError, Summary: summary,
 		Measurements: measurements,
@@ -627,6 +678,7 @@ func recoveryExecutionError(code, summary, guidance string, traffic ...trafficOb
 			{Name: "downtime_ms", Value: strconv.FormatInt(observed.MaxDowntimeMS, 10), Unit: "ms"},
 		},
 	}
+	evidence.Measurements = append(evidence.Measurements, observed.diagnostics()...)
 	return recoveryOutcome{Evidence: evidence, Diagnostic: &diagnostic, ExitCode: 2}
 }
 
