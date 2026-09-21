@@ -16,7 +16,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
-	"github.com/noor15102002/cloud-forge/internal/dependency"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -33,13 +32,17 @@ func newFingerprint(ctx context.Context, runner command.Runner, root string, cur
 	}
 	fingerprint := &model.RunFingerprint{CloudForgeVersion: version, CloudForgeCommit: commit,
 		Platform: runtime.GOOS + "/" + runtime.GOARCH, CPUs: runtime.NumCPU(), Tools: []model.ToolVersion{},
-		Configuration: safeConfiguration(current.config), Resources: current.effectiveResources, Budget: safetyBudget(), WorkloadHash: workloadFingerprint(current)}
+		Configuration: safeConfiguration(current.config), Resources: current.effectiveResources, Budget: budgetFor(current.config), WorkloadHash: workloadFingerprint(current)}
 	if len(current.config.Environment) > 0 {
 		encoded, _ := json.Marshal(current.config.Environment)
 		fingerprint.EnvironmentHash = hashBytes(encoded)
 	}
-	if current.config.Dependencies["redis"].Enabled {
-		fingerprint.Dependencies = []model.DependencyFingerprint{dependency.RedisFingerprint()}
+	for _, name := range enabledProviders(current.config) {
+		fingerprint.Dependencies = append(fingerprint.Dependencies, providerFingerprint(name))
+	}
+	if current.config.Preparation != nil {
+		encoded, _ := json.Marshal(current.config.Preparation)
+		fingerprint.PreparationHash = hashBytes(encoded)
 	}
 	result := runner.Run(ctx, command.Request{Name: "git", Args: []string{"rev-parse", "HEAD"}, Dir: root, Timeout: 5 * time.Second})
 	if !failed(result) && commitPattern.MatchString(strings.TrimSpace(result.Stdout)) {

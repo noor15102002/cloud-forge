@@ -155,6 +155,12 @@ func toolVersion(fp *model.RunFingerprint, name string) string {
 	return ""
 }
 func completeFingerprint(fp *model.RunFingerprint) {
+	fp.CompatibilityKey = ""
+	for _, provider := range fp.Dependencies {
+		if provider.Kind == "clamav" && (provider.DataVersion == "" || provider.DataTimestamp == "") {
+			return
+		}
+	}
 	sort.Slice(fp.Tools, func(i, j int) bool { return fp.Tools[i].Name < fp.Tools[j].Name })
 	if !commitPattern.MatchString(fp.CloudForgeCommit) || !imagePattern.MatchString(fp.ImageID) || fp.WorkloadHash == "" {
 		return

@@ -26,7 +26,6 @@ import (
 
 	"github.com/noor15102002/cloud-forge/internal/analyzer"
 	"github.com/noor15102002/cloud-forge/internal/command"
-	"github.com/noor15102002/cloud-forge/internal/dependency"
 	"github.com/noor15102002/cloud-forge/internal/executor/docker"
 	"github.com/noor15102002/cloud-forge/internal/executor/k3d"
 	k6executor "github.com/noor15102002/cloud-forge/internal/executor/k6"
@@ -64,6 +63,7 @@ type Outcome struct {
 // Service runs verification through injected command execution.
 type Service struct {
 	runner                command.Runner
+	backendCapacity       func(context.Context, command.Runner, *Outcome) bool
 	controlledExperiments bool
 	now                   func() time.Time
 	newID                 func() (string, error)
@@ -83,7 +83,7 @@ type Service struct {
 // New creates a verification service.
 func New(runner command.Runner) *Service {
 	return &Service{
-		runner: runner, now: time.Now, newID: randomID, controlledExperiments: true,
+		runner: runner, now: time.Now, newID: randomID, controlledExperiments: true, backendCapacity: checkBackendCapacity,
 		probe: httpProbe(directHTTPClient()),
 		poll:  200 * time.Millisecond, trafficPoll: 20 * time.Millisecond, readinessTimeout: readinessWindow,
 		recoveryTimeout: recoveryWindow, rolloutTimeout: recoveryWindow, baselineTimeout: recoveryWindow,
@@ -183,7 +183,10 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 	out.Run.Fingerprint = newFingerprint(ctx, s.runner, root, plan, options)
-	if !checkRuntimeTools(ctx, scopedRunner{runner: s.runner, kubeconfig: os.DevNull}, &out) {
+	if !checkRuntimeTools(ctx, scopedRunner{runner: s.runner, kubeconfig: os.DevNull, backendDocker: backendProfile(config)}, &out) {
+		return out
+	}
+	if backendProfile(config) && !s.backendCapacity(ctx, s.runner, &out) {
 		return out
 	}
 	out.Run.Environment.ClusterName = plan.clusterName
@@ -222,7 +225,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addError("workspace_failed", "CloudForge could not create its private Docker configuration.", err.Error())
 		return out
 	}
-	scoped := scopedRunner{runner: s.runner, kubeconfig: kubeconfigPath, dockerConfig: dockerConfig}
+	scoped := scopedRunner{runner: s.runner, kubeconfig: kubeconfigPath, dockerConfig: dockerConfig, backendDocker: backendProfile(config)}
 	dockerClient := docker.New(scoped)
 	dockerClient.IsolateBuild(plan.clusterName)
 	builderAttempted := false
@@ -250,8 +253,16 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 					return dockerClient.RemoveClusterRemnants(cleanupCtx, plan.clusterName, kind)
 				})
 				if failed(result) {
-					out.addError("cluster_remnant_cleanup_failed", "CloudForge could not remove a run-owned cluster remnant.", "Inspect resources with the reported run name and app=k3d ownership label before retrying cleanup.")
+					out.addError("cluster_remnant_cleanup_failed", "CloudForge could not remove a run-owned cluster remnant.", commandGuidance(result, nil))
 				}
+			}
+		}
+		if builderAttempted {
+			result := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult {
+				return dockerClient.RemoveBuilderRemnants(cleanupCtx)
+			})
+			if failed(result) {
+				out.addError("builder_remnant_cleanup_failed", "CloudForge could not verify removal of its owned builder remnants.", commandGuidance(result, nil))
 			}
 		}
 		for _, image := range imagesToCleanup {
@@ -270,7 +281,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		if builderAttempted {
 			result := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult { return dockerClient.RemoveBuilder(cleanupCtx) })
 			if failed(result) {
-				out.addError("builder_cleanup_failed", "CloudForge could not remove its owned builder.", "Remove the named cloudforge builder after checking its ownership.")
+				out.addError("builder_cleanup_failed", "CloudForge could not remove its owned builder.", commandGuidance(result, nil))
 			}
 		}
 	}()
@@ -340,8 +351,38 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		Measurements: []model.Measurement{{Name: "vulnerabilities", Value: strconv.Itoa(countVulnerabilities(scan.Findings)), Unit: "findings"}},
 	})
 
+	var prebuiltRollout *model.CommandResult
+	if backendProfile(config) && plannedCapability(out.Run.Plan, "rolling-deployment").Disposition == "supported" {
+		imagesToCleanup = append(imagesToCleanup, plan.rolloutImage)
+		result := dockerClient.BuildSelected(ctx, root, plan.rolloutImage, "b", plan.config.Build)
+		prebuiltRollout = &result
+		status, summary := model.StatusPass, "Rollout image B was built before starting backend resources."
+		if failed(result) {
+			status, summary = model.StatusError, "Rollout image B could not be built reliably; independent image A observations may still proceed."
+			if isApplicationBuildFailure(result) {
+				status, summary = model.StatusFail, "Rollout image B failed to build; independent image A observations may still proceed."
+			}
+		}
+		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{ExperimentID: "rollout-image-build", Title: "Rollout image build", Status: status, Summary: summary, DurationMS: result.DurationMS, Execution: &model.ExperimentExecution{Executed: true}})
+		// Preserve a failed B build for its experiment, while image A can still
+		// produce independent startup and lifecycle evidence.
+		if ctx.Err() != nil {
+			return out
+		}
+		if cleanup := dockerClient.RemoveBuilder(ctx); failed(cleanup) {
+			out.addCommandDiagnostic("builder_cleanup_failed", "The bounded builder could not be stopped before starting backend resources.", cleanup)
+			return out
+		}
+		builderAttempted = false
+	} else if backendProfile(config) {
+		if cleanup := dockerClient.RemoveBuilder(ctx); failed(cleanup) {
+			out.addCommandDiagnostic("builder_cleanup_failed", "The bounded builder could not be stopped before starting backend resources.", cleanup)
+			return out
+		}
+		builderAttempted = false
+	}
 	clusterAttempted = true
-	if result := k3dClient.Create(ctx, plan.clusterName, nodePort); failed(result) {
+	if result := k3dClient.CreateWithMemory(ctx, plan.clusterName, nodePort, budgetFor(config).ClusterMemory); failed(result) {
 		out.addCommandDiagnostic("cluster_create_failed", "k3d could not create the verification cluster.", result)
 		return out
 	}
@@ -379,10 +420,13 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addCommandDiagnostic("image_import_failed", "The application image could not be confirmed in the isolated node after import.", result)
 		return out
 	}
-	if config.Dependencies["redis"].Enabled {
-		if !s.startRedis(ctx, kubernetesClient, plan, temporary, &out) {
-			return out
-		}
+	if !s.startDependencies(ctx, kubernetesClient, plan, temporary, &out) {
+		return out
+	}
+	plan.dependencyFingerprints = append([]model.DependencyFingerprint{}, out.Run.Fingerprint.Dependencies...)
+	completeFingerprint(out.Run.Fingerprint)
+	if config.Preparation != nil && !s.runPreparation(ctx, kubernetesClient, plan, temporary, &out) {
+		return out
 	}
 	if result := kubernetesClient.Apply(ctx, plan.clusterName, manifestPath); failed(result) {
 		out.addCommandDiagnostic("deployment_apply_failed", "kubectl could not apply the generated workload.", result)
@@ -564,8 +608,13 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		{"graceful-shutdown", func() recoveryOutcome { return s.runGracefulShutdown(ctx, kubernetesClient, plan) }},
 		{"pod-recovery", func() recoveryOutcome { return s.runPodRecovery(ctx, kubernetesClient, plan) }},
 		{"rolling-deployment", func() recoveryOutcome {
-			imagesToCleanup = append(imagesToCleanup, plan.rolloutImage)
-			build := dockerClient.BuildSelected(ctx, root, plan.rolloutImage, "b", plan.config.Build)
+			var build model.CommandResult
+			if prebuiltRollout != nil {
+				build = *prebuiltRollout
+			} else {
+				imagesToCleanup = append(imagesToCleanup, plan.rolloutImage)
+				build = dockerClient.BuildSelected(ctx, root, plan.rolloutImage, "b", plan.config.Build)
+			}
 			return s.runRollingDeployment(ctx, k3dClient, kubernetesClient, plan, build)
 		}},
 	}
@@ -621,31 +670,32 @@ func applyExperimentOutcome(out *Outcome, experiment recoveryOutcome) {
 }
 
 type plan struct {
-	topology           *model.TestTopology
-	clusterName        string
-	workloadName       string
-	image              string
-	rolloutImage       string
-	desiredReplicas    int32
-	readinessScheme    string
-	readinessPath      string
-	healthScheme       string
-	healthPath         string
-	readinessURL       string
-	healthURL          string
-	loadURL            string
-	config             model.RuntimeConfiguration
-	effectiveResources model.ResourceRequirements
-	httpSkipReason     string
-	manifest           []byte
-	hpaManifest        []byte
-	hpaName            string
-	hpaMinReplicas     int32
-	hpaMaxReplicas     int32
-	hpaTargetCPU       int32
-	hpaDemandWindow    time.Duration
-	hpaScaleDisabled   bool
-	hpaSkipReason      string
+	topology               *model.TestTopology
+	clusterName            string
+	workloadName           string
+	image                  string
+	rolloutImage           string
+	desiredReplicas        int32
+	readinessScheme        string
+	readinessPath          string
+	healthScheme           string
+	healthPath             string
+	readinessURL           string
+	healthURL              string
+	loadURL                string
+	config                 model.RuntimeConfiguration
+	effectiveResources     model.ResourceRequirements
+	dependencyFingerprints []model.DependencyFingerprint
+	httpSkipReason         string
+	manifest               []byte
+	hpaManifest            []byte
+	hpaName                string
+	hpaMinReplicas         int32
+	hpaMaxReplicas         int32
+	hpaTargetCPU           int32
+	hpaDemandWindow        time.Duration
+	hpaScaleDisabled       bool
+	hpaSkipReason          string
 }
 
 func buildPlan(analysis model.AnalysisResult, id string) (plan, error) {
@@ -824,16 +874,22 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 		}
 	}
 	var dependencyResources []model.ResourceRequirements
-	if config.Dependencies["redis"].Enabled {
-		dependencyResources = append(dependencyResources, dependency.RedisResources())
+	for _, name := range enabledProviders(config) {
+		dependencyResources = append(dependencyResources, providerFingerprint(name).Resources)
 	}
-	resources, err = boundedResources(resources, peakReplicas, strategy, dependencyResources...)
+	resources, err = boundedResourcesFor(budgetFor(config), resources, peakReplicas, strategy, dependencyResources...)
 	if err != nil {
 		return plan{}, err
 	}
+	if config.Preparation != nil {
+		prep, _ := kubernetesResources(preparationResources())
+		if _, err := boundedResourcesFor(budgetFor(config), prep, 1, appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}, dependencyResources...); err != nil {
+			return plan{}, err
+		}
+	}
 	config.Runtime.Port = port
 	config.Endpoints.Readiness, config.Endpoints.Health = readinessPath, healthPath
-	labels := map[string]string{"app.kubernetes.io/name": workloadName, "app.kubernetes.io/managed-by": "cloudforge", "cloudforge.dev/run-id": id}
+	labels := map[string]string{"app.kubernetes.io/name": workloadName, "app.kubernetes.io/managed-by": "cloudforge", "cloudforge.dev/run-id": id, "cloudforge.dev/role": "application"}
 	objects := []any{
 		&corev1.Namespace{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"}, ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "cloudforge", "cloudforge.dev/run-id": id}}},
 		&appsv1.Deployment{
@@ -854,6 +910,14 @@ func buildConfiguredPlan(analysis model.AnalysisResult, id string, config model.
 			ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: namespace, Labels: labels},
 			Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeNodePort, Selector: labels, Ports: []corev1.ServicePort{{Name: portName, Port: port, TargetPort: intstr.FromString(portName), NodePort: nodePort, Protocol: corev1.ProtocolTCP}}},
 		},
+	}
+	if config.SchemaVersion == "v1alpha5" {
+		pod := &objects[1].(*appsv1.Deployment).Spec.Template.Spec
+		disabled := false
+		pod.AutomountServiceAccountToken = &disabled
+		pod.EnableServiceLinks = &disabled
+		pod.SecurityContext = &corev1.PodSecurityContext{SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}
+		pod.Containers[0].SecurityContext = &corev1.SecurityContext{AllowPrivilegeEscalation: &disabled, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}
 	}
 	manifest, err := marshalDocuments(objects)
 	if err != nil {

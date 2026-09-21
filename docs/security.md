@@ -47,6 +47,21 @@ gets its own bounded context, so one failed removal cannot consume the timeout
 for later resources. A partially created cluster is always deleted; the keep
 flag applies only after cluster creation succeeds.
 
+The BuildKit container carries an explicit run marker. Before removing its
+builder, CloudForge records the exact container ID and the identity of its
+mounted cache volume. If ordinary removal fails, a separate attempt after
+cluster teardown may remove only those verified remnants. Changed ownership,
+missing proof or an unobservable daemon prevents deletion; CloudForge never
+prunes builders or removes resources by a broad name prefix. Original cleanup
+errors remain in the report even if the fallback succeeds.
+
+Cleanup operations have independent finite deadlines. Qualification runners
+allow up to 12 minutes after interruption to preserve the final report across
+the existing worst-case removal deadlines and the 30-second builder fallback.
+This observation window does not extend application execution or individual
+cleanup command deadlines. A failing or unreachable Docker daemon can still
+prevent cleanup; such errors and independently observed leftovers are retained.
+
 Each run uses private kubeconfig and Docker builder configuration. The default
 kubectl context and builder remain unchanged. Workload limits include rollout
 surge and HPA maxima; a private BuildKit builder bounds build CPU and memory.
@@ -110,3 +125,11 @@ revalidated before each build. Docker still controls build-context processing
 and `.dockerignore`; CloudForge does not sandbox Dockerfile instructions, freeze
 a concurrently modified checkout, or sanitize a deliberately broad context.
 Use clean reviewed checkouts and disposable runners for unfamiliar code.
+
+## Backend test isolation
+
+Backend verification generates disposable credentials and keeps them in run-owned
+Kubernetes Secrets. It collects no application or preparation logs. Egress
+policies restrict supported backend runs, subject to Kubernetes node/host traffic
+exceptions; they are not an arbitrary-code sandbox. See
+[backend boundaries](backend-runtime.md) for precise guarantees and exclusions.

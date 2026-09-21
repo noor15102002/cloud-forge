@@ -39,6 +39,9 @@ var buildVerificationSchema []byte
 //go:embed verification.v1alpha5.schema.json
 var topologyVerificationSchema []byte
 
+//go:embed verification.v1alpha6.schema.json
+var backendVerificationSchema []byte
+
 type direction int
 
 type measurementPolicy struct {
@@ -85,8 +88,8 @@ func Load(path string) (model.VerificationRun, error) {
 	if err := json.Unmarshal(data, &identity); err != nil {
 		return model.VerificationRun{}, fmt.Errorf("decode verification report %q: %w", path, err)
 	}
-	if identity.SchemaVersion != model.SchemaVersion && identity.SchemaVersion != "v1alpha2" && identity.SchemaVersion != "v1alpha3" && identity.SchemaVersion != "v1alpha4" && identity.SchemaVersion != model.VerificationSchemaVersion {
-		return model.VerificationRun{}, fmt.Errorf("verification report schema version %q is unsupported; expected v1alpha1, v1alpha2, v1alpha3, v1alpha4 or %q", identity.SchemaVersion, model.VerificationSchemaVersion)
+	if identity.SchemaVersion != model.SchemaVersion && identity.SchemaVersion != "v1alpha2" && identity.SchemaVersion != "v1alpha3" && identity.SchemaVersion != "v1alpha4" && identity.SchemaVersion != "v1alpha5" && identity.SchemaVersion != model.VerificationSchemaVersion {
+		return model.VerificationRun{}, fmt.Errorf("verification report schema version %q is unsupported; expected v1alpha1, v1alpha2, v1alpha3, v1alpha4, v1alpha5 or %q", identity.SchemaVersion, model.VerificationSchemaVersion)
 	}
 	if err := validateSchema(data); err != nil {
 		return model.VerificationRun{}, fmt.Errorf("verification report %q does not satisfy the %s schema: %w", path, identity.SchemaVersion, err)
@@ -129,8 +132,11 @@ func validateSchema(data []byte) error {
 	if identity.SchemaVersion == "v1alpha4" {
 		schemaBytes = buildVerificationSchema
 	}
-	if identity.SchemaVersion == model.VerificationSchemaVersion {
+	if identity.SchemaVersion == "v1alpha5" {
 		schemaBytes = topologyVerificationSchema
+	}
+	if identity.SchemaVersion == model.VerificationSchemaVersion {
+		schemaBytes = backendVerificationSchema
 	}
 	if err := json.Unmarshal(schemaBytes, &schemaDocument); err != nil {
 		return fmt.Errorf("load embedded schema: %w", err)

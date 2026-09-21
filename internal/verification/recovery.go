@@ -2,11 +2,11 @@ package verification
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
-	"github.com/noor15102002/cloud-forge/internal/dependency"
 	"github.com/noor15102002/cloud-forge/internal/executor/kubernetes"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
@@ -72,13 +72,31 @@ func (s *Service) validateBaselineFor(ctx context.Context, client *kubernetes.Cl
 		}
 		add("ready_pods", ready, fmt.Sprintf("Expected %d Ready non-terminating pods; observed %d total pods; complete readiness=%t.", current.desiredReplicas, len(pods), ready))
 		add("expected_revision", revision, fmt.Sprintf("Controller revision %s, generation %d/%d; all pods at the intended image/revision=%t.", deployment.Revision, deployment.ObservedGeneration, deployment.Generation, revision))
-		if current.config.Dependencies["redis"].Enabled {
-			pods, res, err := client.ObservePods(ctx, current.clusterName, namespace, "cloudforge.dev/dependency=redis")
+		for _, name := range enabledProviders(current.config) {
+			pods, res, err := client.ObservePods(ctx, current.clusterName, namespace, "cloudforge.dev/dependency="+name)
 			if failed(res) || err != nil {
 				return observationError()
 			}
-			healthy := len(pods) == 1 && pods[0].Ready && !pods[0].Terminating && pods[0].Image == dependency.RedisFingerprint().Image
-			add("dependency.redis", healthy, "The pinned Redis dependency must have one Ready, non-terminating pod; its probe checks Redis PING.")
+			healthy := len(pods) == 1 && pods[0].Ready && !pods[0].Terminating && pods[0].Image == providerFingerprint(name).Image
+			add("dependency."+name, healthy, "The pinned provider must have one Ready, non-terminating pod satisfying its provider readiness probe; data is not reset during restoration.")
+			if healthy && name == "clamav" {
+				observed := client.ClamAVVersion(ctx, current.clusterName, namespace, pods[0].Name)
+				if failed(observed) || observed.Truncated {
+					return observationError()
+				}
+				version, timestamp, err := parseClamAVVersion(observed.Stdout, s.now())
+				if errors.Is(err, errUnobservedClam) {
+					return observationError()
+				}
+				matched := false
+				for _, expected := range current.dependencyFingerprints {
+					if expected.Kind == "clamav" && version == expected.DataVersion && timestamp == expected.DataTimestamp {
+						matched = true
+					}
+				}
+				add("dependency.clamav_signatures", err == nil && matched, "The active antivirus database must remain fresh and match the originally observed version/date; restoration does not change the tested dependency data.")
+			}
+
 		}
 		if ctx.Err() != nil {
 			result.Checks = checks

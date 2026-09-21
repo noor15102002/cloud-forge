@@ -12,7 +12,7 @@ The implemented slice contains:
 - `internal/safefile`: bounded regular-file reads without symlink traversal
 - `internal/doctor`: local prerequisite checks
 - `internal/executor`: Docker, k3d, kubectl, k6, and Trivy command adapters
-- `internal/dependency`: pinned, owned Redis resource generation and safe identity
+- `internal/dependency`: pinned, owned dependency resources, restricted network policies and safe identity
 - `internal/findings`: deterministic container and Kubernetes configuration checks
 - `internal/verification`: generated workload planning and lifecycle orchestration
 - `internal/regression`: bounded baseline loading and deterministic comparison

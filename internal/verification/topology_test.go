@@ -192,7 +192,7 @@ func TestTopologyPlansAndReportsUseVersionedSchemas(t *testing.T) {
 	if string(planJSON) != string(again) {
 		t.Fatal("plan is not deterministic")
 	}
-	for name, value := range map[string][]byte{"runtime.v1alpha4": data, "plan.v1alpha5": planJSON} {
+	for name, value := range map[string][]byte{"runtime.v1alpha4": data, "plan.v1alpha6": planJSON} {
 		compiler := jsonschema.NewCompiler()
 		schema, err := compiler.Compile("../../schemas/" + name + ".schema.json")
 		if err != nil {

@@ -72,7 +72,9 @@ jobs:
 
   cancellation:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Four sequential phases each have a 10-minute observation window and a
+    # 12-minute final cleanup observation window, plus setup/artifact time.
+    timeout-minutes: 95
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

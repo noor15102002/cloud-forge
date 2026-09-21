@@ -138,7 +138,7 @@ func TestPilotPrivateConfigurationAndBuildBounds(t *testing.T) {
 				}
 			}
 		}
-		if call.Name == "docker" && containsArgument(call.Args, "buildx") && containsArgument(call.Args, "create") && !containsArgument(call.Args, "memory=2g,cpu-period=100000,cpu-quota=200000") {
+		if call.Name == "docker" && containsArgument(call.Args, "buildx") && containsArgument(call.Args, "create") && !containsArgument(call.Args, "memory=2g,cpu-period=100000,cpu-quota=200000,env.CLOUDFORGE_RUN_ID=cloudforge-0123abcd") {
 			t.Fatal("builder missing resource limits")
 		}
 	}

@@ -8,7 +8,11 @@ import (
 )
 
 func capabilityPlan(analysis model.AnalysisResult, current plan, config model.RuntimeConfiguration, planErr error) *model.VerificationPlan {
-	result := &model.VerificationPlan{SchemaVersion: model.VerificationSchemaVersion, Status: model.StatusPass, Port: current.config.Runtime.Port, Budget: safetyBudget(), Capabilities: []model.Capability{}}
+	result := &model.VerificationPlan{SchemaVersion: model.VerificationSchemaVersion, Status: model.StatusPass, Port: current.config.Runtime.Port, Budget: budgetFor(config), Capabilities: []model.Capability{}}
+	if planErr == nil {
+		resources := current.effectiveResources
+		result.Resources = &resources
+	}
 	result.Build = analysis.Build
 	if result.Build == nil && planErr == nil {
 		result.Build = &model.BuildSelection{App: ".", Dockerfile: "Dockerfile", Context: "."}
@@ -30,8 +34,8 @@ func capabilityPlan(analysis model.AnalysisResult, current plan, config model.Ru
 		switch {
 		case !spec.Enabled:
 			add("dependency."+name, "skipped", "Explicitly declared unnecessary for this test configuration.")
-		case name == "redis":
-			add("dependency.redis", "supported", "Provision pinned internal Redis and wait for readiness before deploying the application.")
+		case name == "redis" || name == "postgresql" || name == "clamav":
+			add("dependency."+name, "supported", "Provision the pinned internal provider and establish its declared readiness before preparation or application startup.")
 		default:
 			add("dependency."+name, "blocked", "This required dependency has no supported runtime provider.")
 		}
@@ -41,6 +45,12 @@ func capabilityPlan(analysis model.AnalysisResult, current plan, config model.Ru
 			seen[dep.Name] = true
 			add("dependency."+dep.Name, "blocked", "Repository metadata suggests this dependency; explicitly declare whether the isolated test requires it. No external service will be inferred.")
 		}
+	}
+	if config.Preparation != nil {
+		add("application-preparation", "supported", "Run one bounded command in image A with generated test configuration; require successful completion before deployment. No schema rollback or repeated migration is implied.")
+	}
+	if config.Network != nil {
+		add("network-isolation", "supported", "Apply declared-dependency-only Kubernetes egress policies; revoke ClamAV signature-update egress before application execution. Kubernetes node/host network exceptions remain a known limitation.")
 	}
 	readiness := "supported"
 	reason := "Observe Kubernetes readiness and bounded HTTP availability."

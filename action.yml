@@ -16,7 +16,7 @@ inputs:
     required: false
     default: ""
   baseline-path:
-    description: Explicit local v1alpha1, v1alpha2, v1alpha3 or v1alpha4 verification JSON baseline.
+    description: Explicit local v1alpha1, v1alpha2, v1alpha3, v1alpha4, v1alpha5 or v1alpha6 verification JSON baseline.
     required: false
     default: ""
   baseline-run-id:

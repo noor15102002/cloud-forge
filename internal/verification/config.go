@@ -49,7 +49,7 @@ func LoadConfiguration(root, explicit string) (model.RuntimeConfiguration, error
 	if yaml.UnmarshalStrict(data, &supplied) != nil {
 		return config, errors.New("invalid configuration object")
 	}
-	for _, key := range []string{"build", "topology", "runtime", "load", "endpoints", "experiments", "dependencies", "environment", "readiness"} {
+	for _, key := range []string{"safety", "network", "preparation", "build", "topology", "runtime", "load", "endpoints", "experiments", "dependencies", "environment", "readiness"} {
 		if string(supplied[key]) == "null" {
 			return config, errors.New("configuration sections cannot be null")
 		}
@@ -105,12 +105,12 @@ func validateConfiguration(config model.RuntimeConfiguration) error {
 	if err := validateExtensions(config); err != nil {
 		return err
 	}
-	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != "v1alpha2" && config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" {
-		return errors.New("configuration schema_version must be v1alpha1, v1alpha2, v1alpha3 or v1alpha4")
+	if config.SchemaVersion != "v1alpha1" && config.SchemaVersion != "v1alpha2" && config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" {
+		return errors.New("configuration schema_version must be v1alpha1, v1alpha2, v1alpha3, v1alpha4 or v1alpha5")
 	}
 	if config.Build != nil {
-		if config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" {
-			return errors.New("build selection requires configuration schema_version v1alpha3 or v1alpha4")
+		if config.SchemaVersion != "v1alpha3" && config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" {
+			return errors.New("build selection requires configuration schema_version v1alpha3, v1alpha4 or v1alpha5")
 		}
 		if err := selection.Validate(*config.Build); err != nil {
 			return err
@@ -143,4 +143,17 @@ func validateConfiguration(config model.RuntimeConfiguration) error {
 
 func safetyBudget() model.SafetyBudget {
 	return model.SafetyBudget{MaxReplicas: 5, WorkloadCPU: "4", WorkloadMemory: "2Gi", ClusterMemory: "4g", BuildMemory: "2g", BuildCPUs: 2, BuildTimeout: "10m", ReadinessTimeout: "2m", ExperimentTimeout: "2m"}
+}
+
+func backendProfile(config model.RuntimeConfiguration) bool {
+	return config.Safety != nil && config.Safety.Profile == "bounded_backend"
+}
+
+func budgetFor(config model.RuntimeConfiguration) model.SafetyBudget {
+	budget := safetyBudget()
+	if backendProfile(config) {
+		budget.WorkloadMemory = "5Gi"
+		budget.ClusterMemory = "6g"
+	}
+	return budget
 }

@@ -1,0 +1,23 @@
+{
+  "schema_version": "v1alpha5",
+  "runtime": { "port": 8080 },
+  "safety": { "profile": "bounded_backend" },
+  "network": { "outbound": "declared_dependencies_only" },
+  "dependencies": {
+    "postgresql": { "enabled": true, "startup_timeout": "120s" },
+    "redis": { "enabled": true, "startup_timeout": "120s" },
+    "clamav": { "enabled": true, "startup_timeout": "600s" }
+  },
+  "environment": {
+    "DATABASE_URL": { "from": "dependency.postgresql.url" },
+    "REDIS_URL": { "from": "dependency.redis.url" },
+    "CLAMAV_HOST": { "from": "dependency.clamav.host" },
+    "CLAMAV_PORT": { "from": "dependency.clamav.port" },
+    "APP_TEST_KEY": { "generate": { "bytes": 32, "encoding": "base64" } }
+  },
+  "preparation": { "command": ["node", "prepare.js"], "timeout": "30s" },
+  "endpoints": { "health": "/health", "readiness": "/ready", "load": "/work" },
+  "readiness": { "status": 200, "json": { "status": "ok", "service": "backend-http" } },
+  "load": { "vus": 2, "duration": "10s" },
+  "experiments": { "control_path": "/_test" }
+}

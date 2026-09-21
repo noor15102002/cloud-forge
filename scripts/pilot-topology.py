@@ -49,10 +49,10 @@ for replicas in (1, 2):
                 code = process.wait(timeout=900)
             except subprocess.TimeoutExpired:
                 process.send_signal(signal.SIGINT)
-                process.wait(timeout=180)
+                process.wait(timeout=720)
                 raise
         report = json.loads((output / "report.json").read_text())
-        assert report["schema_version"] == "v1alpha5" and report["producer"]["commit"] not in ("", "unknown")
+        assert report["schema_version"] == "v1alpha6" and report["producer"]["commit"] not in ("", "unknown")
         assert code in (0, 1) and report["status"] in ("pass", "warn", "fail")
         evidence = {e["experiment_id"]: e for e in report["evidence"]}
         for name in ("container-build", "deployment-readiness", "semantic-readiness"):

@@ -92,7 +92,7 @@ func TestVerifyMarkdownReport(t *testing.T) {
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("verify failed: %v stderr=%q", err, stderr.String())
 	}
-	if !bytes.Contains(stdout.Bytes(), []byte("<!-- cloudforge-verification-report:v1alpha5 -->")) || !bytes.Contains(stdout.Bytes(), []byte("## CloudForge verification")) {
+	if !bytes.Contains(stdout.Bytes(), []byte("<!-- cloudforge-verification-report:v1alpha6 -->")) || !bytes.Contains(stdout.Bytes(), []byte("## CloudForge verification")) {
 		t.Fatalf("unexpected Markdown report:\n%s", stdout.String())
 	}
 }
@@ -188,6 +188,12 @@ func cliTestRunner(vulnerable bool) cliRunnerFunc {
 		}
 		if request.Name == "docker" && slices.Contains(request.Args, "inspect") {
 			result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" []`
+			if len(request.Args) > 2 && (request.Args[0] == "container" || request.Args[0] == "volume") &&
+				strings.HasPrefix(request.Args[len(request.Args)-1], "buildx_buildkit_cloudforge-") {
+				result.Stdout = ""
+				result.ExitCode, result.FailureType = 1, model.FailureExit
+				result.Stderr = "Error: No such object: " + request.Args[len(request.Args)-1]
+			}
 		}
 
 		if request.Name == "trivy" && len(request.Args) > 1 {

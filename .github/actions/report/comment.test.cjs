@@ -94,3 +94,13 @@ test('accepts v1alpha4 selected workload reports', () => {
 test('accepts v1alpha5 explicit test topology reports', () => {
   validateBody('<!-- cloudforge-verification-report:v1alpha5 -->\nTopology origin: explicit test configuration')
 })
+
+test('accepts v1alpha6 backend reports and upgrades an owned older comment', async () => {
+  const body = '<!-- cloudforge-verification-report:v1alpha6 -->\nCompleted backend evidence'
+  validateBody(body)
+  const calls = []
+  const github = fakeGitHub([{id: 10, user: {login: 'github-actions[bot]'}, body: '<!-- cloudforge-verification-report:v1alpha5 -->\nPrior report'}], calls)
+  const id = await updateComment({github, owner: 'owner', repo: 'repo', pullRequestNumber: 7, body})
+  assert.equal(id, '10')
+  assert.deepEqual(calls, [{operation: 'update', commentID: 10}])
+})

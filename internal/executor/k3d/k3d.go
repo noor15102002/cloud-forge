@@ -24,9 +24,18 @@ func New(runner command.Runner) *Client { return &Client{runner: runner} }
 
 // Create creates a minimal cluster, publishes one NodePort on loopback, and waits for its API.
 func (c *Client) Create(ctx context.Context, name string, nodePort int) model.CommandResult {
+	return c.CreateWithMemory(ctx, name, nodePort, "4g")
+}
+
+// CreateWithMemory selects one of the fixed, qualified cluster memory budgets.
+// Arbitrary Docker resource flags are never accepted through this adapter.
+func (c *Client) CreateWithMemory(ctx context.Context, name string, nodePort int, memory string) model.CommandResult {
+	if memory != "4g" && memory != "6g" {
+		return model.CommandResult{Command: "k3d", ExitCode: -1, FailureType: model.FailureExecution, Stderr: "Unsupported bounded cluster memory profile."}
+	}
 	portMapping := "127.0.0.1:0:" + strconv.Itoa(nodePort) + "@server:0"
 	return c.runner.Run(ctx, command.Request{
-		Name: "k3d", Args: []string{"cluster", "create", name, "--image", NodeImage, "--servers-memory", "4g", "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false", "--runtime-label", "cloudforge.dev/owned=true@all", "--servers", "1", "--agents", "0", "--port", portMapping, "--wait", "--timeout", "90s"},
+		Name: "k3d", Args: []string{"cluster", "create", name, "--image", NodeImage, "--servers-memory", memory, "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false", "--runtime-label", "cloudforge.dev/owned=true@all", "--servers", "1", "--agents", "0", "--port", portMapping, "--wait", "--timeout", "90s"},
 		Timeout: 2 * time.Minute, OutputLimit: 128 * 1024,
 	})
 }

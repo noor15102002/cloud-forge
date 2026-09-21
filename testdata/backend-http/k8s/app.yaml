@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-http
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels: {app: backend-http}
+  template:
+    metadata:
+      labels: {app: backend-http}
+    spec:
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: api
+          image: cloudforge-backend:test
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 1
+            timeoutSeconds: 2
+            failureThreshold: 1
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-http
+spec:
+  selector: {app: backend-http}
+  ports:
+    - {name: http, port: 80, targetPort: http}

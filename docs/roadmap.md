@@ -100,6 +100,25 @@ No new provider is included. The private pair retained availability failures in
 both topologies, with successful restoration and cleanup. Backend execution and
 the choice of its exact dependency/configuration contract remain separate work.
 
+## Bounded backend verification qualification
+
+Tracking: [#48](https://github.com/noor15102002/cloud-forge/issues/48),
+[milestone 10](https://github.com/noor15102002/cloud-forge/milestone/10).
+
+- [x] Implement generated disposable test configuration and strict versioned contracts.
+- [x] Add pinned PostgreSQL/pgvector and ClamAV providers with observed readiness.
+- [x] Add bounded image-A preparation, capacity preflight and runtime egress restrictions.
+- [x] Preserve failures, provider/data fingerprints, restoration and historical reports.
+- [x] Qualify generic backend healthy/failure/network/secret-omission cases on disposable runners.
+- [x] Qualify cancellation and cleanup during new provider/preparation phases.
+- [ ] Qualify owned builder fallback after the existing Redis cancellation matrix exposed remaining resources.
+- [ ] Merge all validated changes through protected main.
+- [ ] Run separately recorded private HTTP workload pilots with exact CLI output.
+
+See [the bounded backend contract](backend-runtime.md). Earlier milestone
+boundaries remain frozen. Full business flows, workers, arbitrary multi-service
+orchestration and new cloud backends are not implied by this HTTP capability.
+
 ## v1.0 — Public V1
 
 - [x] Validate representative healthy and intentionally broken fixtures.

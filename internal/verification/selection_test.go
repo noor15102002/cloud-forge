@@ -169,6 +169,7 @@ func TestSelectedAndHistoricalReportsPreserveEvidence(t *testing.T) {
 		result := fixedService(runnerFunc(func(_ context.Context, r command.Request) model.CommandResult { return successfulCommand(r) })).Run(context.Background(), root, testOptions()).Run
 		result.SchemaVersion = version
 		result.Plan.SchemaVersion = version
+		result.Plan.Resources = nil // This field was introduced after these historical schemas.
 		if version == "v1alpha3" {
 			result.Plan.Build = nil
 		}
@@ -211,7 +212,7 @@ func TestPublishedSelectionConfigurationAndPlanSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, data := range map[string][]byte{"runtime.v1alpha3": config, "plan.v1alpha5": planned} {
+	for name, data := range map[string][]byte{"runtime.v1alpha3": config, "plan.v1alpha6": planned} {
 		var document any
 		if err := json.Unmarshal(data, &document); err != nil {
 			t.Fatal(err)

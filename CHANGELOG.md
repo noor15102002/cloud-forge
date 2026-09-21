@@ -3,6 +3,15 @@
 All notable changes will be documented here. CloudForge follows Semantic
 Versioning once releases begin.
 
+## Unreleased — isolated backend contract
+
+- Add fixed PostgreSQL/pgvector and ClamAV providers, generated test configuration,
+  bounded preparation, explicit backend capacity, and restricted runtime networking.
+- Preserve exact preparation failures and unobserved states; retain raw-output
+  omission and historical report loading with report v1alpha6/input v1alpha5.
+- Build both rollout images before allocating the larger backend cluster.
+- Add generic backend runtime qualification with failure and network controls.
+
 ## Unreleased
 
 - Confirm incomplete lifecycle state with one bounded final observation when the requirement deadline interrupts a Kubernetes read; retain ERROR for unobservable or indeterminate completion and preserve earlier reports.
