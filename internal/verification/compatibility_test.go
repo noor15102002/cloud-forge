@@ -45,7 +45,8 @@ func TestVersionObservationFailuresPreserveSafeDiagnosticsAndStopExecution(t *te
 					result := successfulCommand(request)
 					client := request.Name == "kubectl" && containsArgument(request.Args, "version") && containsArgument(request.Args, "--client=true")
 					server := request.Name == "kubectl" && containsArgument(request.Args, "version") && !containsArgument(request.Args, "--client=true")
-					if !(phase == "docker" && request.Name == "docker" && containsArgument(request.Args, "info") || phase == "kubectl-client" && client || phase == "kubectl-server" && server) {
+					targetProbe := phase == "docker" && request.Name == "docker" && containsArgument(request.Args, "info") || phase == "kubectl-client" && client || phase == "kubectl-server" && server
+					if !targetProbe {
 						return result
 					}
 					observations++
