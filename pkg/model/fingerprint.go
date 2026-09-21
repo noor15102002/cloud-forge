@@ -8,6 +8,7 @@ type ToolVersion struct {
 
 // RunFingerprint separates source/image identity from experiment compatibility.
 type RunFingerprint struct {
+	WorkerHash        string                  `json:"worker_hash,omitempty"`
 	Dependencies      []DependencyFingerprint `json:"dependencies,omitempty"`
 	EnvironmentHash   string                  `json:"environment_hash,omitempty"`
 	PreparationHash   string                  `json:"preparation_hash,omitempty"`

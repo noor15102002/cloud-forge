@@ -126,3 +126,16 @@ orchestration and new cloud backends are not implied by this HTTP capability.
 - [ ] [Calibrate performance-regression thresholds](https://github.com/noor15102002/cloud-forge/issues/31) across repeated compatible runner environments; the current 10% timing heuristic is not statistical significance.
 - [x] [Align the bundled kubectl/Kubernetes version pair](https://github.com/noor15102002/cloud-forge/issues/35) before expanding pilots.
 - [ ] Produce reproducible release binaries and checksums.
+
+## Bounded worker heartbeat qualification
+
+Tracking: [#50](https://github.com/noor15102002/cloud-forge/issues/50),
+[milestone 11](https://github.com/noor15102002/cloud-forge/milestone/11).
+
+The implementation adds an explicit single-worker command and Redis-heartbeat
+contract, sequential nonoverlapping recovery/image replacement, restoration and
+versioned evidence. Its boundary is process liveness and heartbeat progress;
+queue jobs, business workflows and overlapping worker topologies remain outside
+this slice. See [the contract and limits](worker-runtime.md). Generic runtime
+qualification must pass before a private application pilot is authorized to use it;
+implementation alone is not runtime evidence.

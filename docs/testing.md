@@ -133,3 +133,7 @@ The Bounded backend runtime workflow exercises `testdata/backend-http` with real
 PostgreSQL/pgvector, Redis, ClamAV, preparation, failure cases, live CNI controls,
 secret omission and cleanup. Its original CLI output is retained even on failure.
 See [the backend contract](backend-runtime.md).
+
+## Bounded worker qualification
+
+The worker runtime workflow and `scripts/pilot-worker.py` exercise `testdata/healthy-worker` with advancing, missing, stale, frozen, malformed and future timestamps, container exit, a heartbeat produced only by the original pod, recoverable replacement failure, and cancellation during startup or replacement. Qualification preserves raw CLI output and requires actual owned pod identities, old-key expiry, fresh advancing samples, restoration and cleanup. A heartbeat result establishes process liveness; no fixture case proves business-job completion. Injected runner tests separately cover container restarts, post-import baseline checks, observer deadlines, provider fingerprint changes, safe serialization and historical report loading.

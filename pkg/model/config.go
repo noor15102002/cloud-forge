@@ -10,11 +10,12 @@ type RuntimeConfiguration struct {
 	Dependencies  map[string]DependencySpec     `json:"dependencies,omitempty"`
 	Environment   map[string]EnvironmentBinding `json:"environment,omitempty"`
 	Readiness     *ReadinessAcceptance          `json:"readiness,omitempty"`
+	Worker        *WorkerSettings               `json:"worker,omitempty"`
 	SchemaVersion string                        `json:"schema_version"`
 	Runtime       RuntimeSettings               `json:"runtime"`
-	Endpoints     EndpointSettings              `json:"endpoints"`
-	Load          LoadSettings                  `json:"load"`
-	Experiments   ExperimentSettings            `json:"experiments"`
+	Endpoints     EndpointSettings              `json:"endpoints,omitzero"`
+	Load          LoadSettings                  `json:"load,omitzero"`
+	Experiments   ExperimentSettings            `json:"experiments,omitzero"`
 }
 
 // SafetySettings selects a qualified fixed budget, never arbitrary host limits.
@@ -60,14 +61,29 @@ type BuildSelection struct {
 
 // RuntimeSettings selects the application port; replica/resource bounds are enforced independently.
 type RuntimeSettings struct {
-	Port int32 `json:"port"`
+	Kind string `json:"kind,omitempty"`
+	Port int32  `json:"port"`
+}
+
+// WorkerSettings selects one direct image command and an isolated Redis heartbeat.
+// Command and key values are omitted from public reports and hashed for comparison.
+type WorkerSettings struct {
+	Command   []string               `json:"command"`
+	Heartbeat RedisHeartbeatSettings `json:"heartbeat"`
+}
+
+// RedisHeartbeatSettings is a bounded process-liveness contract, never a job assertion.
+type RedisHeartbeatSettings struct {
+	Key            string `json:"key"`
+	TimestampField string `json:"timestamp_field"`
+	MaxAge         string `json:"max_age"`
 }
 
 // EndpointSettings contains application-relative paths, never external URLs.
 type EndpointSettings struct {
-	Health    string `json:"health,omitempty"`
-	Readiness string `json:"readiness,omitempty"`
-	Load      string `json:"load,omitempty"`
+	Health    string `json:"health"`
+	Readiness string `json:"readiness"`
+	Load      string `json:"load"`
 }
 
 // LoadSettings bounds the generated GET workload.

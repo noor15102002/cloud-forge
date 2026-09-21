@@ -11,7 +11,11 @@ import (
 // PlanText prints intent before expensive execution; supported does not mean passed.
 func PlanText(w io.Writer, plan model.VerificationPlan) error {
 	plan = canonicalPlan(plan)
-	if _, err := fmt.Fprintf(w, "CloudForge planned capabilities: %s (port %d)\n", strings.ToUpper(string(plan.Status)), plan.Port); err != nil {
+	detail := fmt.Sprintf("port %d", plan.Port)
+	if plan.RuntimeKind == "worker" {
+		detail = "worker; process liveness only; no HTTP port"
+	}
+	if _, err := fmt.Fprintf(w, "CloudForge planned capabilities: %s (%s)\n", strings.ToUpper(string(plan.Status)), detail); err != nil {
 		return err
 	}
 	if err := buildText(w, plan.Build); err != nil {
@@ -141,6 +145,9 @@ func buildText(w io.Writer, build *model.BuildSelection) error {
 func topologyDescription(t *model.TestTopology) string {
 	if t == nil {
 		return "Unavailable: workload could not be planned."
+	}
+	if t.ReadinessOrigin == "worker_heartbeat" {
+		return fmt.Sprintf("Topology origin: %s; replicas: %d; strategy: %s; readiness: advancing Redis heartbeat (process liveness only); no HTTP or overlapping replacement.", strings.ReplaceAll(t.Origin, "_", " "), t.Replicas, t.Strategy)
 	}
 	surge, unavailable := "not applicable", "not applicable"
 	if t.MaxSurge != nil {

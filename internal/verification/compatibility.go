@@ -39,6 +39,9 @@ func checkRuntimeTools(ctx context.Context, runner command.Runner, out *Outcome)
 		{"trivy", []string{"--version"}, "0.74.0"},
 	}
 	for _, spec := range specs {
+		if spec.name == "k6" && out.Run.Plan != nil && plannedCapability(out.Run.Plan, "load-profile").Disposition != "supported" {
+			continue
+		}
 		result := runner.Run(ctx, command.Request{Name: spec.name, Args: spec.args, Timeout: 10 * time.Second, OutputLimit: 16 * 1024})
 		version := ""
 		if !failed(result) && !result.Truncated {
@@ -166,6 +169,9 @@ func completeFingerprint(fp *model.RunFingerprint) {
 		return
 	}
 	for _, name := range []string{"docker", "k3d", "kubectl", "kubernetes", "k6", "trivy"} {
+		if name == "k6" && fp.Configuration.Endpoints.Load == "" {
+			continue
+		}
 		if version := toolVersion(fp, name); version == "" || version == "unknown" {
 			return
 		}

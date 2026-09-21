@@ -51,11 +51,12 @@ type BaselineCheck struct {
 
 // RecoveryEvidence never replaces the experiment's original status.
 type RecoveryEvidence struct {
-	Status     Status          `json:"status"`
-	Strategy   string          `json:"strategy"`
-	Summary    string          `json:"summary"`
-	DurationMS int64           `json:"duration_ms"`
-	Checks     []BaselineCheck `json:"checks"`
+	Worker     *WorkerObservation `json:"worker,omitempty"`
+	Status     Status             `json:"status"`
+	Strategy   string             `json:"strategy"`
+	Summary    string             `json:"summary"`
+	DurationMS int64              `json:"duration_ms"`
+	Checks     []BaselineCheck    `json:"checks"`
 }
 
 // ExperimentExecution separates actual scheduling from planned capability.

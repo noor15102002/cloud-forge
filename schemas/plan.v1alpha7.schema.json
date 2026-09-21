@@ -1,0 +1,452 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/plan",
+  "$defs": {
+    "status": {
+      "enum": [
+        "pass",
+        "warn",
+        "fail",
+        "skipped",
+        "error",
+        "blocked"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "document": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "field": {
+          "type": "string"
+        }
+      }
+    },
+    "safetyBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workload_cpu": {
+          "type": "string"
+        },
+        "workload_memory": {
+          "type": "string"
+        },
+        "cluster_memory": {
+          "type": "string"
+        },
+        "build_memory": {
+          "type": "string"
+        },
+        "build_timeout": {
+          "type": "string"
+        },
+        "readiness_timeout": {
+          "type": "string"
+        },
+        "experiment_timeout": {
+          "type": "string"
+        },
+        "max_replicas": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "build_cpus": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "workload_cpu",
+        "workload_memory",
+        "cluster_memory",
+        "build_memory",
+        "build_timeout",
+        "readiness_timeout",
+        "experiment_timeout",
+        "max_replicas",
+        "build_cpus"
+      ]
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "disposition": {
+          "enum": [
+            "supported",
+            "skipped",
+            "blocked"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mutation": {
+          "type": "string"
+        },
+        "recovery_strategy": {
+          "type": "string"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "disposition",
+        "reason"
+      ]
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        },
+        "budget": {
+          "$ref": "#/$defs/safetyBudget"
+        },
+        "schema_version": {
+          "const": "v1alpha7"
+        },
+        "topology": {
+          "$ref": "#/$defs/topology"
+        },
+        "detected": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "build": {
+          "$ref": "#/$defs/buildSelection"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        },
+        "runtime_kind": {
+          "enum": [
+            "http",
+            "worker"
+          ]
+        },
+        "worker": {
+          "$ref": "#/$defs/workerContract"
+        }
+      },
+      "required": [
+        "status",
+        "capabilities",
+        "budget",
+        "schema_version"
+      ]
+    },
+    "topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "enum": [
+            "source",
+            "generated",
+            "explicit_test_configuration"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "replica_origin": {
+          "enum": [
+            "source",
+            "generated",
+            "kubernetes_default",
+            "explicit_test_configuration"
+          ]
+        },
+        "strategy": {
+          "enum": [
+            "rolling_update",
+            "recreate"
+          ]
+        },
+        "strategy_origin": {
+          "enum": [
+            "source",
+            "kubernetes_default",
+            "explicit_test_configuration"
+          ]
+        },
+        "max_unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_surge": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "termination_grace_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_ready_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "probes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/probe"
+          }
+        },
+        "readiness_origin": {
+          "enum": [
+            "source",
+            "generated",
+            "worker_heartbeat"
+          ]
+        },
+        "readiness_path": {
+          "type": "string"
+        },
+        "readiness_scheme": {
+          "type": "string"
+        },
+        "readiness_acceptance": {
+          "$ref": "#/$defs/readinessAcceptance"
+        },
+        "availability_probe_connection_policy": {
+          "enum": [
+            "new_connection_per_probe",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "origin",
+        "replicas",
+        "replica_origin",
+        "strategy",
+        "strategy_origin",
+        "max_unavailable",
+        "max_surge",
+        "termination_grace_seconds",
+        "min_ready_seconds",
+        "probes",
+        "readiness_origin",
+        "availability_probe_connection_policy"
+      ]
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "purpose": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "port": {
+          "type": "string"
+        },
+        "scheme": {
+          "type": "string"
+        },
+        "grpc_service": {
+          "type": "string"
+        },
+        "initial_delay_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "period_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "success_threshold": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failure_threshold": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "termination_grace_period_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unsupported": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "purpose",
+        "type"
+      ]
+    },
+    "readinessAcceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "integer",
+          "minimum": 200,
+          "maximum": 299
+        },
+        "json": {
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": {
+            "pattern": "^[a-zA-Z_][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "buildSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "dockerfile",
+        "context"
+      ],
+      "properties": {
+        "app": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "dockerfile": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "context": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu_request": {
+          "type": "string"
+        },
+        "memory_request": {
+          "type": "string"
+        },
+        "cpu_limit": {
+          "type": "string"
+        },
+        "memory_limit": {
+          "type": "string"
+        }
+      },
+      "required": []
+    },
+    "workerContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "redis_json_heartbeat"
+        },
+        "claim": {
+          "const": "process_liveness_only"
+        },
+        "contract_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "max_age": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "max_ttl": {
+          "const": "1m"
+        },
+        "required_advancing_samples": {
+          "const": 2
+        }
+      },
+      "required": [
+        "kind",
+        "claim",
+        "contract_hash",
+        "max_age",
+        "max_ttl",
+        "required_advancing_samples"
+      ]
+    }
+  }
+}

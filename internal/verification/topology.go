@@ -16,6 +16,12 @@ func effectiveTopology(value *model.TopologySettings) *model.TopologySettings {
 	if value == nil {
 		return nil
 	}
+	if value.Rollout != nil && value.Rollout.Strategy == "recreate" {
+		cloned := *value
+		rollout := *value.Rollout
+		cloned.Rollout = &rollout
+		return &cloned
+	}
 	unavailable, surge := int32(0), int32(1)
 	strategy := "rolling_update"
 	if value.Rollout != nil {
@@ -37,13 +43,16 @@ func validateTopology(config model.RuntimeConfiguration) error {
 	if value == nil {
 		return nil
 	}
-	if config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" {
+	if config.SchemaVersion != "v1alpha4" && config.SchemaVersion != "v1alpha5" && config.SchemaVersion != "v1alpha6" {
 		return errors.New("explicit test topology requires configuration schema_version v1alpha4")
 	}
 	if value.Replicas < 1 || value.Replicas > safetyBudget().MaxReplicas {
 		return errors.New("topology.replicas must be between 1 and 5")
 	}
 	r := value.Rollout
+	if isWorker(config) {
+		return validateWorker(config)
+	}
 	if r.Strategy != "rolling_update" {
 		return errors.New("test topology supports only the rolling_update strategy")
 	}
@@ -54,6 +63,9 @@ func validateTopology(config model.RuntimeConfiguration) error {
 }
 
 func topologyStrategy(value *model.TopologySettings) appsv1.DeploymentStrategy {
+	if value.Rollout.Strategy == "recreate" {
+		return appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+	}
 	unavailable, surge := intstr.FromInt32(*value.Rollout.MaxUnavailable), intstr.FromInt32(*value.Rollout.MaxSurge)
 	return appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType, RollingUpdate: &appsv1.RollingUpdateDeployment{MaxUnavailable: &unavailable, MaxSurge: &surge}}
 }

@@ -22,7 +22,7 @@ func applicationEnvironment(config model.RuntimeConfiguration) []corev1.EnvVar {
 	result := make([]corev1.EnvVar, 0, len(names))
 	for _, name := range names {
 		binding := config.Environment[name]
-		if config.SchemaVersion == "v1alpha5" {
+		if advancedConfiguration(config) {
 			result = append(result, corev1.EnvVar{Name: name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: applicationSecretName}, Key: name}}})
 			continue
 		}

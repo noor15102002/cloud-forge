@@ -2,7 +2,7 @@
 
 Runtime configuration `v1alpha5` adds fixed PostgreSQL/pgvector and ClamAV
 providers, generated test configuration, a one-time preparation command, and
-restricted outbound networking. Verification and plan reports use `v1alpha6`;
+restricted outbound networking. Verification and plan reports use `v1alpha7`;
 all earlier report schemas remain loadable without rewriting their evidence.
 
 This contract verifies one application in a disposable Kubernetes cluster. It

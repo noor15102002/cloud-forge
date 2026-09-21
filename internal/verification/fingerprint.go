@@ -40,6 +40,10 @@ func newFingerprint(ctx context.Context, runner command.Runner, root string, cur
 	for _, name := range enabledProviders(current.config) {
 		fingerprint.Dependencies = append(fingerprint.Dependencies, providerFingerprint(name))
 	}
+	if current.config.Worker != nil {
+		encoded, _ := json.Marshal(current.config.Worker)
+		fingerprint.WorkerHash = hashBytes(encoded)
+	}
 	if current.config.Preparation != nil {
 		encoded, _ := json.Marshal(current.config.Preparation)
 		fingerprint.PreparationHash = hashBytes(encoded)

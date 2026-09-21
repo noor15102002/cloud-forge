@@ -270,6 +270,7 @@ type Measurement struct {
 
 // Evidence records measured behavior for one verification experiment.
 type Evidence struct {
+	Worker       *WorkerObservation   `json:"worker,omitempty"`
 	Topology     *TestTopology        `json:"topology,omitempty"`
 	Execution    *ExperimentExecution `json:"execution,omitempty"`
 	Recovery     *RecoveryEvidence    `json:"recovery,omitempty"`

@@ -16,7 +16,7 @@ var testLiteralPattern = regexp.MustCompile(`^[a-zA-Z0-9_. -]{0,64}$`)
 var assertionKeyPattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,63}$`)
 
 func validateExtensions(config model.RuntimeConfiguration) error {
-	advanced := config.SchemaVersion == "v1alpha5"
+	advanced := advancedConfiguration(config)
 	restricted := config.Network != nil && config.Network.Outbound == "declared_dependencies_only"
 	if config.Safety != nil && (!advanced || config.Safety.Profile != "bounded_backend") {
 		return errors.New("safety.profile requires v1alpha5 and the fixed bounded_backend profile")
@@ -126,6 +126,13 @@ func validateExtensions(config model.RuntimeConfiguration) error {
 // safeConfiguration deliberately omits even user-declared harmless literal values.
 func safeConfiguration(config model.RuntimeConfiguration) model.RuntimeConfiguration {
 	result := config
+	if config.Worker != nil {
+		settings := *config.Worker
+		settings.Command = []string{"<omitted>"}
+		settings.Heartbeat.Key = "<omitted>"
+		result.Worker = &settings
+		result.Load = model.LoadSettings{}
+	}
 	if config.Preparation != nil {
 		settings := *config.Preparation
 		settings.Command = []string{"<omitted>"}
