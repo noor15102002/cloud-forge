@@ -83,7 +83,54 @@ helper test before CloudForge ran. A [repeat on the same revision](https://githu
 qualified the expected native readiness FAIL/exit 1 with successful preparation,
 providers and final cleanup. The pre-runtime helper failure remains retained.
 
-The worker branch includes the protected backend merge without changing its
-already integrated code. The final main-based candidate and packaged Action
-must qualify before protected merge and private worker pilots. Local checks or
-generic fixtures alone are not evidence that any private application has run.
+## Final main-based qualification
+
+The final candidate `55d35dbd1ed13e5552365d27266c8e6c5f0a2f4e` included the
+protected backend merge without changing its already integrated code. All
+31 checks passed before protected squash merge as
+`7c5bd67b789293edf83d67d566715ccc481e886a`. The [worker matrix](https://github.com/noor15102002/cloud-forge/actions/runs/35633634017)
+qualified all eleven scenarios again, with native producer
+`c4f2e361e7c7e21b2d8e557f086677a42b5d3ae2`. Healthy progress, original FAIL
+preservation after restoration, blocked restoration, both cancellations and
+independent cleanup matched the intended contract.
+
+Three other first attempts remain retained separately from their single
+unchanged-candidate repeats:
+
+- The [observed Redis cancellation attempt](https://github.com/noor15102002/cloud-forge/actions/runs/35633634310/attempts/1)
+  stopped at image import before its interruption target. Native ERROR and
+  successful final cleanup were retained. Its repeat reached actual Redis
+  startup, qualified cancellation and passed cleanup.
+- The [backend missing-schema attempt](https://github.com/noor15102002/cloud-forge/actions/runs/35633633851/attempts/1)
+  could not observe the Docker version within ten seconds, before any build.
+  Its repeat reached the application and retained the expected readiness FAIL.
+- The [source-topology attempt](https://github.com/noor15102002/cloud-forge/actions/runs/35633634065/attempts/1)
+  retained one timed-out rollout probe, causing its qualification assertion to
+  fail. The repeat completed all three topologies, preserving source-single
+  availability FAIL and measured generated-single recovery FAIL. Its rollout,
+  restoration and cleanup checks passed. The original reported one-millisecond
+  downtime follows the [documented completion-to-completion convention](reporting.md);
+  it does not include the timed-out request or establish total outage duration.
+
+[CI on the actual merged revision](https://github.com/noor15102002/cloud-forge/actions/runs/35635658550)
+passed. The [packaged Action on that revision](https://github.com/noor15102002/cloud-forge/actions/runs/35635658695)
+is retained separately. Generic qualification alone does not establish that any
+private application has run.
+
+## Public import observation follow-up
+
+The recurring import failure remains tracked in [#51](https://github.com/noor15102002/cloud-forge/issues/51).
+The generic cancellation harness now records only the registered run's exact
+bundled-fixture image A/B direct-import command. It reuses the existing bounded
+stream recorder without retries, auxiliary runtime calls or deadline changes.
+Foreign images, mismatched owners and unsupported command shapes are rejected
+before execution or capture. Kubeconfig and application/provider logs are not
+recorded.
+
+The [diagnostic workflow](https://github.com/noor15102002/cloud-forge/actions/runs/35634489084)
+qualified all four Redis jobs on `8a00151ebbde559a48218bc9597ec9cc23834a36`.
+Both observed imports succeeded, with complete original streams and no recording
+errors; actual and deliberately faulted cleanup cases retained their native
+results and passed final cleanup. The earlier import exit 1 did not recur, so
+its underlying cause remains unknown. Successful diagnostics do not supersede
+the failed attempts.

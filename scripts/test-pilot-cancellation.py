@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pure fake-command checks for public cleanup capture; no Docker or app runs."""
+"""Pure fake-command checks for public command capture; no Docker or app runs."""
 from contextlib import contextmanager
 import importlib.util
 import json
@@ -17,6 +17,7 @@ SPEC = importlib.util.spec_from_file_location("pilot_cancellation", Path(__file_
 pilot = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(pilot)
 NAME = "cloudforge-0123abcd"
+IMPORT_ARGS = ["image", "import", "cloudforge/healthy-node-redis:0123abcd-a", "--cluster", NAME, "--mode", "direct"]
 
 
 class CleanupCaptureTests(unittest.TestCase):
@@ -55,16 +56,17 @@ class CleanupCaptureTests(unittest.TestCase):
             self.assertFalse(record["completion_observed"])
 
     @contextmanager
-    def setup_case(self, mode="exit", code=17, force=False):
+    def setup_case(self, mode="exit", code=17, force=False, operation="cleanup"):
         with tempfile.TemporaryDirectory(prefix="cloudforge-cancel-") as temporary:
             root = Path(temporary).resolve()
             fixture = root / "app"
             pilot.fixture_copy(fixture, "redis", False)
             fake = root / "fake-tool"
             fake.write_text("""#!/usr/bin/env python3
-import os,signal,sys,time
+import json,os,signal,sys,time
 from pathlib import Path
 with Path(os.environ['FAKE_CALLS']).open('a') as out: out.write('called\\n')
+Path(os.environ['FAKE_ARGUMENTS']).write_text(json.dumps(sys.argv[1:]))
 mode=os.environ['FAKE_MODE']
 size=200000 if mode=='large' else 0
 sys.stdout.buffer.write(b'O'*size+b'\\x1b[31mcleanup-out\\x00\\n');sys.stdout.buffer.flush()
@@ -80,12 +82,15 @@ sys.exit(int(os.environ['FAKE_EXIT']))
             owner = root / "owner.json"
             pilot.helpers.write_json(owner, {"run_name": NAME})
             env = dict(os.environ, GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux",
-                       FAKE_MODE=mode, FAKE_EXIT=str(code), FAKE_CALLS=str(root / "calls"))
+                       FAKE_MODE=mode, FAKE_EXIT=str(code), FAKE_CALLS=str(root / "calls"), FAKE_ARGUMENTS=str(root / "arguments.json"))
             env.update({pilot.PREFIX+"STAGE":"redis", pilot.PREFIX+"FIXTURE":str(fixture), pilot.PREFIX+"MONOREPO":"false",
                         pilot.PREFIX+"OWNER":str(owner), pilot.PREFIX+"CLEANUP_OUTPUT":str(output),
+                        pilot.PREFIX+"IMPORT_OUTPUT":str(output),
                         pilot.PREFIX+"FORCE_BUILDER_FAILURE":str(force).lower(), pilot.PREFIX+"INJECTION":str(root / "injected.json"),
                         pilot.PREFIX+"MARKER":str(root / "marker.json"), "CLOUDFORGE_REAL_DOCKER":str(fake), "CLOUDFORGE_REAL_K3D":str(fake)})
             command = [sys.executable, str(Path(pilot.__file__)), "__tool", "docker", "buildx", "rm", "--force", NAME]
+            if operation == "import":
+                command = command[:3] + ["k3d", *IMPORT_ARGS]
             yield root, output, env, command
 
     def record(self, output):
@@ -94,7 +99,10 @@ sys.exit(int(os.environ['FAKE_EXIT']))
         return json.loads(records[0].read_text())
 
     def test_exact_original_bytes_exit_and_native_deadline(self):
-        for tool, args, timeout in (("docker", ["buildx", "rm", "--force", NAME], 60), ("k3d", ["cluster", "delete", NAME], 120)):
+        import_b = [*IMPORT_ARGS]
+        import_b[2] = import_b[2][:-1] + "b"
+        for tool, args, timeout in (("docker", ["buildx", "rm", "--force", NAME], 60), ("k3d", ["cluster", "delete", NAME], 120),
+                                    ("k3d", IMPORT_ARGS, 180), ("k3d", import_b, 180)):
             for code in (0, 17):
                 with self.subTest(tool=tool, code=code), self.setup_case(code=code) as (_, output, env, command):
                     result = subprocess.run(command[:3]+[tool]+args, env=env, capture_output=True, timeout=5)
@@ -107,48 +115,54 @@ sys.exit(int(os.environ['FAKE_EXIT']))
                     self.assertEqual(record["exit_code"],code)
                     self.assertTrue(record["actual_command_executed"] and record["completion_observed"])
                     self.assertFalse(record["retry_performed"])
+                    self.assertEqual(record["deadline_owner"], "cloudforge_command_runner")
+                    self.assertEqual(record["scope"], "bundled_public_cancellation_fixture_only")
+                    self.assertEqual((Path(env["FAKE_CALLS"])).read_text(), "called\n")
+                    self.assertEqual(json.loads(Path(env["FAKE_ARGUMENTS"]).read_text()), args)
                     for name, raw in (("stdout",result.stdout),("stderr",result.stderr)):
                         self.assertEqual((output/record["streams"][name]["file"]).read_bytes(),raw)
                         self.assertFalse(record["streams"][name]["truncated"])
 
     def test_bounded_tail_preserves_all_forwarded_bytes(self):
-        with self.setup_case(mode="large") as (_,output,env,command):
-            result=subprocess.run(command,env=env,capture_output=True,timeout=5)
-            record=self.record(output)
-            for name,raw in (("stdout",result.stdout),("stderr",result.stderr)):
-                self.assertGreater(len(raw),200000)
-                stream=record["streams"][name]
-                self.assertTrue(stream["truncated"])
-                self.assertEqual(stream["observed_bytes"],len(raw))
-                self.assertEqual((output/stream["file"]).read_bytes(),raw[-65536:])
+        for operation in ("cleanup", "import"):
+            with self.subTest(operation=operation), self.setup_case(mode="large", operation=operation) as (_,output,env,command):
+                result=subprocess.run(command,env=env,capture_output=True,timeout=5)
+                record=self.record(output)
+                for name,raw in (("stdout",result.stdout),("stderr",result.stderr)):
+                    self.assertGreater(len(raw),200000)
+                    stream=record["streams"][name]
+                    self.assertTrue(stream["truncated"])
+                    self.assertEqual(stream["observed_bytes"],len(raw))
+                    self.assertEqual((output/stream["file"]).read_bytes(),raw[-65536:])
 
     def test_child_signal_and_wrapper_signal_are_preserved(self):
-        with self.setup_case(mode="signal") as (_,output,env,command):
-            result=subprocess.run(command,env=env,capture_output=True,timeout=5)
-            self.assertEqual(result.returncode,-signal.SIGTERM)
-            self.assertEqual(self.record(output)["exit_code"],-signal.SIGTERM)
-        for received in (signal.SIGINT,signal.SIGTERM,signal.SIGKILL):
-            with self.subTest(signal=received),self.setup_case(mode="wait") as (_,output,env,command):
-                process=subprocess.Popen(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
-                try:
-                    deadline=time.monotonic()+5
-                    while time.monotonic()<deadline:
-                        files=list(output.glob("*.json"))
-                        if files and json.loads(files[0].read_text())["streams"].get("stderr",{}).get("observed_bytes",0):break
-                        time.sleep(.01)
-                    else:self.fail("bounded fake command not observed")
-                    if received==signal.SIGKILL:os.killpg(process.pid,received)
-                    else:process.send_signal(received)
-                    stdout,stderr=process.communicate(timeout=5)
-                    self.assertEqual(process.returncode,-received)
-                    self.assertEqual(stdout,b"\x1b[31mcleanup-out\x00\n")
-                    self.assertEqual(stderr,b"\x1b[32mcleanup-err\x00\n")
-                    record=self.record(output)
-                    self.assertEqual(record["completion_observed"],received!=signal.SIGKILL)
-                    self.assertEqual(record["exit_code"],None if received==signal.SIGKILL else -received)
-                finally:
-                    if process.poll() is None:os.killpg(process.pid,signal.SIGKILL)
-                    process.communicate(timeout=5)
+        for operation in ("cleanup", "import"):
+            with self.subTest(operation=operation), self.setup_case(mode="signal", operation=operation) as (_,output,env,command):
+                result=subprocess.run(command,env=env,capture_output=True,timeout=5)
+                self.assertEqual(result.returncode,-signal.SIGTERM)
+                self.assertEqual(self.record(output)["exit_code"],-signal.SIGTERM)
+            for received in (signal.SIGINT,signal.SIGTERM,signal.SIGKILL):
+                with self.subTest(operation=operation,signal=received),self.setup_case(mode="wait", operation=operation) as (_,output,env,command):
+                    process=subprocess.Popen(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+                    try:
+                        deadline=time.monotonic()+5
+                        while time.monotonic()<deadline:
+                            files=list(output.glob("*.json"))
+                            if files and json.loads(files[0].read_text())["streams"].get("stderr",{}).get("observed_bytes",0):break
+                            time.sleep(.01)
+                        else:self.fail("bounded fake command not observed")
+                        if received==signal.SIGKILL:os.killpg(process.pid,received)
+                        else:process.send_signal(received)
+                        stdout,stderr=process.communicate(timeout=5)
+                        self.assertEqual(process.returncode,-received)
+                        self.assertEqual(stdout,b"\x1b[31mcleanup-out\x00\n")
+                        self.assertEqual(stderr,b"\x1b[32mcleanup-err\x00\n")
+                        record=self.record(output)
+                        self.assertEqual(record["completion_observed"],received!=signal.SIGKILL)
+                        self.assertEqual(record["exit_code"],None if received==signal.SIGKILL else -received)
+                    finally:
+                        if process.poll() is None:os.killpg(process.pid,signal.SIGKILL)
+                        process.communicate(timeout=5)
 
     def test_unrelated_and_sensitive_commands_are_not_captured(self):
         for tool,args in (("k3d",["kubeconfig","get",NAME]),("docker",["inspect",NAME]),("docker",["buildx","rm","--force","unrelated"]),
@@ -159,28 +173,71 @@ sys.exit(int(os.environ['FAKE_EXIT']))
                 self.assertFalse(output.exists())
 
     def test_fixture_and_runner_guards_precede_command_or_artifacts(self):
-        for fault in ("runner","source","symlink","fifo","parent","wrong-force-stage"):
-            with self.subTest(fault=fault),self.setup_case() as (root,output,env,command):
-                if fault=="runner":env["RUNNER_ENVIRONMENT"]="self-hosted"
-                elif fault=="source":(root/"app/package.json").write_text("PRIVATE-CANARY")
-                elif fault=="symlink":(root/"app/untrusted").symlink_to(root/"app/package.json")
-                elif fault=="fifo":os.mkfifo(root/"app/fifo")
-                elif fault=="parent":env[pilot.PREFIX+"FIXTURE"]=str(root/"other")
+        for operation in ("cleanup", "import"):
+            for fault in ("runner","source","symlink","fifo","parent","wrong-force-stage"):
+                with self.subTest(operation=operation,fault=fault),self.setup_case(operation=operation) as (root,output,env,command):
+                    if fault=="runner":env["RUNNER_ENVIRONMENT"]="self-hosted"
+                    elif fault=="source":(root/"app/package.json").write_text("PRIVATE-CANARY")
+                    elif fault=="symlink":(root/"app/untrusted").symlink_to(root/"app/package.json")
+                    elif fault=="fifo":os.mkfifo(root/"app/fifo")
+                    elif fault=="parent":env[pilot.PREFIX+"FIXTURE"]=str(root/"other")
+                    else:
+                        env[pilot.PREFIX+"FORCE_BUILDER_FAILURE"]="true"
+                        env[pilot.PREFIX+"STAGE"]="build"
+                    result=subprocess.run(command,env=env,capture_output=True,timeout=5)
+                    self.assertEqual(result.returncode,2)
+                    self.assertNotIn(b"PRIVATE-CANARY",result.stderr)
+                    self.assertFalse((root/"calls").exists())
+                    self.assertFalse(output.exists())
+
+    def test_import_refuses_foreign_or_unrecognized_tuples_before_execution(self):
+        invalid = [
+            [*IMPORT_ARGS, "--extra"],
+            [*IMPORT_ARGS[:-1], "tools"],
+            [*IMPORT_ARGS[:3], "--clusters", *IMPORT_ARGS[4:]],
+            [*IMPORT_ARGS[:4], "cloudforge-deadbeef", *IMPORT_ARGS[5:]],
+        ]
+        for image in ("private.example/secret:token", "cloudforge/healthy-node-api:0123abcd-a",
+                      "cloudforge/healthy-node-redis:deadbeef-a", "cloudforge/healthy-node-redis:0123abcd-c"):
+            invalid.append([*IMPORT_ARGS[:2], image, *IMPORT_ARGS[3:]])
+        for arguments in invalid:
+            with self.subTest(arguments=arguments), self.setup_case(operation="import") as (root,output,env,command):
+                result = subprocess.run(command[:4] + arguments, env=env, capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 2)
+                self.assertNotIn(b"private.example", result.stderr)
+                self.assertFalse((root / "calls").exists())
+                self.assertFalse(output.exists())
+        for owner in (None, "other", "cloudforge-deadbeef", 123):
+            with self.subTest(owner=owner), self.setup_case(operation="import") as (root,output,env,command):
+                owner_path = Path(env[pilot.PREFIX + "OWNER"])
+                if owner is None:
+                    owner_path.unlink()
                 else:
-                    env[pilot.PREFIX+"FORCE_BUILDER_FAILURE"]="true"
-                    env[pilot.PREFIX+"STAGE"]="build"
-                result=subprocess.run(command,env=env,capture_output=True,timeout=5)
-                self.assertEqual(result.returncode,2)
-                self.assertNotIn(b"PRIVATE-CANARY",result.stderr)
-                self.assertFalse((root/"calls").exists())
+                    pilot.helpers.write_json(owner_path, {"run_name": owner})
+                result = subprocess.run(command, env=env, capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 2)
+                self.assertFalse((root / "calls").exists())
                 self.assertFalse(output.exists())
 
+    def test_import_fixture_names_are_exact_for_every_supported_stage(self):
+        for stage, monorepo, name in [(stage, False, "healthy-node-redis" if stage == "redis" else "healthy-node-api")
+                                      for stage in pilot.STAGES] + [("build", True, "monorepo-http")]:
+            for suffix in ("a", "b"):
+                arguments = ["image", "import", "cloudforge/" + name + ":0123abcd-" + suffix,
+                             "--cluster", NAME, "--mode", "direct"]
+                with self.subTest(stage=stage,monorepo=monorepo,suffix=suffix):
+                    pilot.validate_public_import(arguments, NAME, stage, monorepo)
+        for stage, monorepo in (("private", False), ("redis", True)):
+            with self.subTest(stage=stage,monorepo=monorepo), self.assertRaises(pilot.helpers.QualificationError):
+                pilot.validate_public_import(IMPORT_ARGS, NAME, stage, monorepo)
+
     def test_artifact_failure_does_not_change_actual_cleanup(self):
-        with self.setup_case() as (_,output,env,command):
-            output.write_text("not directory")
-            result=subprocess.run(command,env=env,capture_output=True,timeout=5)
-            self.assertEqual(result.returncode,17)
-            self.assertEqual(result.stderr,b"\x1b[32mcleanup-err\x00\n")
+        for operation in ("cleanup", "import"):
+            with self.subTest(operation=operation), self.setup_case(operation=operation) as (_,output,env,command):
+                output.write_text("not directory")
+                result=subprocess.run(command,env=env,capture_output=True,timeout=5)
+                self.assertEqual(result.returncode,17)
+                self.assertEqual(result.stderr,b"\x1b[32mcleanup-err\x00\n")
 
     def test_separate_explicit_fault_withholds_exactly_first_owned_removal(self):
         with self.setup_case(force=True) as (root,output,env,command):

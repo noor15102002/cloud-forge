@@ -139,5 +139,10 @@ versioned evidence. Its boundary is process liveness and heartbeat progress;
 queue jobs, business workflows and overlapping worker topologies remain outside
 this slice. See [the contract and limits](worker-runtime.md) and
 [qualification evidence with retained failures](worker-verification-evidence.md).
-Generic runtime qualification must pass before private pilot execution;
-implementation alone is not runtime evidence.
+
+- [x] Qualify all eleven generic worker scenarios and final existing-runtime checks.
+- [x] Merge the validated worker contract through protected main.
+- [ ] Record the separate private worker pilot with exact native output.
+
+Generic qualification and the actual merged producer are recorded separately
+from private application results; implementation alone is not runtime evidence.

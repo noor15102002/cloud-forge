@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Interrupt bundled public fixtures and retain original bounded cleanup evidence.
+"""Interrupt bundled public fixtures and retain bounded import/cleanup evidence.
 
 Public fixture validation and stream teeing add small wrapper overhead inside
 CloudForge's original command deadlines; no retry, new runtime API call, traffic
-change or command timeout extension is performed by the cleanup observer.
+change or command timeout extension is performed by the command observer.
 """
 import argparse
 from contextlib import contextmanager
@@ -87,6 +87,20 @@ def cleanup_operation(tool, arguments, owner):
     return None
 
 
+def validate_public_import(arguments, owner, stage, monorepo):
+    """Allow only the registered run's exact bundled image A/B direct import."""
+    if (stage not in STAGES or (monorepo and stage != "build")
+            or len(arguments) != 7 or arguments[:2] != ["image", "import"]
+            or arguments[3] != "--cluster" or arguments[5:] != ["--mode", "direct"]):
+        raise helpers.QualificationError("import_capture_requires_known_public_import")
+    if not isinstance(owner, str) or not RUN_NAME.fullmatch(owner) or arguments[4] != owner:
+        raise helpers.QualificationError("import_capture_requires_registered_owner")
+    name = "monorepo-http" if monorepo else "healthy-node-redis" if stage == "redis" else "healthy-node-api"
+    image = "cloudforge/" + name + ":" + owner.removeprefix("cloudforge-")
+    if arguments[2] not in (image + "-a", image + "-b"):
+        raise helpers.QualificationError("import_capture_refused_unrelated_image")
+
+
 def finish_signal(code):
     if code < 0:
         received = -code
@@ -128,6 +142,11 @@ def tool_wrapper(tool, arguments):
             raise helpers.QualificationError("cleanup_capture_multiple_run_names")
         owner = created
         helpers.write_json(owner_path, {"run_name": owner})
+    if tool == "k3d" and arguments[:2] == ["image", "import"]:
+        validate_public_import(arguments, owner, stage, monorepo)
+        return finish_signal(helpers.tee_command([real, *arguments], Path(os.environ[PREFIX + "IMPORT_OUTPUT"]),
+                stage, sys.stdout.buffer, sys.stderr.buffer, scope="bundled_public_cancellation_fixture_only",
+                tool=tool, name="k3d-import", native_timeout_seconds=180))
     operation = cleanup_operation(tool, arguments, owner)
     if operation:
         output = Path(os.environ[PREFIX + "CLEANUP_OUTPUT"])
@@ -222,6 +241,7 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
             PREFIX + "HARNESS": str(Path(__file__).resolve()), PREFIX + "STAGE": stage,
             PREFIX + "FIXTURE": str(app), PREFIX + "MONOREPO": str(args.monorepo).lower(),
             PREFIX + "MARKER": str(marker), PREFIX + "OWNER": str(root / "owner.json"),
+            PREFIX + "IMPORT_OUTPUT": str(args.output / ("import-commands-" + stage)),
             PREFIX + "CLEANUP_OUTPUT": str(args.output / ("cleanup-commands-" + stage)),
             PREFIX + "FORCE_BUILDER_FAILURE": str(args.force_builder_cleanup_failure).lower(),
             PREFIX + "INJECTION": str(root / "injected-builder-failure.json")})
