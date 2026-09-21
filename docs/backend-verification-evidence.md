@@ -72,8 +72,8 @@ streams, performs no retry, and never records kubeconfig, provider or app logs.
 
 Local formatting, race tests, vet, lint, builds and schema/history checks passed.
 Govulncheck reported no called or imported-package vulnerabilities, with one
-advisory in an unused required module. Protected merge and a packaged Action run
-on the actual merged revision remain required before private pilots.
+advisory in an unused required module. The subsequent protected merge and
+qualification are recorded below; none of these generic runs is a private pilot.
 
 ## Completed backend matrix and subsequent cleanup finding
 
@@ -101,5 +101,36 @@ teardown. A successful fallback preserves the original cleanup error. A
 separate disposable test deliberately fails the first removal and must prove
 actual final cleanup and preservation of unrelated resources. Public fixture
 cleanup stream capture retains the real tool failure without collecting
-application, provider or credential output. Qualification of this follow-up
-remains required before merging.
+application, provider or credential output.
+
+## Cleanup follow-up and protected merge
+
+The [final backend matrix](https://github.com/noor15102002/cloud-forge/actions/runs/35629827447)
+qualified all seven cases on head `b619c4d3114b5ae7adc2aa67593649b87cd82160`.
+The reports identify PR merge revision `5a133faf7dc92246d5713faaeb008c182b13923a`.
+The [Redis cancellation matrix](https://github.com/noor15102002/cloud-forge/actions/runs/35629827462)
+qualified both ordinary cancellation and the explicitly injected builder-removal
+failure. The injected case withheld the first removal, recorded exit 70 with
+`actual_command_executed: false`, retained native ERROR, and proved the owned
+fallback removed the remaining resources without changing unrelated state.
+Ordinary cancellation observed successful real builder and cluster removal.
+Neither run establishes the cause of the earlier spontaneous Docker failure.
+
+The first [topology job on this candidate](https://github.com/noor15102002/cloud-forge/actions/runs/35629827457/attempts/1)
+could not observe the Docker version and returned ERROR before building. It
+remains a failed execution attempt. A [fresh-runner repeat](https://github.com/noor15102002/cloud-forge/actions/runs/35629827457/attempts/2)
+completed: one source replica retained availability FAIL, while two source
+replicas and the generated single-replica case passed their measured runtime
+requirements. Restoration and final cleanup passed in all three completed cases.
+
+All twenty checks passed before [PR #49](https://github.com/noor15102002/cloud-forge/pull/49)
+was squash-merged through protected main as
+`581f792619207aa595333b1ac98494e974965473` on September 21, 2026.
+[CI on that merged revision](https://github.com/noor15102002/cloud-forge/actions/runs/35631816102)
+passed. The [packaged Action run](https://github.com/noor15102002/cloud-forge/actions/runs/35631816119)
+also passed on that actual merged producer identity: healthy runtime evidence
+passed with scan warnings, while the broken shutdown and broken rollout fixtures
+retained their expected FAIL results. Restoration and the workflow's cluster
+cleanup check passed. The subsequent worker slice strengthens that final
+independent check to inspect owned Docker containers, images, networks and
+volumes, including builder caches; cluster absence alone is narrower evidence.

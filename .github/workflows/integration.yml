@@ -86,4 +86,4 @@ jobs:
 
       - name: Confirm all owned Docker resources were removed
         if: ${{ always() }}
-        run: bash scripts/pilot-cleanup-check.sh
+        run: timeout --signal=TERM --kill-after=5s 60s bash scripts/pilot-cleanup-check.sh

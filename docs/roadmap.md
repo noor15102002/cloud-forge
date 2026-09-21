@@ -111,8 +111,8 @@ Tracking: [#48](https://github.com/noor15102002/cloud-forge/issues/48),
 - [x] Preserve failures, provider/data fingerprints, restoration and historical reports.
 - [x] Qualify generic backend healthy/failure/network/secret-omission cases on disposable runners.
 - [x] Qualify cancellation and cleanup during new provider/preparation phases.
-- [ ] Qualify owned builder fallback after the existing Redis cancellation matrix exposed remaining resources.
-- [ ] Merge all validated changes through protected main.
+- [x] Qualify owned builder fallback after the existing Redis cancellation matrix exposed remaining resources.
+- [x] Merge all validated backend changes through protected main.
 - [ ] Run separately recorded private HTTP workload pilots with exact CLI output.
 
 See [the bounded backend contract](backend-runtime.md). Earlier milestone
