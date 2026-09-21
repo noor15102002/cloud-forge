@@ -333,7 +333,7 @@ func TestPodRecoveryTimeoutIsApplicationFailure(t *testing.T) {
 		return result
 	})
 	service := fixedService(runner)
-	service.recoveryTimeout = 5 * time.Millisecond
+	service.recoveryTimeout = 50 * time.Millisecond
 	outcome := service.Run(context.Background(), fixturePath(t), testOptions())
 	recovery := evidenceByID(outcome.Run.Evidence, "pod-recovery")
 	if outcome.ExitCode != 1 || recovery == nil || recovery.Status != model.StatusFail {

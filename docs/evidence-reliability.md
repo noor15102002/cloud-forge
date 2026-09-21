@@ -145,3 +145,17 @@ After this milestone: a read-only private application audit, select one service,
 actual dependency requirements, PostgreSQL only if needed, an explicitly
 scoped private pilot, bounded richer HTTP workloads, then prerelease packaging.
 No private application runtime test is part of this milestone.
+
+## Lifecycle deadlines and final observation
+
+A lifecycle requirement deadline is distinct from a failed Kubernetes read.
+If expiry interrupts the last pod observation, CloudForge makes one fresh read
+with a shared five-second final observation/HTTP health budget. A valid snapshot
+that still shows an incomplete replacement or rollout establishes FAIL. If that
+read fails or cannot be decoded, the result stays ERROR. A healthy snapshot only
+after expiry cannot establish when the operation completed and also stays ERROR,
+unless recorded traffic failures already establish a failed requirement.
+Reports mark successful final snapshots as observed after the requirement
+deadline. The extra read does not extend the time allowed to pass, generate more
+traffic, or change the workload. Cancellation interrupts both observation
+contexts. Previously saved results keep their original statuses and evidence.

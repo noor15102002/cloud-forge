@@ -44,6 +44,11 @@ the report. Replicas/HPA maxima above five are rejected. Aggregate workload
 limits, including rollout surge, must fit four CPUs and 2 GiB. The cluster has
 4 GiB and the private BuildKit builder has two CPUs/2 GiB. Build timeout is ten
 minutes; readiness and lifecycle experiment windows are bounded to two minutes.
+After a lifecycle requirement window expires, CloudForge may spend at most five
+additional seconds on one final pod observation and HTTP health check, sharing
+that observation budget. Traffic generation and mutation do not continue during
+this final read. Parent cancellation interrupts it; restoration and cleanup
+retain their existing separate bounds.
 After importing the image, CloudForge separately waits up to 90 seconds for a
 ready API and node without resource pressure before applying the workload.
 These controls limit resource use; unfamiliar source still runs only on
