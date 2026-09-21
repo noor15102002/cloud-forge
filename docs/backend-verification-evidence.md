@@ -60,6 +60,16 @@ interruption is missed. The complete provider combination remains covered by the
 healthy and preparation cases. Its separate runtime qualification must pass
 before the milestone is complete. Historical failed attempts remain evidence.
 
+The [following attempt](https://github.com/noor15102002/cloud-forge/actions/runs/35625485373)
+on head `38a2c873f8fa63f6edc835eb4148b8e77e8c1f5c` stopped even earlier: the direct
+k3d image importer exited 1 before provider startup. CloudForge retained ERROR,
+blocked dependent experiments, and final cleanup and unrelated-state checks
+passed. This is another unqualified interruption attempt, not PostgreSQL failure.
+[Issue #51](https://github.com/noor15102002/cloud-forge/issues/51) tracks the
+unconfirmed import cause. The public fixture harness now preserves bounded raw
+import stream tails and exact arguments/exit or signal. It forwards the original
+streams, performs no retry, and never records kubeconfig, provider or app logs.
+
 Local formatting, race tests, vet, lint, builds and schema/history checks passed.
 Govulncheck reported no called or imported-package vulnerabilities, with one
 advisory in an unused required module. Protected merge and a packaged Action run
