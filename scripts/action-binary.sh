@@ -7,7 +7,7 @@ candidate_path="${CLOUDFORGE_CANDIDATE_PATH:-}"
 if [ -n "$candidate_path" ]; then
   python3 "$action_root/scripts/install-candidate.py" "$candidate_path" "$install_dir" \
     --version "$CLOUDFORGE_CANDIDATE_VERSION" --commit "$CLOUDFORGE_CANDIDATE_COMMIT" \
-    --date "$CLOUDFORGE_CANDIDATE_DATE" --sha256 "$CLOUDFORGE_CANDIDATE_SHA256"
+    --date "$CLOUDFORGE_CANDIDATE_DATE" --sha256 "$CLOUDFORGE_CANDIDATE_SHA256" --require-enriched-manifest
   actual_commit="$(git -C "$action_root" rev-parse HEAD)"
   test "$actual_commit" = "$CLOUDFORGE_CANDIDATE_COMMIT" || {
     echo 'Candidate and packaged Action source revisions differ.' >&2; exit 2;
@@ -28,7 +28,7 @@ elif [ -n "${CLOUDFORGE_ACTION_REF:-}" ]; then
   candidate_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["archive_sha256"])' "$candidate_path/release.json")"
   python3 "$action_root/scripts/install-candidate.py" "$candidate_path" "$install_dir" \
     --version "$CLOUDFORGE_RELEASE_VERSION" --commit "$CLOUDFORGE_ACTION_REF" \
-    --date "$candidate_date" --sha256 "$candidate_sha"
+    --date "$candidate_date" --sha256 "$candidate_sha" --require-enriched-manifest
 else
   # Local uses: ./ remains available for development PR checks. It is not a release qualification.
   cd "$action_root"

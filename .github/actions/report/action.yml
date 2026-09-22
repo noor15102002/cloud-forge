@@ -12,28 +12,81 @@ inputs:
     description: Token with pull-requests write permission.
     required: true
 
+  candidate-path:
+    description: Internal qualification directory containing the verified canonical candidate release.
+    required: false
+    default: ""
+  candidate-version:
+    description: Expected candidate version, required with candidate-path.
+    required: false
+    default: ""
+  candidate-commit:
+    description: Expected full candidate commit, required with candidate-path.
+    required: false
+    default: ""
+  candidate-date:
+    description: Expected deterministic candidate date, required with candidate-path.
+    required: false
+    default: ""
+  candidate-sha256:
+    description: Expected canonical archive SHA-256, required with candidate-path.
+    required: false
+    default: ""
+  qualification-scope:
+    description: Internal live qualification scope; ordinary bot reports are excluded when set.
+    required: false
+    default: ""
+  artifact-url:
+    description: Trusted workflow run URL containing the full qualification evidence.
+    required: false
+    default: ""
+
 outputs:
   comment-id:
     description: ID of the created or updated comment.
     value: ${{ steps.comment.outputs.result }}
 
+  binary:
+    description: Trusted renderer executable; qualification installs the canonical candidate.
+    value: ${{ steps.build.outputs.binary }}
+  report-markdown:
+    description: Validated Markdown rendered by the selected binary.
+    value: ${{ steps.render.outputs.markdown }}
+
 runs:
   using: composite
   steps:
     - name: Set up Go
+      if: ${{ inputs.candidate-path == '' }}
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: 1.27.1
         cache: false
 
-    - name: Build trusted report renderer
+    - name: Prepare trusted report renderer
       id: build
       shell: bash
+      env:
+        CANDIDATE_PATH: ${{ inputs.candidate-path }}
+        CANDIDATE_VERSION: ${{ inputs.candidate-version }}
+        CANDIDATE_COMMIT: ${{ inputs.candidate-commit }}
+        CANDIDATE_DATE: ${{ inputs.candidate-date }}
+        CANDIDATE_SHA256: ${{ inputs.candidate-sha256 }}
       run: |
         set -euo pipefail
         binary="$RUNNER_TEMP/cloudforge-report-renderer"
         cd "$GITHUB_ACTION_PATH/../../.."
-        go build -trimpath -o "$binary" ./cmd/cloudforge
+        if [ -n "$CANDIDATE_PATH" ]; then
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_COMMIT" || {
+            echo 'Candidate and report Action source revisions differ.' >&2
+            exit 2
+          }
+          binary="$(python3 scripts/install-candidate.py "$CANDIDATE_PATH" "$RUNNER_TEMP/cloudforge-report-candidate" \
+            --version "$CANDIDATE_VERSION" --commit "$CANDIDATE_COMMIT" --date "$CANDIDATE_DATE" \
+            --sha256 "$CANDIDATE_SHA256" --require-enriched-manifest)"
+        else
+          go build -trimpath -o "$binary" ./cmd/cloudforge
+        fi
         echo "binary=$binary" >> "$GITHUB_OUTPUT"
 
     - name: Validate and render untrusted JSON
@@ -54,6 +107,8 @@ runs:
       env:
         CLOUDFORGE_MARKDOWN_PATH: ${{ steps.render.outputs.markdown }}
         CLOUDFORGE_PR_NUMBER: ${{ inputs.pull-request-number }}
+        CLOUDFORGE_QUALIFICATION_SCOPE: ${{ inputs.qualification-scope }}
+        CLOUDFORGE_ARTIFACT_URL: ${{ inputs.artifact-url }}
       with:
         github-token: ${{ inputs.github-token }}
         result-encoding: string
@@ -66,5 +121,6 @@ runs:
             repo: context.repo.repo,
             pullRequestNumber: process.env.CLOUDFORGE_PR_NUMBER,
             body,
-            artifactURL: context.payload.workflow_run?.html_url || `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            qualificationScope: process.env.CLOUDFORGE_QUALIFICATION_SCOPE,
+            artifactURL: process.env.CLOUDFORGE_ARTIFACT_URL || context.payload.workflow_run?.html_url || `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
           })

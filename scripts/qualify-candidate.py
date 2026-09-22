@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from qualification_record import read, run_case
 
 
 def main():
@@ -38,7 +39,11 @@ def main():
         "topology": base + ["scripts/pilot-topology.py", str(args.binary), str(case_output)],
         "probe-pacing": base + ["scripts/pilot-probe-pacing.py", str(args.binary), str(case_output)],
     }
-    if args.case.startswith("operational-"):
+    if args.case == "restoration-failure":
+        command = base + ["scripts/pilot-restoration.py", str(args.binary), str(case_output)]
+    elif args.case.startswith("cleanup-"):
+        command = base + ["scripts/pilot-cleanup-faults.py", str(args.binary), str(case_output), "--case", args.case.removeprefix("cleanup-")]
+    elif args.case.startswith("operational-"):
         case = args.case.removeprefix("operational-")
         command = base + ["scripts/pilot-operational.py", str(args.binary), str(case_output), "--case", case]
     elif args.case.startswith("cancel-") and args.case != "cancel-redis-fallback":
@@ -65,27 +70,19 @@ def main():
         command = base + ["scripts/pilot-backend-cancellation.py", str(args.binary), str(case_output), "--run", "--stage", stage]
     else:
         command = commands[args.case]
-    result = None
-    try:
-        with (args.output / "harness.stdout.txt").open("x") as stdout, (args.output / "harness.stderr.txt").open("x") as stderr:
-            result = subprocess.run(command, stdout=stdout, stderr=stderr, check=False)
-    finally:
-        (args.output / "harness.exit.json").write_text(json.dumps({"exit_code": result.returncode if result else None}) + "\n")
+    code = run_case(command, args.case, case_output, args.output / "records", args.binary)
     identities = []
     for report_path in sorted(case_output.rglob("*.json")):
-        try:
-            report = json.loads(report_path.read_text())
-        except (ValueError, OSError):
-            continue  # Raw unusable outputs remain evidence and the harness rejects them.
-        if isinstance(report, dict) and "producer" in report:
+        report = read(report_path)
+        if "producer" in report and isinstance(report.get("evidence"), list):
             expected = {"version": manifest["version"], "commit": manifest["commit"]}
             if report["producer"] != expected:
                 raise ValueError("runtime report producer differs from the installed candidate")
             identities.append(str(report_path.relative_to(args.output)))
     (args.output / "producer-check.json").write_text(json.dumps({"reports": identities, "candidate_sha256": manifest["binary_sha256"]}, indent=2) + "\n")
-    if result.returncode:
-        sys.stderr.write((args.output / "harness.stderr.txt").read_text())
-        return result.returncode
+    if code:
+        sys.stderr.write((args.output / "records/harness.stderr.txt").read_text())
+        return code
     if not identities:
         raise ValueError("no candidate runtime producer evidence was observed")
     print(f"{args.case}: qualified {len(identities)} reports with the installed candidate")

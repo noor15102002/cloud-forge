@@ -1,0 +1,102 @@
+name: Qualify live candidate reporting
+description: Create and update only explicitly scoped qualification comments from exact-candidate evidence.
+inputs:
+  candidate-path:
+    required: true
+    description: Directory holding the canonical release artifact and manifest.
+  candidate-version:
+    required: true
+    description: Expected candidate version.
+  candidate-commit:
+    required: true
+    description: Expected complete candidate commit.
+  candidate-date:
+    required: true
+    description: Expected deterministic candidate date.
+  candidate-sha256:
+    required: true
+    description: Expected canonical archive checksum.
+  report-path:
+    required: true
+    description: Unchanged native cleanup-inventory report from the installed candidate.
+  pull-request-number:
+    required: true
+    description: Explicitly authorized PR for scoped qualification comments.
+  qualification-scope:
+    required: true
+    description: Unique qualification run/attempt scope; previous scopes are never reused.
+  artifact-url:
+    required: true
+    description: Trusted current workflow URL retaining full reports and this proof.
+  output-directory:
+    required: true
+    description: New directory for snapshots, hashes, native report and live API evidence.
+  github-token:
+    required: true
+    description: Workflow token with pull-requests write permission.
+runs:
+  using: composite
+  steps:
+    - name: Preserve candidate identity and existing comments before any write
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        CF_REPORT: ${{ inputs.report-path }}
+        CF_VERSION: ${{ inputs.candidate-version }}
+        CF_COMMIT: ${{ inputs.candidate-commit }}
+        CF_PR: ${{ inputs.pull-request-number }}
+        CF_SCOPE: ${{ inputs.qualification-scope }}
+        CF_OUTPUT: ${{ inputs.output-directory }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        retries: 0
+        script: |
+          const live = require(`${process.env.GITHUB_ACTION_PATH}/live.cjs`)
+          await live.prepare({github, owner: context.repo.owner, repo: context.repo.repo,
+            reportPath: process.env.CF_REPORT, version: process.env.CF_VERSION, commit: process.env.CF_COMMIT,
+            pullRequestNumber: process.env.CF_PR, qualificationScope: process.env.CF_SCOPE,
+            outputDirectory: process.env.CF_OUTPUT})
+    - name: Create isolated live qualification comment with canonical renderer
+      id: create
+      uses: ./.github/actions/report
+      with:
+        report-path: ${{ inputs.report-path }}
+        candidate-path: ${{ inputs.candidate-path }}
+        candidate-version: ${{ inputs.candidate-version }}
+        candidate-commit: ${{ inputs.candidate-commit }}
+        candidate-date: ${{ inputs.candidate-date }}
+        candidate-sha256: ${{ inputs.candidate-sha256 }}
+        pull-request-number: ${{ inputs.pull-request-number }}
+        qualification-scope: ${{ inputs.qualification-scope }}
+        artifact-url: ${{ inputs.artifact-url }}
+        github-token: ${{ inputs.github-token }}
+    - name: Retain executed renderer and canonical archive identities
+      shell: bash
+      env:
+        CF_BINARY: ${{ steps.create.outputs.binary }}
+        CF_OUTPUT: ${{ inputs.output-directory }}
+        CF_RELEASE: ${{ inputs.candidate-path }}
+      run: |
+        set -euo pipefail
+        "$CF_BINARY" version --format json > "$CF_OUTPUT/renderer-version.json"
+        cp "$RUNNER_TEMP/cloudforge-report-candidate/installation.json" "$CF_OUTPUT/candidate-installation.json"
+        cp "$CF_RELEASE/checksums.txt" "$CF_OUTPUT/checksums.txt"
+        sha256sum "$CF_BINARY" > "$CF_OUTPUT/renderer.sha256"
+    - name: Verify live update, bounded fallback and same-run bot ownership
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        CF_COMMENT_ID: ${{ steps.create.outputs.comment-id }}
+        CF_MARKDOWN: ${{ steps.create.outputs.report-markdown }}
+        CF_PR: ${{ inputs.pull-request-number }}
+        CF_SCOPE: ${{ inputs.qualification-scope }}
+        CF_OUTPUT: ${{ inputs.output-directory }}
+        CF_ARTIFACT_URL: ${{ inputs.artifact-url }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        retries: 0
+        script: |
+          const live = require(`${process.env.GITHUB_ACTION_PATH}/live.cjs`)
+          const result = await live.finish({github, owner: context.repo.owner, repo: context.repo.repo,
+            commentID: process.env.CF_COMMENT_ID, markdownPath: process.env.CF_MARKDOWN,
+            pullRequestNumber: process.env.CF_PR, qualificationScope: process.env.CF_SCOPE,
+            outputDirectory: process.env.CF_OUTPUT, artifactURL: process.env.CF_ARTIFACT_URL})
+          await core.summary.addHeading('Live candidate comment qualification').addRaw(JSON.stringify(result, null, 2), true).write()

@@ -93,9 +93,29 @@ function commentBody(body, artifactURL) {
   return compact
 }
 
-async function updateComment({ github, owner, repo, pullRequestNumber, body, artifactURL }) {
+function qualificationMarker(scope) {
+  if (scope === undefined || scope === '') return undefined
+  if (typeof scope !== 'string' || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(scope)) {
+    throw new Error('invalid live qualification scope')
+  }
+  return `<!-- cloudforge-comment-qualification:${scope} -->`
+}
+
+function scopedBody(body, scope, scopeMarker) {
+  const newline = body.indexOf('\n')
+  return `${body.slice(0, newline + 1)}${scopeMarker}\n**Live comment qualification:** ${scope}. Native results retain their original meaning.\n${body.slice(newline + 1)}`
+}
+
+async function updateComment({ github, owner, repo, pullRequestNumber, body, artifactURL, qualificationScope }) {
   const issueNumber = validatePullRequestNumber(pullRequestNumber)
+  const scopeMarker = qualificationMarker(qualificationScope)
+  // Scope is used only by live release qualification. Ordinary reporter calls
+  // select only ordinary reports and preserve every qualification scope.
   body = commentBody(body, artifactURL)
+  if (scopeMarker) {
+    body = commentBody(scopedBody(body, qualificationScope, scopeMarker), artifactURL)
+    if (!body.split('\n').includes(scopeMarker)) body = scopedBody(body, qualificationScope, scopeMarker)
+  }
   validateBody(body)
 
   let authenticatedLogin = 'github-actions[bot]'
@@ -120,7 +140,10 @@ async function updateComment({ github, owner, repo, pullRequestNumber, body, art
     typeof comment.user.login === 'string' &&
     comment.user.login.toLowerCase() === authenticatedLogin &&
     typeof comment.body === 'string' &&
-    markers.some(value => comment.body.startsWith(value))
+    markers.some(value => comment.body.startsWith(value)) &&
+    (scopeMarker
+      ? comment.body.split('\n').includes(scopeMarker)
+      : !comment.body.split('\n').some(line => line.startsWith('<!-- cloudforge-comment-qualification:')))
   )
 
   let commentID
@@ -151,6 +174,7 @@ module.exports = {
   commentBody,
   marker,
   maximumBodyBytes,
+  qualificationMarker,
   updateComment,
   validateBody,
   validatePullRequestNumber

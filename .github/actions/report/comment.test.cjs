@@ -184,3 +184,74 @@ test('upgrades each owned older report to v1alpha8 without rewriting evidence or
     ])
   }
 })
+
+
+test('live qualification scope cannot edit or delete normal, foreign or other-run comments', async () => {
+  const scope = '35714934490-1'
+  const scopeMarker = `<!-- cloudforge-comment-qualification:${scope} -->`
+  const calls = []
+  const github = fakeGitHub([
+    {id: 1, user: {login: 'github-actions[bot]'}, body: `${marker}\nNormal report`},
+    {id: 2, user: {login: 'github-actions[bot]'}, body: `${marker}\n<!-- cloudforge-comment-qualification:other-run -->\nOther qualification`},
+    {id: 3, user: {login: 'someone-else'}, body: `${marker}\n${scopeMarker}\nForeign report`},
+    {id: 10, user: {login: 'github-actions[bot]'}, body: `${marker}\n${scopeMarker}\nOld qualification`},
+    {id: 12, user: {login: 'GITHUB-ACTIONS[BOT]'}, body: `${marker}\n${scopeMarker}\nDuplicate qualification`}
+  ], calls)
+  let updated
+  const recordUpdate = github.rest.issues.updateComment
+  github.rest.issues.updateComment = async (args) => { updated = args.body; return recordUpdate(args) }
+  const id = await updateComment({github, owner: 'owner', repo: 'repo', pullRequestNumber: 55,
+    body: `${marker}\n**Status:** ERROR\n`, qualificationScope: scope})
+  assert.equal(id, '10')
+  assert.ok(updated.includes(scopeMarker))
+  assert.ok(updated.includes('Live comment qualification'))
+  assert.deepEqual(calls, [{operation: 'update', commentID: 10}, {operation: 'delete', commentID: 12}])
+})
+
+test('new qualification scope creates without touching existing normal bot report', async () => {
+  const calls = []
+  const github = fakeGitHub([{id: 1, user: {login: 'github-actions[bot]'}, body: `${marker}\nNormal report`}], calls)
+  assert.equal(await updateComment({github, owner: 'owner', repo: 'repo', pullRequestNumber: 55,
+    body: `${marker}\n**Status:** WARN\n`, qualificationScope: 'run-1'}), '99')
+  assert.deepEqual(calls, [{operation: 'create'}])
+})
+
+test('qualification scope survives compact fallback and invalid scopes cause no API mutation', async () => {
+  const calls = []
+  const github = fakeGitHub([], calls)
+  let posted
+  github.rest.issues.createComment = async ({body}) => { posted = body; return {data: {id: 99}} }
+  await updateComment({github, owner: 'owner', repo: 'repo', pullRequestNumber: 55,
+    body: `${marker}\n**Status:** ERROR\n${'x'.repeat(maximumBodyBytes)}`, qualificationScope: 'run-2'})
+  assert.ok(posted.includes('<!-- cloudforge-comment-qualification:run-2 -->'))
+  assert.ok(posted.includes('compact comment'))
+  assert.ok(Buffer.byteLength(posted, 'utf8') <= maximumBodyBytes)
+  for (const qualificationScope of ['../wrong', 'x\n<!-- marker -->', 'a'.repeat(81), 1]) {
+    await assert.rejects(updateComment({github, owner: 'owner', repo: 'repo', pullRequestNumber: 55,
+      body: `${marker}\nreport`, qualificationScope}), /invalid live qualification scope/)
+  }
+  assert.deepEqual(calls, [])
+})
+
+
+test('ordinary reporter preserves all qualification scopes while updating ordinary duplicates', async () => {
+  const calls = []
+  const github = fakeGitHub([
+    {id: 10, user: {login: 'github-actions[bot]'}, body: `${marker}\n<!-- cloudforge-comment-qualification:run-1 -->\nHistorical qualification`},
+    {id: 1, user: {login: 'github-actions[bot]'}, body: `${marker}\nOrdinary report`},
+    {id: 12, user: {login: 'github-actions[bot]'}, body: `${marker}\n<!-- cloudforge-comment-qualification:run-2 -->\nCurrent qualification`},
+    {id: 2, user: {login: 'github-actions[bot]'}, body: `${marker}\nOrdinary duplicate`}
+  ], calls)
+  assert.equal(await updateComment({github, owner: 'owner', repo: 'repo', pullRequestNumber: 55,
+    body: `${marker}\n**Status:** WARN\n`}), '1')
+  assert.deepEqual(calls, [{operation: 'update', commentID: 1}, {operation: 'delete', commentID: 2}])
+})
+
+test('ordinary reporter creates its own comment when only qualification comments exist', async () => {
+  const calls = []
+  const github = fakeGitHub([{id: 10, user: {login: 'github-actions[bot]'},
+    body: `${marker}\n<!-- cloudforge-comment-qualification:run-1 -->\nQualification`}], calls)
+  assert.equal(await updateComment({github, owner: 'owner', repo: 'repo', pullRequestNumber: 55,
+    body: `${marker}\n**Status:** WARN\n`}), '99')
+  assert.deepEqual(calls, [{operation: 'create'}])
+})

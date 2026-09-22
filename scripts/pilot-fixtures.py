@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run bounded reference trials and publish measurements, not a stability claim."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import statistics
@@ -13,6 +14,11 @@ parser.add_argument("fixture", choices=["healthy-node", "healthy-python"])
 parser.add_argument("output", type=Path)
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
+source = Path("testdata")
+def snapshot():
+    return {str(path.relative_to(source)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(source.rglob("*")) if path.is_file()}
+before = snapshot()
 metrics = {}
 fingerprints = set()
 for number in range(1, 6):
@@ -25,6 +31,8 @@ for number in range(1, 6):
     for experiment in ["container-build", "deployment-readiness", "readiness-gating", "inflight-shutdown", "pod-recovery", "rolling-deployment", "load-profile"]:
         assert evidence[experiment]["status"] == "pass", evidence[experiment]
     assert any(item["name"] == "sigterm_received" and item["value"] == "true" for item in evidence["inflight-shutdown"]["measurements"]), "Missing explicit SIGTERM overlap"
+    assert evidence["environment-cleanup"]["status"] == "pass", evidence["environment-cleanup"]
+    assert before == snapshot(), "Fixture source changed during qualification"
     key = report["fingerprint"].get("compatibility_key")
     assert key, "Missing complete fingerprint"
     fingerprints.add(key)
@@ -46,5 +54,7 @@ for fixture in broken:
     report = json.loads(result.stdout)
     expected = "rolling-deployment" if "rollout" in fixture else "readiness-gating" if "readiness" in fixture else "inflight-shutdown"
     assert result.returncode == 1, report
+    assert any(item["experiment_id"] == "environment-cleanup" and item["status"] == "pass" for item in report["evidence"]), "Native cleanup did not pass"
+    assert before == snapshot(), "Fixture source changed during qualification"
     assert any(item["experiment_id"] == expected and item["status"] == "fail" for item in report["evidence"]), report
     print(f"{fixture}: expected {expected} failure detected", flush=True)

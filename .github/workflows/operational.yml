@@ -1,4 +1,4 @@
-name: Worker heartbeat runtime
+name: Qualification fault harnesses
 
 on:
   pull_request:
@@ -12,14 +12,39 @@ permissions:
   contents: read
 
 jobs:
-  worker:
+  guarded-runtime:
     runs-on: ubuntu-latest
-    timeout-minutes: 85
+    timeout-minutes: 70
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: 4
       matrix:
-        case: [healthy, never, stale, frozen, future, malformed, exit, first-pod-only, fail-second-start, cancel-startup, cancel-recovery]
+        case:
+          - operational-scanner-null
+          - operational-scanner-empty
+          - operational-scanner-unsupported
+          - operational-scanner-truncated
+          - operational-scanner-case-alias
+          - operational-scanner-zero
+          - operational-scanner-findings
+          - operational-scanner-subject
+          - operational-scanner-exit
+          - operational-docker-unavailable
+          - operational-disk-full
+          - operational-registry-503
+          - operational-node-observation
+          - operational-startup-failure
+          - restoration-failure
+          - operational-cleanup-inventory
+          - cleanup-owned-remnant
+          - cleanup-already-absent
+          - cleanup-inventory-malformed
+          - cleanup-inventory-truncated
+          - cleanup-remove-failure
+          - cleanup-same-name-unrelated
+          - cleanup-foreign-owner
+          - cleanup-replaced-identity
+          - cleanup-builder-fallback
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -27,25 +52,27 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.27.1
-      - name: Reserve disposable runner storage
-        run: |
-          test "$GITHUB_ACTIONS" = true
-          test "$RUNNER_ENVIRONMENT" = github-hosted
-          sudo rm -rf -- /usr/share/dotnet /usr/local/lib/android /opt/ghc
       - name: Install pinned runtime tools
         run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
-      - name: Check the bounded observer and public fixture
-        run: |
-          python3 scripts/pilot-worker.py --self-test
-          node --check testdata/healthy-worker/worker.js
       - name: Capture independent cleanup baseline
         run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
-      - name: Qualify actual worker lifecycle evidence
+      - name: Qualify fault harness against the development binary
+        timeout-minutes: 40
         env:
-          WORKER_CASE: ${{ matrix.case }}
+          CASE: ${{ matrix.case }}
         run: |
           go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
-          python3 scripts/qualification-run.py --case "worker-$WORKER_CASE" --binary /tmp/cloudforge --evidence "$RUNNER_TEMP/worker-evidence" --records "$RUNNER_TEMP/qualification-records" --timeout 2100 -- python3 scripts/pilot-worker.py /tmp/cloudforge "$RUNNER_TEMP/worker-evidence" --run --case "$WORKER_CASE"
+          extra=()
+          if [ "$CASE" = restoration-failure ]; then
+            script=scripts/pilot-restoration.py
+          elif [[ "$CASE" == cleanup-* ]]; then
+            script=scripts/pilot-cleanup-faults.py
+            extra=(--case "${CASE#cleanup-}")
+          else
+            script=scripts/pilot-operational.py
+            extra=(--case "${CASE#operational-}")
+          fi
+          python3 scripts/qualification-run.py --case "$CASE" --binary /tmp/cloudforge --evidence "$RUNNER_TEMP/fault-evidence" --records "$RUNNER_TEMP/qualification-records" --timeout 1500 -- python3 "$script" /tmp/cloudforge "$RUNNER_TEMP/fault-evidence" "${extra[@]}"
       - name: Independently check cleanup before any upload
         if: always()
         timeout-minutes: 3
@@ -56,28 +83,28 @@ jobs:
         env:
           RECORDS: ${{ runner.temp }}/qualification-records
           CLEANUP: ${{ runner.temp }}/cleanup.json
-          EVIDENCE: ${{ runner.temp }}/worker-evidence
+          EVIDENCE: ${{ runner.temp }}/fault-evidence
         run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
       - name: Preserve small result first
-        id: q17_small
+        id: q22_small
         if: always()
         continue-on-error: true
         timeout-minutes: 2
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: worker-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          name: development-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
           path: ${{ runner.temp }}/qualification-records/initial
           if-no-files-found: error
           retention-days: 90
       - name: Preserve full raw attempt after cleanup
-        id: q17_bulk
+        id: q22_bulk
         if: always()
         continue-on-error: true
         timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: worker-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/worker-evidence
+          name: development-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fault-evidence
           if-no-files-found: error
           retention-days: 90
       - name: Record actual bulk and initial upload outcomes
@@ -86,17 +113,17 @@ jobs:
         env:
           RECORDS: ${{ runner.temp }}/qualification-records
           CLEANUP: ${{ runner.temp }}/cleanup.json
-          BULK: ${{ steps.q17_bulk.outcome }}
-          SMALL: ${{ steps.q17_small.outcome }}
+          BULK: ${{ steps.q22_bulk.outcome }}
+          SMALL: ${{ steps.q22_small.outcome }}
         run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
       - name: Preserve final upload outcome separately
-        id: q17_final
+        id: q22_final
         if: always()
         continue-on-error: true
         timeout-minutes: 2
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: worker-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          name: development-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-final
           path: ${{ runner.temp }}/qualification-records/final
           if-no-files-found: error
           retention-days: 90
@@ -106,9 +133,9 @@ jobs:
         env:
           RECORDS: ${{ runner.temp }}/qualification-records
           CLEANUP: ${{ runner.temp }}/cleanup.json
-          BULK: ${{ steps.q17_bulk.outcome }}
-          SMALL: ${{ steps.q17_small.outcome }}
-          FINAL: ${{ steps.q17_final.outcome }}
+          BULK: ${{ steps.q22_bulk.outcome }}
+          SMALL: ${{ steps.q22_small.outcome }}
+          FINAL: ${{ steps.q22_final.outcome }}
         run: |
           python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
           if [ "$FINAL" != success ]; then

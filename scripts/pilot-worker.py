@@ -4,6 +4,7 @@
 Default execution is read-only analyze/plan. --run requires disposable hosted
 Linux. Runtime cases never claim queue job completion or business correctness.
 """
+from qualification_record import observation_started, observation_finished
 import argparse
 import copy
 from datetime import datetime
@@ -452,6 +453,7 @@ def run(binary, source, config, output, case, qualification):
         service_proof = None
         try:
             with (output / "stdout.json").open("wb") as stdout, (output / "stderr.txt").open("wb") as stderr:
+                observation_started(output / "stdout.json")
                 process = subprocess.Popen(command, stdout=stdout, stderr=stderr, env=environment)
                 qualification["runtime_executed"] = True
                 deadline = time.monotonic() + VERIFY_SECONDS
@@ -514,6 +516,7 @@ def run(binary, source, config, output, case, qualification):
                     process.kill()
                     process.wait(timeout=10)
             if process is not None:
+                observation_finished(output / "stdout.json", process.returncode if process else None)
                 helpers.write_json(output / "exit.json", {"exit_code": process.returncode})
             if state_path.exists():
                 helpers.write_json(output / "worker-observations.json", read_state(state_path))

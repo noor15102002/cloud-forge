@@ -26,10 +26,16 @@ vuln:
 
 actions:
 	node --test .github/actions/report/comment.test.cjs
+	node --test .github/actions/qualify-report/live.test.cjs
 	bash scripts/test-action-inputs.sh
 	python3 scripts/test-release.py
 	python3 scripts/test-release-harnesses.py
 	python3 scripts/test-qualification-command.py
+	python3 scripts/test-qualification-cleanup.py
+	python3 scripts/test-qualification-record.py
+	python3 scripts/test-qualification-workflows.py
+	python3 scripts/test-pilot-cleanup-faults.py
+	python3 scripts/test-pilot-restoration.py
 	actionlint
 
 external: build

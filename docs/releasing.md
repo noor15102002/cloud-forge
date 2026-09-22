@@ -18,6 +18,17 @@ archive SHA-256 and binary SHA-256. `cloudforge version --format json` reports t
 same version, commit and date. Runtime reports retain that version and commit in
 `producer`; old reports are not given new producer metadata.
 
+Current manifests use `manifest_schema_version: 2`. They also record supported
+config/report schemas, the expected pinned runtime tool bundle, and actual build
+execution times as `qualification_build_started_at` and
+`qualification_build_finished_at`. Docker/buildx are explicitly runner-provided;
+their observed versions remain in the runtime evidence. These wall-clock fields
+do not enter the binary or archive. Reproduction uses separate compiler caches
+and compares both actual binary/archive hashes and every deterministic manifest
+field, excluding only the two validated execution timestamps. The installer can
+read the earlier ten-field manifest, but current candidate qualification requires
+the enriched manifest; historical manifests do not acquire invented metadata.
+
 ## Candidate gate
 
 Use the normal protected-main PR workflow. After the final merged revision is
@@ -30,6 +41,16 @@ The workflow builds an archive once, independently reproduces it byte-for-byte,
 and shares the original artifact with every runtime job. Installation validates
 manifest shape, checksum, safe archive members and the executed binary's complete
 identity. No qualification job substitutes a newly built development binary.
+The installation receipt records its actual UTC `installed_at` separately from
+the reproducible embedded date and the build execution timestamps.
+
+Qualification keeps three outcomes separate: each native CloudForge invocation,
+the harness assertion about its expected behavior, and cleanup observations.
+A deliberately broken fixture can produce native FAIL/exit 1 while its
+qualification assertion passes. An injected observation failure can correctly
+produce native ERROR/exit 2. Neither outcome establishes cleanup without its own
+retained evidence. Missing native output or required cleanup evidence fails the
+current qualification; it is never interpreted as success.
 
 The gate includes:
 
@@ -57,6 +78,23 @@ restoration severity, scan normalization and historical schema compatibility.
 These injected tests establish specific fault semantics; they are not substitutes
 for the exact-binary disposable runtime cases.
 
+Each acceptance record must identify its proof type:
+
+| Proof | What it establishes |
+| --- | --- |
+| A — Installed-archive runtime | The canonical archive was verified, installed and executed against the recorded runtime or declared fault wrapper. |
+| B — Source-level regression | Source tests or test doubles establish a specific parser, status, ownership, rendering or restoration contract. They do not execute the distributed archive. |
+| C — Live platform/integration | Actual GitHub Action, comment, artifact and disposable runner operations, with retained identity and outcomes. A case may also have installed-archive proof. |
+| D — Historical private pilot | An earlier private application observation. It is not current candidate qualification and must not be republished as generic public evidence. |
+
+The public CLI has no command that invokes the same completed Service object's
+cleanup twice. Direct repeated-adapter cleanup therefore remains source-level
+proof; installed-archive fault cases separately exercise already-absent resources
+and fallback removal. Do not describe those as the same test. A fault harness may
+remove its own deliberately retained resources after observing the verifier's
+cleanup ERROR, but that later harness teardown must never be reported as
+CloudForge cleanup PASS.
+
 ## Preserve failed attempts
 
 Each artifact name includes the workflow run ID and attempt number. Keep the
@@ -65,6 +103,27 @@ manifest and checksums, including failures. Native public fixture capture writes
 streams before assertions and refuses to overwrite earlier evidence. A later
 retry is a new attempt; never replace an application FAIL with a preferred run.
 Do not automatically retry a fixture to make a release gate green.
+
+Native streams and bounded invocation records are captured before assertions.
+Independent cleanup and its structured observation run before bulk upload. A
+compact qualification record is surfaced separately, and small and bulk uploads
+have independent deadlines. Bulk preservation remains a required gate even when
+the compact record survives; its failure does not erase the native result or
+cleanup observation. The independent observer never deletes resources, checks
+builders and owned dangling images as well as container/network/volume/image
+inventories, and compares the recorded kubeconfig and direct temporary-workspace
+baseline. Nested temporary roots require their individual harness checks.
+
+Always/finally paths only help while the runner can execute them. Runner loss,
+hard termination or a platform outage can prevent cleanup and evidence upload.
+If observations cannot be recovered, retain UNKNOWN rather than inferring cleanup
+from VM termination or from an empty replacement runner. A historical UNKNOWN
+does not have to become PASS before a new candidate can qualify. Preserve the
+original attempt, fix any demonstrated harness weakness, document the reason and
+corrected revision, and allow one controlled fresh qualification. A demonstrated
+product defect must be fixed first. Do not rerun an old workflow revision and
+claim that it tested a newly corrected harness, and do not repeat an application
+failure merely to obtain a preferred result.
 
 Artifacts retain 90 days in Actions. Before publication, download and retain all
 qualification attempts with the engineering report and list every run URL and

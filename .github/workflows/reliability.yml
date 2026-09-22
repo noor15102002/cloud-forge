@@ -15,7 +15,7 @@ jobs:
   probe-pacing:
     runs-on: ubuntu-latest
     # Paired cases plus cancellation; independent cleanup can take 12 minutes.
-    timeout-minutes: 60
+    timeout-minutes: 145
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -29,24 +29,152 @@ jobs:
           python3 scripts/test-pilot-cancellation.py
       - name: Install pinned tools
         run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
+      - name: Capture independent cleanup baseline
+        run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
       - name: Compare default and explicitly paced HTTP probes
         run: |
           go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
-          python3 scripts/pilot-probe-pacing.py /tmp/cloudforge "$RUNNER_TEMP/probe-pacing"
+          python3 scripts/qualification-run.py --case "probe-pacing" --binary /tmp/cloudforge --evidence "$RUNNER_TEMP/probe-pacing" --records "$RUNNER_TEMP/qualification-records" --timeout 2700 -- python3 scripts/pilot-probe-pacing.py /tmp/cloudforge "$RUNNER_TEMP/probe-pacing"
       - name: Interrupt readiness with explicit probe pacing
-        run: python3 scripts/pilot-cancellation.py /tmp/cloudforge "$RUNNER_TEMP/probe-pacing/cancellation" --stages readiness --probe-pacing
-      - name: Preserve original policy, outcome and cleanup evidence
+        run: python3 scripts/qualification-run.py --case cancel-readiness --binary /tmp/cloudforge --evidence "$RUNNER_TEMP/probe-pacing/cancellation" --records "$RUNNER_TEMP/cancellation-records" --timeout 1500 -- python3 scripts/pilot-cancellation.py /tmp/cloudforge "$RUNNER_TEMP/probe-pacing/cancellation" --stages readiness --probe-pacing
+      - name: Independently check cleanup before any upload
         if: always()
+        timeout-minutes: 3
+        run: python3 scripts/pilot-cleanup-check.py --baseline "$RUNNER_TEMP/cleanup-baseline.json" --output "$RUNNER_TEMP/cleanup.json"
+      - name: Preserve independent qualification layers — compact result before uploads
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ runner.temp }}/probe-pacing
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q13_small
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: probe-pacing
-          path: ${{ runner.temp }}/probe-pacing
-      - name: Check all owned resources
+          name: probe-pacing-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ runner.temp }}/qualification-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q13_bulk
         if: always()
-        run: timeout --signal=TERM --kill-after=5s 60s bash scripts/pilot-cleanup-check.sh
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: probe-pacing-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/probe-pacing
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q13_bulk.outcome }}
+          SMALL: ${{ steps.q13_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q13_final
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: probe-pacing-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ runner.temp }}/qualification-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q13_bulk.outcome }}
+          SMALL: ${{ steps.q13_small.outcome }}
+          FINAL: ${{ steps.q13_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi
+      - name: Preserve cancellation assertion and native outcome separately — compact result before uploads
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/cancellation-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ runner.temp }}/probe-pacing/cancellation
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q14_small
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: probe-pacing-cancellation-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ runner.temp }}/cancellation-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q14_bulk
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: probe-pacing-cancellation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/probe-pacing/cancellation
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/cancellation-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q14_bulk.outcome }}
+          SMALL: ${{ steps.q14_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q14_final
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: probe-pacing-cancellation-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ runner.temp }}/cancellation-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/cancellation-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q14_bulk.outcome }}
+          SMALL: ${{ steps.q14_small.outcome }}
+          FINAL: ${{ steps.q14_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi
+
   explicit-topology:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 85
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,22 +184,84 @@ jobs:
           go-version: 1.27.1
       - name: Install pinned tools
         run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
+      - name: Capture independent cleanup baseline
+        run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
       - name: Compare bounded external test configurations
         run: |
           go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
-          python3 scripts/pilot-topology.py /tmp/cloudforge "$RUNNER_TEMP/explicit-topology"
-      - name: Preserve evidence
+          python3 scripts/qualification-run.py --case "topology" --binary /tmp/cloudforge --evidence "$RUNNER_TEMP/explicit-topology" --records "$RUNNER_TEMP/qualification-records" --timeout 2100 -- python3 scripts/pilot-topology.py /tmp/cloudforge "$RUNNER_TEMP/explicit-topology"
+      - name: Independently check cleanup before any upload
         if: always()
+        timeout-minutes: 3
+        run: python3 scripts/pilot-cleanup-check.py --baseline "$RUNNER_TEMP/cleanup-baseline.json" --output "$RUNNER_TEMP/cleanup.json"
+      - name: Preserve independent qualification layers — compact result before uploads
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ runner.temp }}/explicit-topology
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q15_small
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: explicit-topology
-          path: ${{ runner.temp }}/explicit-topology
-      - name: Check cleanup
+          name: explicit-topology-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ runner.temp }}/qualification-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q15_bulk
         if: always()
-        run: bash scripts/pilot-cleanup-check.sh
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: explicit-topology-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/explicit-topology
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q15_bulk.outcome }}
+          SMALL: ${{ steps.q15_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q15_final
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: explicit-topology-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ runner.temp }}/qualification-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q15_bulk.outcome }}
+          SMALL: ${{ steps.q15_small.outcome }}
+          FINAL: ${{ steps.q15_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi
   topology:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,16 +271,78 @@ jobs:
           go-version: 1.27.1
       - name: Install pinned tools
         run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
+      - name: Capture independent cleanup baseline
+        run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
       - name: Compare identical behavior across one and two replicas
         run: |
           go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
-          python3 scripts/pilot-reliability.py /tmp/cloudforge "$RUNNER_TEMP/reliability"
-      - name: Preserve evidence
+          python3 scripts/qualification-run.py --case "reliability" --binary /tmp/cloudforge --evidence "$RUNNER_TEMP/reliability" --records "$RUNNER_TEMP/qualification-records" --timeout 3000 -- python3 scripts/pilot-reliability.py /tmp/cloudforge "$RUNNER_TEMP/reliability"
+      - name: Independently check cleanup before any upload
         if: always()
+        timeout-minutes: 3
+        run: python3 scripts/pilot-cleanup-check.py --baseline "$RUNNER_TEMP/cleanup-baseline.json" --output "$RUNNER_TEMP/cleanup.json"
+      - name: Preserve independent qualification layers — compact result before uploads
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ runner.temp }}/reliability
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q16_small
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: evidence-reliability
-          path: ${{ runner.temp }}/reliability
-      - name: Check cleanup
+          name: evidence-reliability-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ runner.temp }}/qualification-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q16_bulk
         if: always()
-        run: bash scripts/pilot-cleanup-check.sh
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: evidence-reliability-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/reliability
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q16_bulk.outcome }}
+          SMALL: ${{ steps.q16_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q16_final
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: evidence-reliability-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ runner.temp }}/qualification-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q16_bulk.outcome }}
+          SMALL: ${{ steps.q16_small.outcome }}
+          FINAL: ${{ steps.q16_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi

@@ -37,7 +37,7 @@ runs:
       run: |
         set -euo pipefail
         binary="$(python3 scripts/install-candidate.py "$RUNNER_TEMP/candidate-release" "$RUNNER_TEMP/candidate-install" \
-          --version "$CANDIDATE_VERSION" --commit "$CANDIDATE_COMMIT" --date "$CANDIDATE_DATE" --sha256 "$CANDIDATE_SHA256")"
+          --version "$CANDIDATE_VERSION" --commit "$CANDIDATE_COMMIT" --date "$CANDIDATE_DATE" --sha256 "$CANDIDATE_SHA256" --require-enriched-manifest)"
         echo "binary=$binary" >> "$GITHUB_OUTPUT"
     - name: Install pinned runtime tools
       shell: bash

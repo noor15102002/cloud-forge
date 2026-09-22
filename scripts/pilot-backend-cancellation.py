@@ -6,6 +6,7 @@ effects. A bounded public-fixture hold makes a running phase observable; SIGINT
 is sent only after Kubernetes proves run ownership and container execution.
 Neither Secret objects, application logs nor environment values are queried.
 """
+from qualification_record import observation_started, observation_finished
 import argparse
 from contextlib import contextmanager
 import copy
@@ -599,6 +600,7 @@ def runtime(binary, fixture, output, repository, private, stage, qualification):
         interrupted_at = None
         try:
             with (output / "stdout.json").open("wb") as stdout, (output / "stderr.txt").open("wb") as stderr:
+                observation_started(output / "stdout.json")
                 process = subprocess.Popen(command, stdout=stdout, stderr=stderr, env=environment)
                 qualification["runtime_executed"] = True
                 deadline = time.monotonic() + VERIFY_SECONDS
@@ -619,6 +621,7 @@ def runtime(binary, fixture, output, repository, private, stage, qualification):
                 process.send_signal(signal.SIGINT)
                 qualification["signal_sent"] = "SIGINT"
                 process.wait(timeout=CLEANUP_SECONDS)
+            observation_finished(output / "stdout.json", process.returncode if process else None)
             write_json(output / "exit.json", {"exit_code": process.returncode})
             checks = report_checks(json.loads((output / "stdout.json").read_text()), stage)
             qualification["report_checks"] = checks
@@ -645,6 +648,7 @@ def runtime(binary, fixture, output, repository, private, stage, qualification):
                     process.kill()
                     process.wait(timeout=10)
             if process is not None:
+                observation_finished(output / "stdout.json", process.returncode if process else None)
                 write_json(output / "exit.json", {"exit_code": process.returncode})
             qualification["cleanup"] = preserve_cleanup(repository, output, private, state)
     if not qualification["cleanup"]["passed"]:

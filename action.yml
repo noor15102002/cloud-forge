@@ -59,12 +59,19 @@ inputs:
     description: Name for the uploaded JSON and Markdown report artifact. Keep the default when using the bundled pull-request reporter.
     required: false
     default: cloudforge-verification
+  upload-artifact:
+    description: Upload reports immediately; qualification can defer upload until independent cleanup.
+    required: false
+    default: "true"
   retention-days:
     description: Number of days to retain the report artifact.
     required: false
     default: "14"
 
 outputs:
+  report-directory:
+    description: Directory containing the retained native output and rendered reports.
+    value: ${{ steps.verify.outputs.report-directory }}
   report-json:
     description: Absolute path to the canonical JSON report.
     value: ${{ steps.verify.outputs.report-json }}
@@ -93,6 +100,7 @@ runs:
         CLOUDFORGE_BASELINE_RUN_ID: ${{ inputs.baseline-run-id }}
         CLOUDFORGE_HAS_GITHUB_TOKEN: ${{ inputs.github-token != '' }}
         CLOUDFORGE_RETENTION_DAYS: ${{ inputs.retention-days }}
+        CLOUDFORGE_UPLOAD_ARTIFACT: ${{ inputs.upload-artifact }}
       run: bash "$GITHUB_ACTION_PATH/scripts/validate-action-inputs.sh"
 
     - name: Set up Go
@@ -163,12 +171,17 @@ runs:
         CLOUDFORGE_CONFIG_PATH: ${{ steps.inputs.outputs.config-path }}
         CLOUDFORGE_BASELINE_PATH: ${{ steps.baseline.outputs.path }}
         CLOUDFORGE_BINARY: ${{ steps.build.outputs.binary }}
+        CLOUDFORGE_QUALIFY: ${{ inputs.upload-artifact == 'false' }}
       run: |
         set -euo pipefail
         report_dir="$(mktemp -d "$RUNNER_TEMP/cloudforge-report.XXXXXX")"
         json_report="$report_dir/verification.json"
         markdown_report="$report_dir/verification.md"
         stderr_report="$report_dir/verification.stderr.txt"
+        echo "report-directory=$report_dir" >> "$GITHUB_OUTPUT"
+        if [ "$CLOUDFORGE_QUALIFY" = true ]; then
+          python3 "$GITHUB_ACTION_PATH/scripts/qualification-action.py" start --binary "$CLOUDFORGE_BINARY" --evidence "$report_dir" --records "$report_dir/qualification-records"
+        fi
         arguments=(verify "$CLOUDFORGE_APPLICATION_PATH" --format json)
         if [ -n "$CLOUDFORGE_CONFIG_PATH" ]; then
           arguments+=(--config "$CLOUDFORGE_CONFIG_PATH")
@@ -177,10 +190,16 @@ runs:
           arguments+=(--baseline "$CLOUDFORGE_BASELINE_PATH")
         fi
         set +e
-        "$CLOUDFORGE_BINARY" "${arguments[@]}" > "$json_report" 2> "$stderr_report"
-        status="$?"
+        if [ "$CLOUDFORGE_QUALIFY" = true ]; then
+          python3 "$GITHUB_ACTION_PATH/scripts/qualification-native.py" --report "$json_report" --timeout 1800 -- "$CLOUDFORGE_BINARY" "${arguments[@]}"
+          status="$?"
+        else
+          python3 "$GITHUB_ACTION_PATH/scripts/qualification-observe.py" start "$json_report"
+          "$CLOUDFORGE_BINARY" "${arguments[@]}" > "$json_report" 2> "$stderr_report"
+          status="$?"
+          python3 "$GITHUB_ACTION_PATH/scripts/qualification-observe.py" finish "$json_report" "$status"
+        fi
         set -e
-        printf '{"exit_code":%s}\n' "$status" > "$report_dir/verification.exit.json"
         "$CLOUDFORGE_BINARY" version --format json > "$report_dir/verifier.json"
         candidate_record="$(dirname "$CLOUDFORGE_BINARY")/installation.json"
         if [ -f "$candidate_record" ]; then
@@ -200,9 +219,14 @@ runs:
         echo "report-markdown=$markdown_report" >> "$GITHUB_OUTPUT"
         echo "report-directory=$report_dir" >> "$GITHUB_OUTPUT"
         echo "exit-code=$status" >> "$GITHUB_OUTPUT"
+        if [ "$CLOUDFORGE_QUALIFY" = true ]; then
+          outcome=failure
+          if [ "$status" = 0 ]; then outcome=success; fi
+          python3 "$GITHUB_ACTION_PATH/scripts/qualification-action.py" finish --binary "$CLOUDFORGE_BINARY" --evidence "$report_dir" --records "$report_dir/qualification-records" --outcome "$outcome"
+        fi
 
     - name: Upload verification reports
-      if: ${{ always() && steps.verify.outputs.report-directory != '' }}
+      if: ${{ always() && inputs.upload-artifact == 'true' && steps.verify.outputs.report-directory != '' }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ inputs.artifact-name }}

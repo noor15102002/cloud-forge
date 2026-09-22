@@ -13,6 +13,8 @@ import subprocess
 import tarfile
 import tempfile
 
+from release_metadata import validate_manifest_shape
+
 
 def unique_object(pairs):
     value = {}
@@ -29,7 +31,7 @@ def read_regular(path, limit):
     return path.read_bytes()
 
 
-def install(source, destination, version, commit, date, archive_sha256):
+def install(source, destination, version, commit, date, archive_sha256, *, require_enriched=False):
     if platform.system() != "Linux" or platform.machine() not in ("x86_64", "amd64"):
         raise ValueError("the qualified candidate requires Linux/amd64")
     if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", version):
@@ -41,9 +43,7 @@ def install(source, destination, version, commit, date, archive_sha256):
     if not re.fullmatch(r"[a-f0-9]{64}", archive_sha256):
         raise ValueError("expected archive SHA-256 is required")
     manifest = json.loads(read_regular(source / "release.json", 16384), object_pairs_hook=unique_object)
-    fields = {"version", "commit", "date", "source_date_epoch", "go_version", "os", "arch", "archive", "archive_sha256", "binary_sha256"}
-    if not isinstance(manifest, dict) or set(manifest) != fields:
-        raise ValueError("unsupported release manifest")
+    validate_manifest_shape(manifest, require_enriched=require_enriched)
     expected = {"version": version, "commit": commit, "date": date, "os": "linux", "arch": "amd64",
                 "archive": f"cloudforge_{version}_linux_amd64.tar.gz", "archive_sha256": archive_sha256}
     if any(manifest.get(key) != value for key, value in expected.items()):
@@ -79,7 +79,10 @@ def install(source, destination, version, commit, date, archive_sha256):
         if identity != {"schema_version": "v1alpha1", "version": version, "commit": commit, "date": date}:
             raise ValueError("candidate binary identity mismatch")
         os.replace(binary, destination / "cloudforge")
-    (destination / "installation.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    # Installation time belongs to this receipt, never to the reproducible
+    # release manifest or the executable's deterministic embedded date.
+    receipt = {**manifest, "installed_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")}
+    (destination / "installation.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     return destination / "cloudforge"
 
 
@@ -91,9 +94,10 @@ def main():
     parser.add_argument("--commit", required=True)
     parser.add_argument("--date", required=True)
     parser.add_argument("--sha256", required=True)
+    parser.add_argument("--require-enriched-manifest", action="store_true")
     args = parser.parse_args()
     try:
-        print(install(args.source.resolve(), args.destination.resolve(), args.version, args.commit, args.date, args.sha256))
+        print(install(args.source.resolve(), args.destination.resolve(), args.version, args.commit, args.date, args.sha256, require_enriched=args.require_enriched_manifest))
     except (OSError, ValueError, OverflowError, KeyError, tarfile.TarError, subprocess.SubprocessError) as error:
         parser.exit(2, f"Candidate installation failed: {error}\n")
 

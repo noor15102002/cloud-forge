@@ -40,6 +40,7 @@ jobs:
           python3 scripts/test-qualification-command.py 2>&1 | tee "$RUNNER_TEMP/static-evidence/preservation.txt"
       - name: Preserve this static attempt
         if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: static-${{ github.run_id }}-${{ github.run_attempt }}
@@ -68,20 +69,34 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          bash scripts/build-release.sh "$RELEASE_VERSION" "$RUNNER_TEMP/release"
-          bash scripts/build-release.sh "$RELEASE_VERSION" "$RUNNER_TEMP/reproduced"
-          diff --recursive "$RUNNER_TEMP/release" "$RUNNER_TEMP/reproduced"
+          mkdir "$RUNNER_TEMP/canonical-go-cache" "$RUNNER_TEMP/reproduced-go-cache"
+          GOCACHE="$RUNNER_TEMP/canonical-go-cache" bash scripts/build-release.sh "$RELEASE_VERSION" "$RUNNER_TEMP/release"
+          GOCACHE="$RUNNER_TEMP/reproduced-go-cache" bash scripts/build-release.sh "$RELEASE_VERSION" "$RUNNER_TEMP/reproduced"
+          python3 scripts/compare-releases.py "$RUNNER_TEMP/release" "$RUNNER_TEMP/reproduced" > "$RUNNER_TEMP/reproducibility.json"
           python3 - "$RUNNER_TEMP/release/release.json" >> "$GITHUB_OUTPUT" <<'PY'
           import json, sys
-          for key, value in json.load(open(sys.argv[1])).items():
-              print(f"{key}={value}")
+          manifest = json.load(open(sys.argv[1]))
+          for key in ("version", "commit", "date", "archive_sha256"):
+              print(f"{key}={manifest[key]}")
           PY
       - name: Preserve exactly the built release files
         if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/release
+          retention-days: 90
+          if-no-files-found: error
+      - name: Preserve the independent reproducibility comparison
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reproducibility-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/reproduced
+            ${{ runner.temp }}/reproducibility.json
           retention-days: 90
           if-no-files-found: error
 
@@ -110,6 +125,7 @@ jobs:
           "$CF_BINARY" doctor --format json > "$RUNNER_TEMP/install-evidence/doctor.json"
           cp "$RUNNER_TEMP/candidate-install/installation.json" "$RUNNER_TEMP/install-evidence/"
       - if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-${{ github.run_id }}-${{ github.run_attempt }}
@@ -119,7 +135,7 @@ jobs:
   generic:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 160
     strategy:
       fail-fast: false
       max-parallel: 6
@@ -147,7 +163,17 @@ jobs:
           - operational-registry-503
           - operational-node-observation
           - operational-startup-failure
+          - restoration-failure
           - operational-cleanup-inventory
+          - cleanup-owned-remnant
+          - cleanup-already-absent
+          - cleanup-inventory-malformed
+          - cleanup-inventory-truncated
+          - cleanup-remove-failure
+          - cleanup-same-name-unrelated
+          - cleanup-foreign-owner
+          - cleanup-replaced-identity
+          - cleanup-builder-fallback
           - cancel-build
           - cancel-cluster
           - cancel-redis
@@ -191,26 +217,88 @@ jobs:
           commit: ${{ needs.build.outputs.commit }}
           date: ${{ needs.build.outputs.date }}
           sha256: ${{ needs.build.outputs.sha256 }}
+      - name: Capture independent cleanup baseline
+        run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
       - name: Qualify the installed binary and preserve native evidence
+        timeout-minutes: 125
         env:
           CF_BINARY: ${{ steps.candidate.outputs.binary }}
           CF_CASE: ${{ matrix.case }}
         run: python3 scripts/qualify-candidate.py "$CF_BINARY" "$CF_CASE" "$RUNNER_TEMP/qualification"
-      - name: Independently check cleanup
+      - name: Independently check cleanup before any upload
         if: always()
-        run: timeout --signal=TERM --kill-after=5s 60s bash scripts/pilot-cleanup-check.sh
-      - name: Preserve this attempt, including every failed case
+        timeout-minutes: 3
+        run: python3 scripts/pilot-cleanup-check.py --baseline "$RUNNER_TEMP/cleanup-baseline.json" --output "$RUNNER_TEMP/cleanup.json"
+      - name: Preserve this attempt and apply independent gates — compact result before uploads
         if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification/records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ runner.temp }}/qualification
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q18_small
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: generic-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ runner.temp }}/qualification/records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q18_bulk
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: generic-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/qualification
+          if-no-files-found: error
           retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification/records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q18_bulk.outcome }}
+          SMALL: ${{ steps.q18_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q18_final
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: generic-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ runner.temp }}/qualification/records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification/records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q18_bulk.outcome }}
+          SMALL: ${{ steps.q18_small.outcome }}
+          FINAL: ${{ steps.q18_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi
 
   action:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 185
     strategy:
       fail-fast: false
       matrix:
@@ -223,10 +311,13 @@ jobs:
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}/candidate-release
+      - name: Capture independent cleanup baseline
+        run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
       - name: Run the packaged Action with the distributed candidate
         uses: ./
         id: verify
         with:
+          upload-artifact: 'false'
           path: testdata/${{ matrix.fixture }}
           candidate-path: ${{ runner.temp }}/candidate-release
           candidate-version: ${{ needs.build.outputs.version }}
@@ -241,22 +332,254 @@ jobs:
           CF_BINARY: ${{ steps.verify.outputs.binary }}
           CF_REPORT: ${{ steps.verify.outputs.report-json }}
         run: |
-          python3 scripts/pilot-monorepo.py "$CF_BINARY" "$CF_REPORT" "$RUNNER_TEMP/monorepo-evidence"
-          python3 scripts/pilot-cancellation.py "$CF_BINARY" "$RUNNER_TEMP/monorepo-cancellation" --stages build --monorepo
+          python3 scripts/qualification-run.py --case monorepo-extra --binary "$CF_BINARY" --evidence "$RUNNER_TEMP/monorepo-evidence" --records "$RUNNER_TEMP/monorepo-records" --timeout 1200 -- python3 scripts/pilot-monorepo.py "$CF_BINARY" "$CF_REPORT" "$RUNNER_TEMP/monorepo-evidence"
+          python3 scripts/qualification-run.py --case cancel-build --binary "$CF_BINARY" --evidence "$RUNNER_TEMP/monorepo-cancellation" --records "$RUNNER_TEMP/cancellation-records" --timeout 1500 -- python3 scripts/pilot-cancellation.py "$CF_BINARY" "$RUNNER_TEMP/monorepo-cancellation" --stages build --monorepo
       - name: Assert report producer matches the distributed candidate
         env:
           CF_REPORT: ${{ steps.verify.outputs.report-json }}
           CF_VERSION: ${{ needs.build.outputs.version }}
           CF_COMMIT: ${{ needs.build.outputs.commit }}
         run: jq --exit-status --arg version "$CF_VERSION" --arg commit "$CF_COMMIT" '.producer == {version:$version, commit:$commit}' "$CF_REPORT"
-      - name: Independently check cleanup
+      - name: Independently check cleanup before any upload
         if: always()
-        run: timeout --signal=TERM --kill-after=5s 60s bash scripts/pilot-cleanup-check.sh
-      - if: ${{ always() && matrix.fixture == 'monorepo' }}
+        timeout-minutes: 3
+        run: python3 scripts/pilot-cleanup-check.py --baseline "$RUNNER_TEMP/cleanup-baseline.json" --output "$RUNNER_TEMP/cleanup.json"
+      - name: Preserve packaged Action results and enforce their contracts — compact result before uploads
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ steps.verify.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ steps.verify.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q19_small
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: action-${{ matrix.fixture }}-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ steps.verify.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}/qualification-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q19_bulk
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: action-${{ matrix.fixture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.verify.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ steps.verify.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q19_bulk.outcome }}
+          SMALL: ${{ steps.q19_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q19_final
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: action-${{ matrix.fixture }}-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ steps.verify.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}/qualification-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ steps.verify.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q19_bulk.outcome }}
+          SMALL: ${{ steps.q19_small.outcome }}
+          FINAL: ${{ steps.q19_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi
+      - name: Preserve monorepo rejection evidence — compact result before uploads
+        if: ${{ always() && matrix.fixture == 'monorepo' }}
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/monorepo-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ runner.temp }}/monorepo-evidence
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q20_small
+        if: ${{ always() && matrix.fixture == 'monorepo' }}
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: action-monorepo-extra-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ runner.temp }}/monorepo-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q20_bulk
+        if: ${{ always() && matrix.fixture == 'monorepo' }}
+        continue-on-error: true
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: action-monorepo-extra-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/monorepo-evidence
-            ${{ runner.temp }}/monorepo-cancellation
+          path: ${{ runner.temp }}/monorepo-evidence
+          if-no-files-found: error
           retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: ${{ always() && matrix.fixture == 'monorepo' }}
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/monorepo-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q20_bulk.outcome }}
+          SMALL: ${{ steps.q20_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q20_final
+        if: ${{ always() && matrix.fixture == 'monorepo' }}
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: action-monorepo-extra-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ runner.temp }}/monorepo-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: ${{ always() && matrix.fixture == 'monorepo' }}
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/monorepo-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q20_bulk.outcome }}
+          SMALL: ${{ steps.q20_small.outcome }}
+          FINAL: ${{ steps.q20_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi
+      - name: Preserve monorepo cancellation evidence — compact result before uploads
+        if: ${{ always() && matrix.fixture == 'monorepo' }}
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/cancellation-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ runner.temp }}/monorepo-cancellation
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q21_small
+        if: ${{ always() && matrix.fixture == 'monorepo' }}
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: action-monorepo-cancel-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ runner.temp }}/cancellation-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q21_bulk
+        if: ${{ always() && matrix.fixture == 'monorepo' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: action-monorepo-cancel-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/monorepo-cancellation
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: ${{ always() && matrix.fixture == 'monorepo' }}
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/cancellation-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q21_bulk.outcome }}
+          SMALL: ${{ steps.q21_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q21_final
+        if: ${{ always() && matrix.fixture == 'monorepo' }}
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: action-monorepo-cancel-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ runner.temp }}/cancellation-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: ${{ always() && matrix.fixture == 'monorepo' }}
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/cancellation-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q21_bulk.outcome }}
+          SMALL: ${{ steps.q21_small.outcome }}
+          FINAL: ${{ steps.q21_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi
+
+  live-report:
+    needs: [build, generic]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}/candidate-release
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: generic-operational-cleanup-inventory-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-evidence
+      - name: Qualify the live scoped comment with the installed candidate renderer
+        timeout-minutes: 10
+        uses: ./.github/actions/qualify-report
+        with:
+          candidate-path: ${{ runner.temp }}/candidate-release
+          candidate-version: ${{ needs.build.outputs.version }}
+          candidate-commit: ${{ needs.build.outputs.commit }}
+          candidate-date: ${{ needs.build.outputs.date }}
+          candidate-sha256: ${{ needs.build.outputs.sha256 }}
+          report-path: ${{ runner.temp }}/native-evidence/native/verification.json
+          pull-request-number: '55'
+          qualification-scope: ${{ github.run_id }}-${{ github.run_attempt }}
+          artifact-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          output-directory: ${{ runner.temp }}/live-report
+          github-token: ${{ github.token }}
+      - name: Preserve live API observations and comment scope
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: live-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/live-report
+          retention-days: 90
+          if-no-files-found: error

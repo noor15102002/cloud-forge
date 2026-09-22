@@ -37,6 +37,9 @@ if [ -n "$CLOUDFORGE_BASELINE_RUN_ID" ]; then
   fi
   validate_artifact_name "$CLOUDFORGE_BASELINE_ARTIFACT_NAME" "baseline-artifact-name"
 fi
+if [[ "${CLOUDFORGE_UPLOAD_ARTIFACT:-}" != true && "${CLOUDFORGE_UPLOAD_ARTIFACT:-}" != false ]]; then
+  fail "upload-artifact must be exactly true or false."
+fi
 validate_artifact_name "$CLOUDFORGE_ARTIFACT_NAME" "artifact-name"
 if [[ ! "$CLOUDFORGE_RETENTION_DAYS" =~ ^([1-9]|[1-8][0-9]|90)$ ]]; then
   fail "retention-days must be an integer from 1 through 90."

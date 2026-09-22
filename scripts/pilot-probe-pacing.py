@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compare one public rate-limited fixture under two explicit test policies."""
+from qualification_record import observation_started, observation_finished
 import argparse
 import importlib.util
 import json
@@ -185,6 +186,7 @@ def verify_case(binary, output, paced, before):
         process, interrupted_at = None, None
         try:
             with (output / "stdout.json").open("wb") as stdout, (output / "stderr.txt").open("wb") as stderr:
+                observation_started(output / "stdout.json")
                 process = subprocess.Popen(command, stdout=stdout, stderr=stderr, env=environment)
                 try:
                     code = process.wait(timeout=VERIFY_SECONDS)
@@ -203,6 +205,7 @@ def verify_case(binary, output, paced, before):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=10)
+            observation_finished(output / "stdout.json", process.returncode if process else None)
             helpers.write_json(output / "exit.json", {"exit_code": process.returncode if process else None})
             cleanup = retain_case_cleanup(output, root, before)
         require(cleanup["passed"], "pacing_owned_cleanup_or_source_proof_failed")

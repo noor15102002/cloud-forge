@@ -26,13 +26,16 @@ export GOTOOLCHAIN="$release_toolchain" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO
 test "$(go version | awk '{print $3}')" = "$release_toolchain"
 release_temporary="$(mktemp -d)"
 trap 'rm -rf "$release_temporary"' EXIT
+release_started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 release_package=github.com/noor15102002/cloud-forge/internal/cli
 go build -mod=readonly -trimpath -buildvcs=false \
   -ldflags "-s -w -buildid= -X $release_package.Version=$release_version -X $release_package.Commit=$release_commit -X $release_package.Date=$release_date" \
   -o "$release_temporary/cloudforge" ./cmd/cloudforge
-python3 - "$release_temporary/cloudforge" "$release_output" "$release_version" "$release_commit" "$release_date" "$release_epoch" "$release_toolchain" <<'PY'
+python3 - "$release_temporary/cloudforge" "$release_output" "$release_version" "$release_commit" "$release_date" "$release_epoch" "$release_toolchain" "$release_started_at" <<'PY'
 import gzip, hashlib, json, pathlib, sys, tarfile
-binary, output, version, commit, date, epoch, toolchain = sys.argv[1:]
+from datetime import datetime, timezone
+from scripts.release_metadata import enrich_manifest
+binary, output, version, commit, date, epoch, toolchain, started_at = sys.argv[1:]
 output = pathlib.Path(output)
 output.mkdir(parents=True, exist_ok=True)
 archive = output / f"cloudforge_{version}_linux_amd64.tar.gz"
@@ -48,6 +51,7 @@ digest = lambda path: hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest(
 manifest = {"version": version, "commit": commit, "date": date, "source_date_epoch": int(epoch),
             "go_version": toolchain, "os": "linux", "arch": "amd64", "archive": archive.name,
             "archive_sha256": digest(archive), "binary_sha256": digest(binary)}
+manifest = enrich_manifest(manifest, started_at, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
 (output / "release.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 (output / "checksums.txt").write_text(f"{manifest['archive_sha256']}  {archive.name}\n")
 print(json.dumps(manifest, indent=2, sort_keys=True))

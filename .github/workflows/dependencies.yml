@@ -14,7 +14,7 @@ permissions:
 jobs:
   redis:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 125
     strategy:
       fail-fast: false
       matrix:
@@ -28,25 +28,89 @@ jobs:
           go-version: 1.27.1
       - name: Install pinned tools
         run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
+      - name: Capture independent cleanup baseline
+        run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
       - name: Verify Redis dependencies and semantic readiness
         env:
           FIXTURE: ${{ matrix.fixture }}
         run: |
           go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
-          python3 scripts/pilot-dependencies.py /tmp/cloudforge "$FIXTURE" "$RUNNER_TEMP/dependency-evidence"
-      - name: Preserve evidence
+          RECORD_CASE=redis-node
+          if [ "$FIXTURE" = healthy-python-redis ]; then RECORD_CASE=redis-python; fi
+          python3 scripts/qualification-run.py --case "$RECORD_CASE" --binary /tmp/cloudforge --evidence "$RUNNER_TEMP/dependency-evidence" --records "$RUNNER_TEMP/qualification-records" --timeout 4500 -- python3 scripts/pilot-dependencies.py /tmp/cloudforge "$FIXTURE" "$RUNNER_TEMP/dependency-evidence"
+      - name: Independently check cleanup before any upload
         if: always()
+        timeout-minutes: 3
+        run: python3 scripts/pilot-cleanup-check.py --baseline "$RUNNER_TEMP/cleanup-baseline.json" --output "$RUNNER_TEMP/cleanup.json"
+      - name: Preserve independent qualification layers — compact result before uploads
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ runner.temp }}/dependency-evidence
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q3_small
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: dependency-${{ matrix.fixture }}
-          path: ${{ runner.temp }}/dependency-evidence
-      - name: Check cleanup
+          name: dependency-${{ matrix.fixture }}-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ runner.temp }}/qualification-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q3_bulk
         if: always()
-        run: bash scripts/pilot-cleanup-check.sh
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-${{ matrix.fixture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency-evidence
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q3_bulk.outcome }}
+          SMALL: ${{ steps.q3_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q3_final
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-${{ matrix.fixture }}-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ runner.temp }}/qualification-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q3_bulk.outcome }}
+          SMALL: ${{ steps.q3_small.outcome }}
+          FINAL: ${{ steps.q3_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi
 
   redis-cancellation:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -64,22 +128,86 @@ jobs:
         run: |
           python3 scripts/test-pilot-cancellation.py
           python3 scripts/pilot-backend-cancellation.py --self-test
+      - name: Capture independent cleanup baseline
+        run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
       - name: Interrupt Redis startup and preserve unrelated state
         env:
           CLEANUP_CASE: ${{ matrix.case }}
         run: |
           go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
           extra=()
+          RECORD_CASE=cancel-redis
           if [ "$CLEANUP_CASE" = forced-builder-cleanup ]; then
             extra+=(--force-builder-cleanup-failure)
+            RECORD_CASE=cancel-redis-fallback
           fi
-          python3 scripts/pilot-cancellation.py /tmp/cloudforge "$RUNNER_TEMP/dependency-cancellation" --stages redis "${extra[@]}"
-      - name: Preserve evidence
+          python3 scripts/qualification-run.py --case "$RECORD_CASE" --binary /tmp/cloudforge --evidence "$RUNNER_TEMP/dependency-cancellation" --records "$RUNNER_TEMP/qualification-records" --timeout 1500 -- python3 scripts/pilot-cancellation.py /tmp/cloudforge "$RUNNER_TEMP/dependency-cancellation" --stages redis "${extra[@]}"
+      - name: Independently check cleanup before any upload
         if: always()
+        timeout-minutes: 3
+        run: python3 scripts/pilot-cleanup-check.py --baseline "$RUNNER_TEMP/cleanup-baseline.json" --output "$RUNNER_TEMP/cleanup.json"
+      - name: Preserve independent qualification layers — compact result before uploads
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ runner.temp }}/dependency-cancellation
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q4_small
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: dependency-cancellation-${{ matrix.case }}
-          path: ${{ runner.temp }}/dependency-cancellation
-      - name: Check cleanup
+          name: dependency-cancellation-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ runner.temp }}/qualification-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q4_bulk
         if: always()
-        run: bash scripts/pilot-cleanup-check.sh
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-cancellation-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency-cancellation
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q4_bulk.outcome }}
+          SMALL: ${{ steps.q4_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q4_final
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-cancellation-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ runner.temp }}/qualification-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q4_bulk.outcome }}
+          SMALL: ${{ steps.q4_small.outcome }}
+          FINAL: ${{ steps.q4_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi

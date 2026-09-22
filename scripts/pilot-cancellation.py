@@ -5,6 +5,7 @@ Public fixture validation and stream teeing add small wrapper overhead inside
 CloudForge's original command deadlines; no retry, new runtime API call, traffic
 change or command timeout extension is performed by the command observer.
 """
+from qualification_record import observation_started, observation_finished
 import argparse
 from contextlib import contextmanager
 import importlib.util
@@ -312,6 +313,7 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
         process, interrupted_at, cleanup_passed = None, None, False
         try:
             with report_path.open("wb") as stdout, (args.output / f"cancel-{stage}.stderr").open("wb") as stderr:
+                observation_started(report_path)
                 process = subprocess.Popen(command, stdout=stdout, stderr=stderr, env=environment)
                 deadline = time.monotonic() + 600
                 while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
@@ -336,6 +338,7 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
                     process.kill()
                     process.wait(timeout=10)
             if process is not None:
+                observation_finished(report_path, process.returncode if process else None)
                 helpers.write_json(args.output / f"cancel-{stage}.exit.json", {"exit_code": process.returncode})
             cleanup_passed = retain_cleanup(args.output, stage)
         report = json.loads(report_path.read_text())
