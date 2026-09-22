@@ -26,6 +26,7 @@ helpers = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helpers)
 STAGES = ("build", "cluster", "readiness", "lifecycle", "load", "redis")
 CLEANUP_SECONDS = 720
+# Public IDs are currently 20 hex characters; archived fixtures use 8 or 32.
 RUN_NAME = re.compile(r"cloudforge-[a-f0-9]{8,32}")
 INJECTED_EXIT = 70
 INJECTED_ERROR = b"CloudForge public qualification intentionally withheld the first builder removal.\n"

@@ -44,6 +44,7 @@ def build_identity(arguments):
         return None
     require(len(arguments) >= 8 and arguments[2] == "--builder", "pacing_observer_unknown_build")
     owner = arguments[3]
+    # Current public IDs have 20 hex characters; retain historical fixture IDs.
     match = re.fullmatch(r"cloudforge-([a-f0-9]{8,32})", owner)
     require(match is not None, "pacing_observer_unknown_owner")
     require(arguments[4:8] == ["--load", "--provenance=false", "--label", "cloudforge.dev/run-id=" + owner], "pacing_observer_missing_ownership")

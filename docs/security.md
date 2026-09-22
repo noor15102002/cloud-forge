@@ -48,8 +48,13 @@ environment values into the generated workload. Independent cleanup contexts
 delete the cluster after success, failure, timeout, or cancellation unless the
 operator explicitly passes `--keep-environment`. Each image and cluster removal
 gets its own bounded context, so one failed removal cannot consume the timeout
-for later resources. A partially created cluster is always deleted; the keep
-flag applies only after cluster creation succeeds.
+for later resources. Cleanup is attempted for proven-owned resources from a
+partially created cluster; uncertain ownership or removal is reported as ERROR.
+The keep flag applies only after cluster creation succeeds.
+
+Public run IDs use 20 hexadecimal characters so the `cloudforge-` cluster name
+fits k3d's 32-character limit. Independent private ownership tokens remain 32
+hexadecimal characters and are not report metadata.
 
 The BuildKit container carries an explicit run marker. Before removing its
 builder, CloudForge records the exact container ID and the identity of its

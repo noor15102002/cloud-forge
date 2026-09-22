@@ -36,6 +36,10 @@ func (c *Client) Create(ctx context.Context, name string, nodePort int) model.Co
 // CreateWithMemory selects one of the fixed, qualified cluster memory budgets.
 // Arbitrary Docker resource flags are never accepted through this adapter.
 func (c *Client) CreateWithMemory(ctx context.Context, name string, nodePort int, memory string) model.CommandResult {
+	// k3d 5.9 reserves room for node suffixes and limits cluster names to 32.
+	if len(name) > 32 {
+		return model.CommandResult{Command: "k3d", ExitCode: -1, FailureType: model.FailureExecution, Stderr: "Cluster name exceeds k3d's 32-character limit."}
+	}
 	if memory != "4g" && memory != "6g" {
 		return model.CommandResult{Command: "k3d", ExitCode: -1, FailureType: model.FailureExecution, Stderr: "Unsupported bounded cluster memory profile."}
 	}

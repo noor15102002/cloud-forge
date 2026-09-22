@@ -4,6 +4,9 @@ import importlib.util
 import copy
 import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 
@@ -19,6 +22,26 @@ operational = module("operational", "pilot-operational.py")
 
 
 class ReleaseObserverTests(unittest.TestCase):
+    def test_topology_preserves_native_failure_before_report_validation(self):
+        repository = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / "fake-cloudforge"
+            binary.write_text("#!" + sys.executable + "\nimport json,sys\n"
+                              "if '--plan' in sys.argv:\n"
+                              " print(json.dumps({'status':'pass','topology':{'origin':'explicit_test_configuration','replicas':1}}))\n"
+                              "else:\n"
+                              " print('invalid native report');print('original native failure',file=sys.stderr);sys.exit(7)\n")
+            binary.chmod(0o700)
+            result = subprocess.run([sys.executable, str(repository / "scripts/pilot-topology.py"), str(binary), str(root / "output")],
+                                    cwd=repository, capture_output=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+            output = root / "output/replicas-1"
+            self.assertEqual((output / "report.json").read_text(), "invalid native report\n")
+            self.assertEqual((output / "report.stderr.txt").read_text(), "original native failure\n")
+            self.assertEqual(json.loads((output / "report.exit.json").read_text()),
+                             {"exit_code": 7, "completion_observed": True, "outer_timeout": False})
+
     def test_complete_empty_inventory_is_supported(self):
         for kind in ("container", "network", "volume", "image"):
             self.assertEqual(cleanup.records("", kind), [])

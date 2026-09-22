@@ -57,21 +57,19 @@ func (s *Service) waitForHTTP(ctx context.Context, url string) httpObservation {
 	for {
 		attempted := false
 		status, err := s.performProbe(ctx, url, func(time.Time) { attempted = true })
-		if !attempted {
+		if !attempted || ctx.Err() != nil {
 			result.DurationMS = elapsedMilliseconds(time.Since(started))
 			return result
 		}
 		result.Attempts++
-		if ctx.Err() == nil {
-			if status >= 100 && status <= 599 {
-				result.HTTPStatuses[status]++
-			}
-			if err != nil || status < 200 || status >= 300 {
-				result.FailureClasses[probeFailureClass(status, err)]++
-			}
+		if status >= 100 && status <= 599 {
+			result.HTTPStatuses[status]++
 		}
-		// Retain the last HTTP response. A final canceled transport attempt has
-		// no HTTP status and must not erase an observed 200/degraded response.
+		if err != nil || status < 200 || status >= 300 {
+			result.FailureClasses[probeFailureClass(status, err)]++
+		}
+		// Retain the last observed HTTP response. Verifier-canceled requests
+		// are excluded above and cannot erase earlier semantic evidence.
 		if status > 0 {
 			result.Status = status
 		}

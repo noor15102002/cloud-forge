@@ -1189,7 +1189,9 @@ func resolveRoot(path string) (string, error) {
 }
 
 func randomID() (string, error) {
-	value := make([]byte, 16)
+	// k3d permits at most 32 characters: cloudforge- plus 20 hex characters
+	// uses 31. Resource ownership uses a separate private 128-bit token.
+	value := make([]byte, 10)
 	if _, err := rand.Read(value); err != nil {
 		return "", err
 	}

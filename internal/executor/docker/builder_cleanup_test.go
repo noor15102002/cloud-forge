@@ -167,6 +167,31 @@ func TestBuilderRunMarkerUsesSupportedDriverOptionWithoutChangingLimits(t *testi
 	}
 }
 
+func TestBuilderAcceptsCurrentAndHistoricalPublicIdentityLengths(t *testing.T) {
+	for _, length := range []int{8, 20, 32, 19, 21} {
+		name := "cloudforge-" + strings.Repeat("a", length)
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			client := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+				calls++
+				if request.Args[3] != name {
+					t.Fatal("builder public identity was changed")
+				}
+				return model.CommandResult{}
+			}))
+			client.IsolateBuild(name)
+			result := client.CreateBuilder(context.Background())
+			valid := length == 8 || length == 20 || length == 32
+			if valid && (calls != 1 || builderCleanupFailed(result)) || !valid && (calls != 0 || !builderCleanupFailed(result)) {
+				t.Fatalf("builder identity boundary changed: calls=%d result=%+v", calls, result)
+			}
+			if len(client.OwnershipToken()) != 32 {
+				t.Fatal("public identity length changed the private ownership token")
+			}
+		})
+	}
+}
+
 func TestBuilderOwnershipFormatOmitsEnvironmentAndUnrelatedMounts(t *testing.T) {
 	c := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		format := request.Args[3]

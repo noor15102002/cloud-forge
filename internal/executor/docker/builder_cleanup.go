@@ -12,7 +12,7 @@ import (
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
-var builderRunName = regexp.MustCompile(`^cloudforge-(?:[a-f0-9]{8}|[a-f0-9]{32})$`)
+var builderRunName = regexp.MustCompile(`^cloudforge-(?:[a-f0-9]{8}|[a-f0-9]{20}|[a-f0-9]{32})$`)
 var builderContainerID = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 // The Docker-container Buildx driver supports env.<NAME>, names the first node

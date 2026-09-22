@@ -31,11 +31,21 @@ class CleanupCaptureTests(unittest.TestCase):
             self.assertNotIn("experiments:", (fixture / "cloudforge.yaml").read_text())
 
     def test_builder_ownership_token_accepts_current_exact_shape(self):
-        name = "cloudforge-" + "a" * 32
-        options = "memory=2g,cpu-period=100000,cpu-quota=200000,env.CLOUDFORGE_RUN_ID=" + name + ",env.CLOUDFORGE_OWNER_ID=" + "b" * 32
-        arguments = ["buildx", "create", "--name", name, "--driver", "docker-container", "--driver-opt", options]
-        self.assertEqual(pilot.created_run("docker", arguments), name)
-        self.assertIsNone(pilot.created_run("docker", [*arguments[:-1], options + ",foreign=true"]))
+        for public_length in (8, 20, 32):
+            name = "cloudforge-" + "a" * public_length
+            options = "memory=2g,cpu-period=100000,cpu-quota=200000,env.CLOUDFORGE_RUN_ID=" + name + ",env.CLOUDFORGE_OWNER_ID="
+            arguments = ["buildx", "create", "--name", name, "--driver", "docker-container", "--driver-opt", options + "b" * 32]
+            with self.subTest(public_length=public_length):
+                self.assertEqual(pilot.created_run("docker", arguments), name)
+                self.assertIsNone(pilot.created_run("docker", [*arguments[:-1], arguments[-1] + ",foreign=true"]))
+                self.assertEqual(pilot.created_run("k3d", ["cluster", "create", name, "--wait"]), name)
+                self.assertEqual(pilot.cleanup_operation("docker", ["buildx", "rm", "--force", name], name), ("builder-remove", 60))
+                self.assertEqual(pilot.cleanup_operation("k3d", ["cluster", "delete", name], name), ("cluster-delete", 120))
+                image = "cloudforge/healthy-node-redis:" + "a" * public_length + "-a"
+                pilot.validate_public_import(["image", "import", image, "--cluster", name, "--mode", "direct"], name, "redis", False)
+            for private_length in (8, 20, 31, 33):
+                with self.subTest(public_length=public_length, private_length=private_length):
+                    self.assertIsNone(pilot.created_run("docker", [*arguments[:-1], options + "b" * private_length]))
 
     def test_probe_pacing_is_fixed_and_restricted_to_public_readiness(self):
         environment = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux"}

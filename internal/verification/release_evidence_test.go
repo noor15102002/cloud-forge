@@ -255,3 +255,70 @@ func TestReleaseUnissuedSemanticProbeHasNoFailureCategory(t *testing.T) {
 		t.Fatalf("unissued probe acquired a failure category: %s", got)
 	}
 }
+
+func TestReleaseStartupCancellationPreservesOnlyCompletedObservations(t *testing.T) {
+	for _, prior := range []bool{false, true} {
+		t.Run(fmt.Sprint(prior), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			s := fixedService(successRunner())
+			calls := 0
+			s.probe = func(context.Context, string) (int, error) {
+				calls++
+				if prior && calls == 1 {
+					return 200, &readinessProbeError{class: "semantic_mismatch"}
+				}
+				cancel()
+				return 0, context.Canceled
+			}
+			o := s.waitForHTTP(ctx, "http://unused/ready")
+			want := 0
+			if prior {
+				want = 1
+			}
+			if o.Success || o.Attempts != want || o.Failures != want || len(o.FailureClasses) != want || len(o.HTTPStatuses) != want {
+				t.Fatalf("canceled request became an observation: %+v", o)
+			}
+			if prior && (o.Status != 200 || o.FailureClasses["semantic_mismatch"] != 1) {
+				t.Fatalf("cancellation erased earlier semantic failure: %+v", o)
+			}
+		})
+	}
+}
+
+func TestReleaseStartupCancellationRetainsEvidenceAndCleansUp(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := fixedService(successRunner())
+	calls := 0
+	s.probe = func(context.Context, string) (int, error) {
+		calls++
+		if calls == 1 {
+			return 503, nil
+		}
+		cancel()
+		return 0, context.Canceled
+	}
+	out := s.Run(ctx, fixturePath(t), testOptions())
+	readiness := evidenceByID(out.Run.Evidence, "deployment-readiness")
+	cleanup := evidenceByID(out.Run.Evidence, "environment-cleanup")
+	if out.Run.Status != model.StatusError || out.ExitCode != 2 || !hasDiagnosticCode(out.Run.Diagnostics, "verification_canceled") || readiness == nil || readiness.Status != model.StatusError || cleanup == nil || cleanup.Status != model.StatusPass {
+		t.Fatalf("cancellation status/diagnostic/cleanup lost: status=%s exit=%d readiness=%+v cleanup=%+v diagnostics=%+v", out.Run.Status, out.ExitCode, readiness, cleanup, out.Run.Diagnostics)
+	}
+	for key, value := range map[string]string{"readiness_attempts": "1", "failed_startup_requests": "1", "readiness_http_status": "503", "startup_probe_failure_http_status": "1"} {
+		if got := measurementValue(readiness.Measurements, key); got != value {
+			t.Fatalf("%s=%s, want%s: %+v", key, got, value, readiness.Measurements)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("new request started after cancellation: %d", calls)
+	}
+	for _, id := range []string{"graceful-shutdown", "pod-recovery", "rolling-deployment", "load-profile"} {
+		if e := evidenceByID(out.Run.Evidence, id); e != nil && (e.Execution == nil || e.Execution.Executed) {
+			t.Fatalf("new experiment %s scheduled after cancellation: %+v", id, e)
+		}
+	}
+	if build := evidenceByID(out.Run.Evidence, "container-build"); build == nil || build.Status != model.StatusPass {
+		t.Fatalf("earlier build evidence erased: %+v", build)
+	}
+}
