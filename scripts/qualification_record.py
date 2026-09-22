@@ -258,11 +258,13 @@ def run_case(command, case, evidence, records, binary, timeout=6600, shutdown_gr
 
 
 def native_result(evidence, entry, producer):
-    path = evidence / entry["path"]
-    report = read(path)
-    observation = read(path.with_suffix(".observation.json"))
-    exit_record = read(path.with_suffix(".exit.json"))
-    if path.name == "stdout.json" and not exit_record:
+    # A workflow fallback declares expectations only. Without the initialized
+    # plan, no directory or binary has been bound to this native invocation.
+    path = evidence / entry["path"] if evidence is not None else None
+    report = read(path) if path else {}
+    observation = read(path.with_suffix(".observation.json")) if path else {}
+    exit_record = read(path.with_suffix(".exit.json")) if path else {}
+    if path and path.name == "stdout.json" and not exit_record:
         exit_record = read(path.parent / "exit.json")
     code = exit_record.get("exit_code", observation.get("exit_code"))
     status = report.get("status") if report.get("status") in ("pass", "warn", "fail", "blocked", "error") else None
@@ -288,7 +290,7 @@ def native_result(evidence, entry, producer):
     return {"path": entry["path"], "expected_status_exit": entry["expected"], "observed_status": status.upper() if status else "UNKNOWN",
             "observed_exit_code": code, "completion_observed": bool(complete), "producer": report.get("producer") if available else None,
             "started_at": observation.get("started_at"), "finished_at": observation.get("finished_at"),
-            "report_sha256": hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() and path.stat().st_size <= MAX_RECORD_BYTES else None,
+            "report_sha256": hashlib.sha256(path.read_bytes()).hexdigest() if path and path.is_file() and path.stat().st_size <= MAX_RECORD_BYTES else None,
             "native_cleanup_status": cleanup, "expected_native_cleanup": entry.get("expected_native_cleanup", ["PASS"]),
             "contract_status": "PASS" if matched and not reasons else "INCOMPLETE" if not available or not complete else "FAIL", "reason_codes": reasons}
 
@@ -317,10 +319,22 @@ def valid_cleanup(cleanup):
     return True
 
 
-def collect(records, cleanup_path, artifact_state="UNKNOWN", small_state="UNKNOWN"):
+def collect(records, cleanup_path, artifact_state="UNKNOWN", small_state="UNKNOWN", fallback_case=None):
     records = Path(records)
     plan, assertions, cleanup = read(records / "plan.json"), read(records / "assertions.json"), read(cleanup_path)
-    native = [native_result(Path(plan["evidence_path"]), entry, plan.get("producer")) for entry in plan.get("required_reports", [])]
+    plan_observed = bool(plan)
+    if not plan_observed:
+        # These fields describe the known workflow job, never a native result.
+        case = fallback_case or os.environ.get("CLOUDFORGE_QUALIFICATION_CASE")
+        try:
+            required = required_reports(case) if case else []
+        except ValueError:
+            required = []
+        plan = {"case": case or "UNKNOWN", "required_reports": required,
+                "source_commit": os.environ.get("GITHUB_SHA"), "run_id": os.environ.get("GITHUB_RUN_ID"),
+                "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"), "workflow": os.environ.get("GITHUB_WORKFLOW")}
+    evidence = Path(plan["evidence_path"]) if plan_observed and plan.get("evidence_path") else None
+    native = [native_result(evidence, entry, plan.get("producer")) for entry in plan.get("required_reports", [])]
     cleanup_valid = valid_cleanup(cleanup)
     if not cleanup:
         cleanup = {"status": "UNKNOWN", "completion_observed": False, "reason_codes": ["cleanup_record_missing"]}
@@ -328,13 +342,14 @@ def collect(records, cleanup_path, artifact_state="UNKNOWN", small_state="UNKNOW
     if artifact_state == "COMPLETE" and (not native or any(item["contract_status"] == "INCOMPLETE" for item in native)):
         artifact_state = "PARTIAL"
     reasons = []
-    if not plan.get("required_reports"): reasons.append("required_case_plan_missing")
+    if not plan_observed or not plan.get("required_reports"): reasons.append("required_case_plan_missing")
     if not native or any(item["contract_status"] != "PASS" for item in native): reasons.append("native_contract_incomplete_or_failed")
     if assertions.get("status") != "PASS" or assertions.get("binary_unchanged") is not True or assertions.get("process_session_settled") is not True: reasons.append("case_assertions_not_passed")
     if not cleanup_valid: reasons.append("independent_cleanup_not_established")
     if artifact_state != "COMPLETE": reasons.append("full_artifact_not_preserved")
     if small_state != "COMPLETE": reasons.append("small_artifact_not_preserved")
     return {"schema_version": "qualification-result-v1", "case": plan.get("case", "UNKNOWN"), "proof_type": plan.get("proof_type", "UNKNOWN"),
+            "plan_observed": plan_observed, "expectations_source": "initialized_plan" if plan_observed else "workflow_case_fallback" if native else "UNKNOWN",
             "proof_category": plan.get("proof_category"), "proof_categories": plan.get("proof_categories", []), "binary_origin": plan.get("binary_origin"),
             "run_id": plan.get("run_id"), "run_attempt": plan.get("run_attempt"), "workflow": plan.get("workflow"), "source_commit": plan.get("source_commit"),
             "candidate": plan.get("candidate"), "expected_producer": plan.get("producer"), "binary_sha256": plan.get("binary_sha256"),

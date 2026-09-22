@@ -167,6 +167,17 @@ def tool_wrapper(tool, arguments):
     os.execv(real, [real, *arguments])
 
 
+def plant_rollout_failure(app):
+    server = app / "server.js"
+    source = server.read_text()
+    if source.count('const failure = "none"') != 1:
+        raise ValueError("public rollout fixture failure marker changed")
+    server.write_text(source.replace('const failure = "none"', 'const failure = "rollout"'))
+    # The healthy fixture does not consume the public version build argument.
+    # Reuse the planted-rollout fixture's ARG/ENV propagation for image B.
+    shutil.copyfile(ROOT / "testdata/broken-rollout/Dockerfile", app / "Dockerfile")
+
+
 def main():
     if sys.argv[1:2] == ["__tool"]:
         return tool_wrapper(sys.argv[2], sys.argv[3:])
@@ -194,8 +205,7 @@ def main():
             (root / "injected.json").write_text(json.dumps({"case": args.case, "scope": "copied_bundled_public_fixture",
                 "type": "recorded_source_change", "file": "server.js", "change": "readiness remains false; runtime observations are unchanged"}) + "\n")
         if args.case == "cleanup-inventory":
-            server = app / "server.js"
-            server.write_text(server.read_text().replace('const failure = "none"', 'const failure = "rollout"'))
+            plant_rollout_failure(app)
         source_hashes = guards.hashes(app)
         (root / "source.json").write_text(json.dumps(source_hashes))
         (args.output / "fault-policy.json").write_text(json.dumps({"case": args.case, "scope": "copied_bundled_public_fixture", "retries": 0,

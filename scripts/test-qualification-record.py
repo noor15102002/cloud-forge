@@ -2,11 +2,13 @@
 """Missing observations and preservation failures must never become green cases."""
 import copy
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from qualification_record import collect, initialize, native_result, observation_started, observation_finished, read, required_reports, run_case, write
 
 
@@ -153,6 +155,63 @@ class QualificationRecords(unittest.TestCase):
         self.assertEqual(value["artifact_preservation"]["full_upload_transport"], "COMPLETE")
         self.assertEqual(value["artifact_preservation"]["full"], "PARTIAL")
         self.assertEqual(value["native_results"][0]["observed_status"], "UNKNOWN")
+
+    def test_missing_plan_retains_workflow_identity_and_expectations_only(self):
+        self.native("stdout.json", "warn", 0)
+        context = {"CLOUDFORGE_QUALIFICATION_CASE": "worker-healthy", "GITHUB_WORKFLOW": "Worker qualification",
+                   "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "4", "GITHUB_SHA": "b" * 40}
+        with patch.dict(os.environ, context):
+            value = self.result()
+        self.assertEqual(value["case"], "worker-healthy")
+        self.assertEqual((value["workflow"], value["run_id"], value["run_attempt"], value["source_commit"]),
+                         ("Worker qualification", "123", "4", "b" * 40))
+        self.assertFalse(value["plan_observed"])
+        self.assertEqual(value["expectations_source"], "workflow_case_fallback")
+        self.assertEqual(value["qualification_status"], "INCOMPLETE")
+        self.assertIn("required_case_plan_missing", value["reason_codes"])
+        self.assertEqual(value["artifact_preservation"]["full"], "PARTIAL")
+        self.assertEqual(value["artifact_preservation"]["full_upload_transport"], "COMPLETE")
+        self.assertIsNone(value["expected_producer"])
+        self.assertIsNone(value["binary_sha256"])
+        self.assertIsNone(value["started_at"])
+        native = value["native_results"][0]
+        self.assertEqual(native["expected_status_exit"], [["pass", 0], ["warn", 0]])
+        self.assertEqual(native["observed_status"], "UNKNOWN")
+        self.assertFalse(native["completion_observed"])
+        for field in ("observed_exit_code", "producer", "started_at", "finished_at", "report_sha256"):
+            self.assertIsNone(native[field], field)
+        self.assertFalse((self.records / "plan.json").exists())
+
+    def test_existing_plan_is_not_replaced_by_fallback_workflow_context(self):
+        self.prepare(); self.native("wrong-context.json")
+        plan = read(self.records / "plan.json")
+        with patch.dict(os.environ, {"CLOUDFORGE_QUALIFICATION_CASE": "worker-healthy", "GITHUB_SHA": "b" * 40}):
+            value = self.result()
+        self.assertTrue(value["plan_observed"])
+        self.assertEqual(value["expectations_source"], "initialized_plan")
+        self.assertEqual(value["case"], "monorepo-extra")
+        self.assertEqual(value["source_commit"], plan["source_commit"])
+        self.assertEqual(value["expected_producer"], self.producer)
+        self.assertEqual(value["qualification_status"], "PASS")
+
+    def test_finisher_handles_missing_records_directory_and_still_fails_gate(self):
+        script = Path(__file__).with_name("finish-qualification.py")
+        output = self.root / "separate-result"
+        command = [sys.executable, str(script), "--records", str(self.records), "--cleanup", str(self.cleanup),
+                   "--output", str(output), "--stage-evidence", str(self.evidence), "--bulk-outcome", "success", "--small-outcome", "success"]
+        env = {**os.environ, "CLOUDFORGE_QUALIFICATION_CASE": "worker-future", "GITHUB_RUN_ID": "321"}
+        result = subprocess.run(command, env=env, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        value = read(output / "qualification.json")
+        self.assertEqual(value["case"], "worker-future")
+        self.assertEqual(value["run_id"], "321")
+        self.assertEqual(value["native_results"][0]["expected_status_exit"], [["error", 2]])
+        self.assertEqual(value["native_results"][0]["observed_status"], "UNKNOWN")
+        self.assertTrue((self.evidence / "independent-cleanup.json").is_file())
+        self.assertFalse(self.records.exists())
+        gate = subprocess.run(command + ["--gate"], env=env, capture_output=True)
+        self.assertEqual(gate.returncode, 1, gate.stderr)
+        self.assertEqual(read(output / "qualification.json")["qualification_status"], "INCOMPLETE")
 
     def test_native_action_exit_record_remains_compatible_with_existing_reader(self):
         report = self.evidence / "verification.json"

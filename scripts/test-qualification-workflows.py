@@ -65,6 +65,17 @@ class WorkflowContracts(unittest.TestCase):
         self.assertNotIn('diff --recursive', text)
         self.assertIn('report-path: ${{ runner.temp }}/native-evidence/native/verification.json', text)
 
+    def test_worker_cleanup_baseline_survives_observer_or_fixture_self_test_failure(self):
+        text = (ROOT / ".github/workflows/worker.yml").read_text()
+        steps = re.split(r"(?m)^      - ", text)[1:]
+        baseline = next(index for index, step in enumerate(steps) if "--capture-baseline" in step)
+        for check in ("scripts/pilot-worker.py --self-test", "node --check testdata/healthy-worker/worker.js"):
+            with self.subTest(check=check):
+                validation = next(index for index, step in enumerate(steps) if check in step)
+                self.assertLess(baseline, validation)
+        cleanup = next(step for step in steps if '--baseline "$RUNNER_TEMP/cleanup-baseline.json"' in step)
+        self.assertIn("if: always()", cleanup)
+
 
 if __name__ == "__main__":
     unittest.main()

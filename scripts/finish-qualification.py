@@ -13,11 +13,12 @@ parser.add_argument("--cleanup", type=Path, required=True)
 parser.add_argument("--output", type=Path, required=True)
 parser.add_argument("--bulk-outcome", default="pending")
 parser.add_argument("--small-outcome", default="pending")
+parser.add_argument("--case", default=os.environ.get("CLOUDFORGE_QUALIFICATION_CASE"), help="Known workflow case if initialization never created a plan")
 parser.add_argument("--gate", action="store_true")
 parser.add_argument("--stage-evidence", type=Path)
 args = parser.parse_args()
 states = {"success": "COMPLETE", "failure": "FAILED", "cancelled": "UNKNOWN", "skipped": "UNKNOWN", "pending": "UNKNOWN"}
-value = collect(args.records, args.cleanup, states.get(args.bulk_outcome, "UNKNOWN"), states.get(args.small_outcome, "UNKNOWN"))
+value = collect(args.records, args.cleanup, states.get(args.bulk_outcome, "UNKNOWN"), states.get(args.small_outcome, "UNKNOWN"), fallback_case=args.case)
 write(args.output / "qualification.json", value)
 text = summary(value)
 (args.output / "summary.md").write_text(text)
@@ -28,7 +29,7 @@ print(text)
 if args.stage_evidence:
     args.stage_evidence.mkdir(parents=True, exist_ok=True)
     destination = args.stage_evidence / "qualification-records"
-    if destination.resolve() != args.records.resolve():
+    if args.records.is_dir() and destination.resolve() != args.records.resolve():
         destination.mkdir(exist_ok=True)
         for source in args.records.iterdir():
             if source.is_file() and source.suffix in (".json", ".txt"):

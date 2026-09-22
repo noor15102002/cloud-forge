@@ -4,6 +4,7 @@ import importlib.util
 import copy
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -98,6 +99,32 @@ class ReleaseObserverTests(unittest.TestCase):
             value["evidence"][index]["status"] = "pass"
             with self.assertRaises(AssertionError):
                 operational.qualify(value, 2, "cleanup-inventory")
+
+    def test_cleanup_rollout_fixture_propagates_version_b_to_the_planted_failure(self):
+        fixture = operational.ROOT / "testdata/healthy-node"
+        original = operational.guards.hashes(fixture)
+        with tempfile.TemporaryDirectory() as temporary:
+            app = Path(temporary) / "app"
+            shutil.copytree(fixture, app)
+            operational.plant_rollout_failure(app)
+            selected = operational.guards.hashes(app)
+            self.assertEqual(sorted(name for name in selected if original.get(name) != selected[name]),
+                             ["Dockerfile", "server.js"])
+            self.assertEqual((app / "Dockerfile").read_bytes(),
+                             (operational.ROOT / "testdata/broken-rollout/Dockerfile").read_bytes())
+            dockerfile = (app / "Dockerfile").read_text().splitlines()
+            self.assertIn("ARG CLOUDFORGE_VERSION=a", dockerfile)
+            self.assertIn("ENV CLOUDFORGE_VERSION=$CLOUDFORGE_VERSION", dockerfile)
+            self.assertIn("EXPOSE 8080", dockerfile)
+            server = (app / "server.js").read_text()
+            self.assertIn('const failure = "rollout";', server)
+            self.assertIn('const version = process.env.CLOUDFORGE_VERSION || "a";', server)
+            self.assertIn('failure === "rollout" && version === "b"', server)
+            self.assertEqual((app / "package.json").read_bytes(), (fixture / "package.json").read_bytes())
+            self.assertEqual((app / "k8s/app.yaml").read_bytes(), (fixture / "k8s/app.yaml").read_bytes())
+            with self.assertRaises(ValueError):
+                operational.plant_rollout_failure(app)
+        self.assertEqual(operational.guards.hashes(fixture), original)
 
     def test_stable_startup_failure_requires_fail_unknown_cause_and_cleanup(self):
         report = {"status": "fail", "evidence": [
