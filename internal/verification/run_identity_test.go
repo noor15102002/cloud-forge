@@ -14,7 +14,7 @@ import (
 func TestDefaultRunIdentityFitsK3dAndPreservesCleanup(t *testing.T) {
 	var builder, ownership, cluster string
 	buildObserved := false
-	service := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+	service := New(clusterProvisionFixture(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		args := request.Args
 		if request.Name == "docker" && len(args) > 3 && args[0] == "buildx" {
 			switch args[1] {
@@ -38,7 +38,7 @@ func TestDefaultRunIdentityFitsK3dAndPreservesCleanup(t *testing.T) {
 			return model.CommandResult{Command: "k3d", ExitCode: 1, FailureType: model.FailureExit}
 		}
 		return successfulCommand(request)
-	}))
+	})))
 	out := service.Run(context.Background(), fixturePath(t), testOptions())
 	publicBytes, publicErr := hex.DecodeString(out.Run.RunID)
 	privateBytes, privateErr := hex.DecodeString(ownership)

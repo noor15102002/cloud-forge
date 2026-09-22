@@ -106,6 +106,8 @@ func (c *Client) PrepareCluster(ctx context.Context, cluster string) model.Comma
 	c.clusterNetworkID = ""
 	c.clusterVolumeName = ""
 	c.clusterResources = map[string]string{}
+	c.clusterPrivateInfrastructure = false
+	c.clusterInfrastructureAttempts = map[string]bool{}
 	return model.CommandResult{}
 }
 
@@ -118,6 +120,9 @@ func (c *Client) ClusterCreated() { c.clusterCreated = true }
 func (c *Client) inspectClusterResource(ctx context.Context, cluster, kind string, resource clusterResource) (bool, model.CommandResult) {
 	if c.clusterPrepared != cluster {
 		return false, cleanupError(model.CommandResult{}, "No prior absence check exists for this cluster; removal was refused.")
+	}
+	if c.clusterPrivateInfrastructure && (kind == "network" || kind == "volume") {
+		return c.inspectProvisionedClusterResource(ctx, cluster, kind, resource)
 	}
 	prefix := "k3d-" + cluster
 	identity, labels := ".Id", ".Labels"
@@ -133,7 +138,7 @@ func (c *Client) inspectClusterResource(ctx context.Context, cluster, kind strin
 	}
 	switch kind {
 	case "container":
-		format += ` {{json (eq (index .Config.Labels "cloudforge.dev/ownership") "` + c.ownershipToken + `")}} {{$networkID := ""}}{{with index .NetworkSettings.Networks "` + prefix + `"}}{{$networkID = .NetworkID}}{{end}}{{json $networkID}} {{$volume := ""}}{{range .Mounts}}{{if and (eq .Type "volume") (eq .Destination "/k3d/images")}}{{$volume = .Name}}{{end}}{{end}}{{json $volume}} {{json (and (eq (index .Config.Labels "k3d.cluster.network") "` + prefix + `") (eq (index .Config.Labels "k3d.cluster.network.id") $networkID) (eq (index .Config.Labels "k3d.cluster.network.external") "false") (eq (index .Config.Labels "k3d.cluster.imageVolume") "` + prefix + `-images"))}} {{json (eq (index .Config.Labels "k3d.role") "noRole")}}`
+		format += c.clusterContainerOwnershipFormat(prefix)
 	case "volume":
 		format += ` {{json .CreatedAt}}`
 	}
@@ -278,6 +283,11 @@ func (c *Client) VerifyClusterOwnership(ctx context.Context, cluster string) mod
 // RemoveClusterRemnants checks a complete inventory before removing only
 // verified resources, then independently establishes their absence.
 func (c *Client) RemoveClusterRemnants(ctx context.Context, cluster, kind string) model.CommandResult {
+	if c.clusterPrivateInfrastructure {
+		if result := c.captureProvisionedClusterResources(ctx, cluster); builderCleanupFailed(result) {
+			return result
+		}
+	}
 	prefix := "k3d-" + cluster
 	resources, result := c.inventory(ctx, kind, prefix, false)
 	if builderCleanupFailed(result) {

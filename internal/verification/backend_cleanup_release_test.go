@@ -67,7 +67,7 @@ func TestEarlyBuilderCleanupRelease(t *testing.T) {
 							result.Stdout = fmt.Sprintf("%q %q %q %q", volumeName, "local", "local", "2026-09-21T12:00:00Z")
 						}
 					}
-					if args[1] == "rm" && (args[0] == "container" || args[0] == "volume") {
+					if args[1] == "rm" && (reference == containerName || reference == volumeName || reference == id) && (args[0] == "container" || args[0] == "volume") {
 						fallbackRemovals++
 						if ctx.Err() != nil {
 							t.Fatal("cleanup inherited cancellation")
@@ -82,7 +82,7 @@ func TestEarlyBuilderCleanupRelease(t *testing.T) {
 					}
 					return result
 				})
-				service := New(runner)
+				service := New(clusterProvisionFixture(runner))
 				service.newID = func() (string, error) { return "0123abcd", nil }
 				service.backendCapacity = func(context.Context, command.Runner, *Outcome) bool { return true }
 				options := testOptions()

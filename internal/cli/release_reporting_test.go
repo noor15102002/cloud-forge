@@ -34,8 +34,9 @@ func TestNumericalBaselineAdvisoryKeepsSuccessfulVerificationExitZero(t *testing
 	if err := os.WriteFile(filepath.Join(directory, "Dockerfile"), []byte("FROM node:22-alpine\nUSER node\nEXPOSE 8080\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	base := successfulCLIRunner()
 	runner := cliRunnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {
-		result := successfulCLIRunner()(ctx, request)
+		result := base(ctx, request)
 		// Both baseline and current observations are deterministic; only the
 		// selected retained timing below differs across the two comparisons.
 		result.DurationMS = 100

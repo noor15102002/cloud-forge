@@ -444,6 +444,10 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 	clusterAttempted = true
+	if result := dockerClient.ProvisionClusterResources(ctx, plan.clusterName); cleanupFailed(result) {
+		out.addCommandDiagnostic("cluster_resource_create_failed", "CloudForge could not provision its private cluster network and volume.", result)
+		return out
+	}
 	publishedNodePort := nodePort
 	if isWorker(config) {
 		publishedNodePort = 0

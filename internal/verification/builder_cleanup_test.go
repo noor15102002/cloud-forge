@@ -53,6 +53,9 @@ func TestBuilderFallbackAfterClusterTimeoutRetainsOriginalFailure(t *testing.T) 
 			}
 		}
 		if args[1] == "rm" && (args[0] == "container" || args[0] == "volume") {
+			if reference := args[len(args)-1]; reference != identifier && reference != volumeName {
+				return result
+			}
 			if !primaryRemovalFailed || !clusterAttemptFinished {
 				t.Fatal("builder fallback ran before the failed primary removal and cluster attempt")
 			}
@@ -80,6 +83,9 @@ func TestBuilderFallbackAfterClusterTimeoutRetainsOriginalFailure(t *testing.T) 
 	if out.ExitCode != 2 || out.Run.Status != model.StatusError || !hasDiagnosticCode(out.Run.Diagnostics, "builder_cleanup_failed") ||
 		!hasDiagnosticCode(out.Run.Diagnostics, "cluster_cleanup_failed") || hasDiagnosticCode(out.Run.Diagnostics, "builder_remnant_cleanup_failed") {
 		t.Fatalf("cleanup recovery lost the original error or fabricated a new one: %#v", out.Run.Diagnostics)
+	}
+	if cleanup := evidenceByID(out.Run.Evidence, "environment-cleanup"); cleanup == nil || cleanup.Status != model.StatusError {
+		t.Fatalf("builder fallback erased the original aggregate cleanup error: %+v", cleanup)
 	}
 	for _, diagnostic := range out.Run.Diagnostics {
 		if strings.Contains(diagnostic.Guidance, "private cleanup details") {

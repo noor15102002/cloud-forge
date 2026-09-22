@@ -56,6 +56,20 @@ Public run IDs use 20 hexadecimal characters so the `cloudforge-` cluster name
 fits k3d's 32-character limit. Independent private ownership tokens remain 32
 hexadecimal characters and are not report metadata.
 
+Before k3d starts, CloudForge creates its temporary network and image volume with
+private invocation labels and captures their identities. This lets cleanup
+identify k3d's transient helper even if creation stops before a server exists.
+Removal requires those captured identities and matching container attachments;
+a familiar name alone never proves ownership. A replaced resource or incomplete
+observation remains ERROR.
+
+With `--keep-environment`, the retained network is intentionally left in place.
+A later manual `k3d cluster delete` treats that network as external and does not
+remove it. After deleting the retained cluster, inspect its exact
+`k3d-<cluster-name>` network and confirm the `k3d.cluster` and
+`cloudforge.dev/ownership` labels identify the retained run, then remove that
+network by its full Docker ID. Never use a broad prune to clean a retained run.
+
 The BuildKit container carries an explicit run marker. Before removing its
 builder, CloudForge records the exact container ID and the identity of its
 mounted cache volume. If ordinary removal fails, a separate attempt after
@@ -72,8 +86,9 @@ cleanup command deadlines. A failing or unreachable Docker daemon can still
 prevent cleanup; such errors and independently observed leftovers are retained.
 
 Each run uses private kubeconfig and Docker builder configuration. The default
-kubectl context and builder remain unchanged. Workload limits include rollout
-surge and HPA maxima; a private BuildKit builder bounds build CPU and memory.
+kubectl context and builder remain unchanged. The workload resource estimate includes
+rollout surge and HPA maxima; it does not reserve a strict whole-host maximum.
+A private BuildKit builder bounds build CPU and memory.
 See [runtime configuration](runtime-configuration.md) for exact budgets and
 unsupported deployment settings. A failed node reports only fixed condition
 codes; raw Kubernetes messages, pod logs and environment values are omitted.

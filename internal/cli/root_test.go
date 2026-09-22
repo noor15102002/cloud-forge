@@ -40,8 +40,9 @@ func TestVerifyJSONContractAndExitCode(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, "Dockerfile"), []byte("FROM node:22-alpine\nUSER node\nEXPOSE 8080\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
-		result := successfulCLIRunner()(context.Background(), request)
+	base := successfulCLIRunner()
+	runner := cliRunnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {
+		result := base(ctx, request)
 		if request.Name == "trivy" && len(request.Args) > 1 {
 			result.Stdout = validTrivyReport(request)
 		}
@@ -76,8 +77,9 @@ func TestVerifyMarkdownReport(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, "Dockerfile"), []byte("FROM node:22-alpine\nUSER node\nEXPOSE 8080\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
-		result := successfulCLIRunner()(context.Background(), request)
+	base := successfulCLIRunner()
+	runner := cliRunnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {
+		result := base(ctx, request)
 		if request.Name == "trivy" && len(request.Args) > 1 {
 			result.Stdout = validTrivyReport(request)
 		}
@@ -172,7 +174,11 @@ func successfulCLIRunner() cliRunnerFunc {
 }
 
 func cliTestRunner(vulnerable bool) cliRunnerFunc {
+	infrastructure := &cliClusterFixture{objects: map[string]map[string]any{}}
 	return func(_ context.Context, request command.Request) model.CommandResult {
+		if result, handled := infrastructure.run(request); handled {
+			return result
+		}
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
 		if request.Name == "docker" && strings.Contains(strings.Join(request.Args, " "), ".RepoDigests") {
 			result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" []`

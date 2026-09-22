@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pure fake-command checks for public command capture; no Docker or app runs."""
 from contextlib import contextmanager
+import copy
 import importlib.util
 import json
 import os
@@ -21,6 +22,83 @@ IMPORT_ARGS = ["image", "import", "cloudforge/healthy-node-redis:0123abcd-a", "-
 
 
 class CleanupCaptureTests(unittest.TestCase):
+    def cancellation_report(self, stage):
+        names = ("container-build", "container-scan", "dependency.redis", "deployment-readiness", "semantic-readiness",
+                 "readiness-gating", "inflight-shutdown", "graceful-shutdown", "pod-recovery", "rolling-deployment",
+                 "load-profile", "horizontal-autoscaling", "dependency-loss", "environment-cleanup")
+        evidence = {name: {"experiment_id": name, "status": "skipped", "execution": {"executed": False, "mutation_attempted": False}} for name in names}
+        def executed(name, status):
+            evidence[name]["status"] = status
+            evidence[name]["execution"]["executed"] = True
+        executed("environment-cleanup", "pass")
+        if stage != "build":
+            executed("container-build", "pass")
+            executed("container-scan", "warn")
+        if stage in ("lifecycle", "load"):
+            executed("deployment-readiness", "pass")
+        if stage == "load":
+            for name in ("graceful-shutdown", "pod-recovery", "rolling-deployment"):
+                executed(name, "pass")
+                evidence[name]["recovery"] = {"status": "pass", "checks": [{"status": "pass"}]}
+            executed("horizontal-autoscaling", "error")
+        target = {"build": "container-build", "redis": "dependency.redis", "readiness": "deployment-readiness",
+                  "lifecycle": "graceful-shutdown", "load": "load-profile"}.get(stage)
+        if target:
+            executed(target, "error")
+        if stage == "lifecycle":
+            evidence[target]["execution"]["mutation_attempted"] = True
+        return {"status": "error", "diagnostics": [{"code": "verification_canceled"}],
+                "dependencies": [{"name": "redis", "status": "error"}] if stage == "redis" else [], "evidence": list(evidence.values())}
+
+    def test_all_cancellation_stages_reject_later_executed_failure_or_lost_prerequisite(self):
+        later = {"build": "container-scan", "cluster": "deployment-readiness", "redis": "deployment-readiness",
+                 "readiness": "graceful-shutdown", "lifecycle": "rolling-deployment", "load": "readiness-gating"}
+        for stage in pilot.STAGES:
+            report = self.cancellation_report(stage)
+            pilot.qualify_cancellation(report, stage)
+            for status in ("pass", "fail", "error"):
+                changed = copy.deepcopy(report)
+                item = next(item for item in changed["evidence"] if item["experiment_id"] == later[stage])
+                item.update(status=status, execution={"executed": True, "mutation_attempted": False})
+                with self.subTest(stage=stage, later_status=status), self.assertRaises(AssertionError):
+                    pilot.qualify_cancellation(changed, stage)
+            if stage != "build":
+                for name in ("container-build", "container-scan"):
+                    changed = copy.deepcopy(report)
+                    next(item for item in changed["evidence"] if item["experiment_id"] == name)["status"] = "error"
+                    with self.subTest(stage=stage, lost=name), self.assertRaises(AssertionError):
+                        pilot.qualify_cancellation(changed, stage)
+            changed = copy.deepcopy(report)
+            changed["evidence"] = [item for item in changed["evidence"] if item["experiment_id"] != "semantic-readiness"]
+            with self.subTest(stage=stage, missing="semantic-readiness"), self.assertRaises(AssertionError):
+                pilot.qualify_cancellation(changed, stage)
+
+    def test_load_cancellation_retains_earlier_failure_and_requires_completed_restoration(self):
+        report = self.cancellation_report("load")
+        prior = next(item for item in report["evidence"] if item["experiment_id"] == "pod-recovery")
+        prior["status"] = "fail"
+        pilot.qualify_cancellation(report, "load")
+        for field in ("status", "checks"):
+            changed = copy.deepcopy(report)
+            recovery = next(item for item in changed["evidence"] if item["experiment_id"] == "pod-recovery")["recovery"]
+            recovery[field] = "error" if field == "status" else [{"status": "fail"}]
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                pilot.qualify_cancellation(changed, "load")
+
+    def test_cancellation_target_must_retain_execution_and_error(self):
+        targets = {"build": "container-build", "redis": "dependency.redis", "readiness": "deployment-readiness",
+                   "lifecycle": "graceful-shutdown", "load": "load-profile"}
+        for stage, name in targets.items():
+            for mutation in ("execution", "status"):
+                report = self.cancellation_report(stage)
+                item = next(item for item in report["evidence"] if item["experiment_id"] == name)
+                if mutation == "execution":
+                    item["execution"]["executed"] = False
+                else:
+                    item["status"] = "fail"
+                with self.subTest(stage=stage, mutation=mutation), self.assertRaises(AssertionError):
+                    pilot.qualify_cancellation(report, stage)
+
     def test_lifecycle_cancellation_fixture_is_bounded_and_owned(self):
         environment = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux"}
         with tempfile.TemporaryDirectory(prefix="cloudforge-cancel-") as temporary, patch.dict(os.environ, environment):
@@ -104,11 +182,11 @@ class CleanupCaptureTests(unittest.TestCase):
             self.assertFalse(record["completion_observed"])
 
     @contextmanager
-    def setup_case(self, mode="exit", code=17, force=False, operation="cleanup"):
+    def setup_case(self, mode="exit", code=17, force=False, operation="cleanup", stage="redis"):
         with tempfile.TemporaryDirectory(prefix="cloudforge-cancel-") as temporary:
             root = Path(temporary).resolve()
             fixture = root / "app"
-            pilot.fixture_copy(fixture, "redis", False)
+            pilot.fixture_copy(fixture, stage, False)
             fake = root / "fake-tool"
             fake.write_text("""#!/usr/bin/env python3
 import json,os,signal,sys,time
@@ -131,7 +209,7 @@ sys.exit(int(os.environ['FAKE_EXIT']))
             pilot.helpers.write_json(owner, {"run_name": NAME})
             env = dict(os.environ, GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux",
                        FAKE_MODE=mode, FAKE_EXIT=str(code), FAKE_CALLS=str(root / "calls"), FAKE_ARGUMENTS=str(root / "arguments.json"))
-            env.update({pilot.PREFIX+"STAGE":"redis", pilot.PREFIX+"FIXTURE":str(fixture), pilot.PREFIX+"MONOREPO":"false",
+            env.update({pilot.PREFIX+"STAGE":stage, pilot.PREFIX+"FIXTURE":str(fixture), pilot.PREFIX+"MONOREPO":"false",
                         pilot.PREFIX+"OWNER":str(owner), pilot.PREFIX+"CLEANUP_OUTPUT":str(output),
                         pilot.PREFIX+"IMPORT_OUTPUT":str(output),
                         pilot.PREFIX+"FORCE_BUILDER_FAILURE":str(force).lower(), pilot.PREFIX+"INJECTION":str(root / "injected.json"),
@@ -145,6 +223,27 @@ sys.exit(int(os.environ['FAKE_EXIT']))
         records = list(output.glob("*.json"))
         self.assertEqual(len(records), 1)
         return json.loads(records[0].read_text())
+
+    def test_private_cluster_provisioning_passes_through_without_capture_or_early_marker(self):
+        name, token = "cloudforge-" + "a" * 20, "b" * 32
+        labels = ["--label", "app=k3d", "--label", "k3d.cluster=" + name,
+                  "--label", "cloudforge.dev/ownership=" + token]
+        commands = [["network", "create", "--driver", "bridge", "--opt", "com.docker.network.bridge.enable_ip_masquerade=true",
+                     *labels, "k3d-" + name],
+                    ["volume", "create", "--driver", "local", *labels, "k3d-" + name + "-images"]]
+        for arguments in commands:
+            for code in (0, 17):
+                with self.subTest(kind=arguments[0], code=code), self.setup_case(code=code, stage="cluster") as (root, output, env, _):
+                    pilot.helpers.write_json(root / "owner.json", {"run_name": name})
+                    command = [sys.executable, str(Path(pilot.__file__)), "__tool", "docker", *arguments]
+                    result = subprocess.run(command, env=env, capture_output=True, timeout=5)
+                    self.assertEqual(result.returncode, code)
+                    self.assertEqual(json.loads((root / "arguments.json").read_text()), arguments)
+                    self.assertEqual(result.stdout, b"\x1b[31mcleanup-out\x00\n")
+                    self.assertEqual(result.stderr, b"\x1b[32mcleanup-err\x00\n")
+                    self.assertEqual(json.loads((root / "owner.json").read_text()), {"run_name": name})
+                    self.assertFalse((root / "marker.json").exists(), "Provisioning was mistaken for actual k3d creation")
+                    self.assertFalse(output.exists(), "Private provisioning arguments were copied into public observer records")
 
     def test_exact_original_bytes_exit_and_native_deadline(self):
         import_b = [*IMPORT_ARGS]

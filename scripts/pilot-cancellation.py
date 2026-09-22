@@ -134,6 +134,48 @@ def retain_cleanup(output, stage):
         return False
 
 
+def qualify_cancellation(report, stage):
+    """Require cancellation at the selected public phase without later work."""
+    assert stage in STAGES, "Unknown cancellation stage"
+    assert report["status"] == "error", "Unexpected native status"
+    assert any(item["code"] == "verification_canceled" for item in report["diagnostics"]), "Missing cancellation classification"
+    evidence = {item["experiment_id"]: item for item in report["evidence"]}
+    target = {"build": "container-build", "redis": "dependency.redis", "readiness": "deployment-readiness",
+              "lifecycle": "graceful-shutdown", "load": "load-profile"}.get(stage)
+    allowed = {"environment-cleanup"}
+    if target:
+        allowed.add(target)
+        assert evidence[target]["execution"]["executed"] is True, "Started experiment was presented as never executed"
+        assert evidence[target]["status"] == "error", "Started experiment lost ERROR"
+    if stage != "build":
+        for name, statuses in (("container-build", ("pass",)), ("container-scan", ("pass", "warn"))):
+            allowed.add(name)
+            assert evidence[name]["execution"]["executed"] is True and evidence[name]["status"] in statuses, "Earlier build or scan evidence was erased"
+    if stage in ("lifecycle", "load"):
+        allowed.add("deployment-readiness")
+        assert evidence["deployment-readiness"]["execution"]["executed"] is True and evidence["deployment-readiness"]["status"] == "pass", "Earlier readiness evidence was erased"
+    if stage == "lifecycle":
+        assert evidence[target]["execution"]["mutation_attempted"] is True, "Lifecycle mutation was not attempted"
+    if stage == "load":
+        # HPA observation and mutation run alongside load, not after it.
+        allowed.add("horizontal-autoscaling")
+        for name in ("graceful-shutdown", "pod-recovery", "rolling-deployment"):
+            allowed.add(name)
+            item = evidence[name]
+            assert item["execution"]["executed"] is True and item["status"] in ("pass", "fail"), "Earlier lifecycle evidence was erased"
+            recovery = item.get("recovery", {})
+            assert recovery.get("status") == "pass" and recovery.get("checks") and all(check["status"] == "pass" for check in recovery["checks"]), "Earlier restoration was not established"
+    if stage == "redis":
+        assert any(item.get("name") == "redis" and item["status"] == "error" for item in report["dependencies"]), "Redis cancellation evidence was erased"
+    expected = {"deployment-readiness", "semantic-readiness", "readiness-gating", "inflight-shutdown", "graceful-shutdown",
+                "pod-recovery", "rolling-deployment", "load-profile", "horizontal-autoscaling", "dependency-loss"}
+    for name in expected - allowed:
+        assert evidence.get(name, {}).get("execution", {}).get("executed") is False, "Missing evidence that later work remained unexecuted: " + name
+    for name, item in evidence.items():
+        if name not in allowed:
+            assert item.get("execution", {}).get("executed") is False, "New work started after cancellation: " + name
+
+
 def tool_wrapper(tool, arguments):
     helpers.require_runner()
     if tool not in ("docker", "k3d", "kubectl", "k6"):
@@ -297,8 +339,7 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
                 helpers.write_json(args.output / f"cancel-{stage}.exit.json", {"exit_code": process.returncode})
             cleanup_passed = retain_cleanup(args.output, stage)
         report = json.loads(report_path.read_text())
-        assert report["status"] == "error", "Unexpected native status"
-        assert any(item["code"] == "verification_canceled" for item in report["diagnostics"]), "Missing cancellation classification"
+        qualify_cancellation(report, stage)
         if probe_pacing:
             assert report["plan"]["probes"] == {"interval": "2s"}, "Configured pacing missing from plan"
             assert report["fingerprint"]["configuration"]["probes"] == {"interval": "2s"}, "Configured pacing missing from fingerprint"
@@ -306,20 +347,7 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
             assert Path(environment[PREFIX + "INJECTION"]).exists(), "Declared builder fault was not exercised"
             assert any(item["code"] == "builder_cleanup_failed" for item in report["diagnostics"]), "Original injected cleanup failure disappeared"
             assert not any(item["code"] == "builder_remnant_cleanup_failed" for item in report["diagnostics"]), "Builder fallback failed"
-        evidence = {item["experiment_id"]: item for item in report["evidence"]}
-        target = {"build": "container-build", "readiness": "deployment-readiness", "lifecycle": "graceful-shutdown", "load": "load-profile"}.get(stage)
-        if target:
-            assert evidence[target]["execution"]["executed"], "Started experiment was presented as never executed"
-            assert evidence[target]["status"] == "error", "Started experiment lost ERROR"
-        if stage == "lifecycle":
-            assert evidence["graceful-shutdown"]["execution"]["mutation_attempted"], "Lifecycle mutation was not attempted"
-            assert not evidence["pod-recovery"]["execution"]["executed"], "New lifecycle work started after cancellation"
-            assert evidence["container-build"]["status"] == "pass", "Earlier build evidence was erased"
-            assert evidence["deployment-readiness"]["status"] == "pass", "Earlier readiness evidence was erased"
         assert not list(root.glob("cloudforge-verify-*")), "Temporary kubeconfig/runtime directory leaked"
-        if stage == "redis":
-            assert report["dependencies"][0]["status"] == "error"
-            assert not any(item["experiment_id"] == "deployment-readiness" and item["status"] == "pass" for item in report["evidence"])
         assert cleanup_passed, "CloudForge-owned resources remain after cleanup or could not be observed"
         current_config = Path.home() / ".kube" / "config"
         current_bytes = current_config.read_bytes() if current_config.exists() else None

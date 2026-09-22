@@ -544,10 +544,7 @@ func TestCleanupFailuresUseIndependentContextsAndContinue(t *testing.T) {
 			result.ExitCode = -1
 			result.FailureType = model.FailureTimeout
 		}
-		if request.Name == "docker" && containsArgument(request.Args, "rm") {
-			if containsArgument(request.Args, "buildx") {
-				return result
-			}
+		if request.Name == "docker" && len(request.Args) > 1 && request.Args[0] == "image" && request.Args[1] == "rm" {
 			imageRemovals++
 			imageContextErrors = append(imageContextErrors, callCtx.Err())
 			if imageRemovals == 1 {
@@ -564,7 +561,10 @@ func TestCleanupFailuresUseIndependentContextsAndContinue(t *testing.T) {
 	service.cleanupTimeout = 5 * time.Millisecond
 	outcome := service.Run(context.Background(), fixturePath(t), testOptions())
 	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "cluster_cleanup_failed") || !hasDiagnosticCode(outcome.Run.Diagnostics, "image_cleanup_failed") {
-		t.Fatalf("cleanup failures were not reported as execution errors: %#v", outcome)
+		t.Fatalf("cleanup failures were not reported as execution errors: status=%s exit=%d diagnostics=%+v", outcome.Run.Status, outcome.ExitCode, outcome.Run.Diagnostics)
+	}
+	if cleanup := evidenceByID(outcome.Run.Evidence, "environment-cleanup"); cleanup == nil || cleanup.Status != model.StatusError {
+		t.Fatalf("cleanup failure did not preserve aggregate ERROR evidence: %+v", cleanup)
 	}
 	if imageRemovals != 2 {
 		t.Fatalf("cleanup stopped after a failure; image removals=%d", imageRemovals)
@@ -747,6 +747,7 @@ func verificationAnalysis(endpoints []model.Endpoint) model.AnalysisResult {
 func testOptions() Options { return Options{Version: "test", Commit: strings.Repeat("a", 40)} }
 
 func fixedService(runner command.Runner) *Service {
+	runner = clusterProvisionFixture(runner)
 	currentImage := "cloudforge/healthy-node-api:0123abcd-a"
 	replicas := int32(2)
 	loadRan := false

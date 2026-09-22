@@ -95,7 +95,7 @@ two independent application releases. Image A's scan does not establish image B'
 security state. A failed experiment remains visible after baseline restoration;
 restoration does not reset arbitrary business data. Owned cleanup is attempted
 after success, failure, timeout and cancellation. Use `--keep-environment` only
-for explicit manual inspection.
+for explicit manual inspection and follow the [retained-resource cleanup guidance](docs/security.md).
 
 ## Evidence and trust
 

@@ -202,7 +202,7 @@ func (r *workerRunner) Run(ctx context.Context, request command.Request) model.C
 	return result
 }
 func workerTestService(r *workerRunner) *Service {
-	s := New(r)
+	s := New(clusterProvisionFixture(r))
 	s.newID = func() (string, error) { return "0123abcd", nil }
 	s.workerPoll = time.Millisecond
 	s.readinessTimeout = 200 * time.Millisecond

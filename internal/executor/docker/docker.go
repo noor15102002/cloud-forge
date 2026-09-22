@@ -16,17 +16,19 @@ import (
 
 // Client builds application images through the Docker CLI.
 type Client struct {
-	runner            command.Runner
-	builder           string
-	ownershipToken    string
-	builderOwnership  *builderOwnership
-	clusterPrepared   string
-	clusterCreated    bool
-	clusterProven     bool
-	clusterNetworkID  string
-	clusterVolumeName string
-	clusterResources  map[string]string
-	attemptedImages   map[string]bool
+	runner                        command.Runner
+	builder                       string
+	ownershipToken                string
+	builderOwnership              *builderOwnership
+	clusterPrepared               string
+	clusterCreated                bool
+	clusterProven                 bool
+	clusterNetworkID              string
+	clusterVolumeName             string
+	clusterResources              map[string]string
+	clusterPrivateInfrastructure  bool
+	clusterInfrastructureAttempts map[string]bool
+	attemptedImages               map[string]bool
 }
 
 // New creates a Docker CLI adapter.

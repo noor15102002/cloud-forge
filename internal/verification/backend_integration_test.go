@@ -227,7 +227,7 @@ func TestBackendIntegrationStagesBuildsBeforeClusterAndCleansAfterCancellation(t
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runner := &backendIntegrationRunner{t: t, current: current, mode: "cancel-application", cancel: cancel, policies: map[string]networkingv1.NetworkPolicy{}, providers: map[string]bool{}}
-	service := New(runner)
+	service := New(clusterProvisionFixture(runner))
 	service.newID = func() (string, error) { return "0123abcd", nil }
 	service.now = func() time.Time { return time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC) }
 	service.backendCapacity = func(context.Context, command.Runner, *Outcome) bool {
@@ -330,7 +330,7 @@ func hasEnvPrefix(values []string, prefix string) bool {
 func TestBackendIntegrationPreservesPrebuiltFailureBeforePreparationBlocks(t *testing.T) {
 	root, current := backendIntegrationFixture(t)
 	runner := &backendIntegrationRunner{t: t, current: current, mode: "preparation-failure", policies: map[string]networkingv1.NetworkPolicy{}, providers: map[string]bool{}}
-	service := New(runner)
+	service := New(clusterProvisionFixture(runner))
 	service.newID = func() (string, error) { return "0123abcd", nil }
 	service.now = func() time.Time { return time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC) }
 	service.backendCapacity = func(context.Context, command.Runner, *Outcome) bool { return true }

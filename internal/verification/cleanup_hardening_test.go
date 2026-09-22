@@ -62,7 +62,11 @@ func TestCleanupObservationServiceContract(t *testing.T) {
 								name += "-images"
 								result.Stdout = name + "\n"
 							} else {
-								result.Stdout = strings.Repeat("a", 64) + " " + name + "\n"
+								id := strings.Repeat("a", 64)
+								if kind == "network" {
+									id = strings.Repeat("d", 64)
+								}
+								result.Stdout = id + " " + name + "\n"
 							}
 						}
 					}
@@ -71,15 +75,15 @@ func TestCleanupObservationServiceContract(t *testing.T) {
 					if mode == "retained" && kind != "container" && !clusterDeleted && args[0] == "container" && args[1] == "ls" {
 						result.Stdout = strings.Repeat("b", 64) + " " + prefix + "-server-0\n"
 					}
-					if args[1] == "inspect" && (args[0] == "container" || args[0] == "network" || args[0] == "volume") && !strings.Contains(args[len(args)-1], "buildx_buildkit") {
+					if mode == "retained" && args[1] == "inspect" && (args[0] == "container" || args[0] == "network" || args[0] == "volume") && !strings.Contains(args[len(args)-1], "buildx_buildkit") {
 						result.ExitCode, result.FailureType, result.Stderr = 0, model.FailureNone, ""
 						switch args[0] {
 						case "container":
-							result.Stdout = fmt.Sprintf("%q %q true true true %q %q true false", args[len(args)-1], prefix+"-server-0", strings.Repeat("a", 64), prefix+"-images")
+							result.Stdout = fmt.Sprintf("%q %q true true true %q %q true false", args[len(args)-1], prefix+"-server-0", strings.Repeat("d", 64), prefix+"-images")
 						case "network":
-							result.Stdout = fmt.Sprintf("%q %q true", args[len(args)-1], prefix)
+							result.Stdout = fmt.Sprintf("%q %q true true true %q", args[len(args)-1], prefix, "")
 						case "volume":
-							result.Stdout = fmt.Sprintf("%q %q true true %q", prefix+"-images", prefix+"-images", "2026-09-22T12:00:00Z")
+							result.Stdout = fmt.Sprintf("%q %q true true true %q", prefix+"-images", prefix+"-images", "2026-09-22T00:00:00Z")
 						}
 					}
 					if args[0] == kind && args[1] == "rm" {
@@ -160,14 +164,6 @@ func TestCanceledPartialClusterCleansOnlyProvenCurrentObjects(t *testing.T) {
 				if request.Name == "k3d" && containsArgument(args, "delete") {
 					t.Fatal("failed creation authorized cluster-name deletion")
 				}
-				if created && request.Name == "docker" && len(args) > 1 && args[1] == "inspect" {
-					if args[0] == "network" {
-						result.Stdout = fmt.Sprintf("%q %q true", strings.Repeat("b", 64), "k3d-cloudforge-0123abcd")
-					}
-					if args[0] == "volume" && args[len(args)-1] == "k3d-cloudforge-0123abcd-images" {
-						result.Stdout = `"k3d-cloudforge-0123abcd-images" "k3d-cloudforge-0123abcd-images" true true "2026-09-22T12:00:00Z"`
-					}
-				}
 				if created && request.Name == "docker" && len(args) > 1 && args[0] == "container" {
 					if callCtx.Err() != nil {
 						t.Fatal("cleanup used canceled context")
@@ -176,7 +172,7 @@ func TestCanceledPartialClusterCleansOnlyProvenCurrentObjects(t *testing.T) {
 						result.Stdout = id + " " + name + "\n"
 					}
 					if args[1] == "inspect" && args[len(args)-1] == id {
-						result.Stdout = fmt.Sprintf("%q %q true true %t %q %q true false", id, name, own, strings.Repeat("b", 64), "k3d-cloudforge-0123abcd-images")
+						result.Stdout = fmt.Sprintf("%q %q true true %t %q %q true false", id, name, own, strings.Repeat("d", 64), "k3d-cloudforge-0123abcd-images")
 					}
 					if args[1] == "rm" {
 						if !own {
