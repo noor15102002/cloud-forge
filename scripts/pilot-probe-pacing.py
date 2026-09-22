@@ -44,7 +44,7 @@ def build_identity(arguments):
         return None
     require(len(arguments) >= 8 and arguments[2] == "--builder", "pacing_observer_unknown_build")
     owner = arguments[3]
-    match = re.fullmatch(r"cloudforge-([a-f0-9]{8})", owner)
+    match = re.fullmatch(r"cloudforge-([a-f0-9]{8,32})", owner)
     require(match is not None, "pacing_observer_unknown_owner")
     require(arguments[4:8] == ["--load", "--provenance=false", "--label", "cloudforge.dev/run-id=" + owner], "pacing_observer_missing_ownership")
     require(arguments.count("--tag") == 1, "pacing_observer_unknown_tag")
@@ -53,7 +53,13 @@ def build_identity(arguments):
     image = arguments[index + 1]
     require(image in ["cloudforge/rate-limited-http:" + match[1] + "-" + version for version in ("a", "b")], "pacing_observer_foreign_image")
     suffix = ["--tag", image, "."]
-    require(arguments[8:] in (suffix, ["--build-arg", "CLOUDFORGE_VERSION=" + image[-1], *suffix]), "pacing_observer_unknown_build_arguments")
+    remaining = arguments[8:]
+    if remaining[:1] == ["--label"]:
+        require(len(remaining) > 1 and re.fullmatch(r"cloudforge.dev/ownership=[a-f0-9]{32}", remaining[1]), "pacing_observer_missing_ownership")
+        remaining = remaining[2:]
+        require(remaining[:2] == ["--label", "cloudforge.dev/build-version=" + image[-1]], "pacing_observer_missing_build_identity")
+        remaining = remaining[2:]
+    require(remaining in (suffix, ["--build-arg", "CLOUDFORGE_VERSION=" + image[-1], *suffix]), "pacing_observer_unknown_build_arguments")
     return owner, image
 
 

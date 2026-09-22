@@ -131,6 +131,16 @@ class ProbePacingTests(unittest.TestCase):
         arguments = ["buildx", "build", "--builder", owner, "--load", "--provenance=false", "--label",
                      "cloudforge.dev/run-id=" + owner, "--tag", "cloudforge/rate-limited-http:0123abcd-a", "."]
         self.assertEqual(pilot.build_identity(arguments), (owner, arguments[-2]))
+        new_owner = "cloudforge-" + "a" * 32
+        new_image = "cloudforge/rate-limited-http:" + "a" * 32 + "-a"
+        current = ["buildx", "build", "--builder", new_owner, "--load", "--provenance=false", "--label",
+                   "cloudforge.dev/run-id=" + new_owner, "--label", "cloudforge.dev/ownership=" + "b" * 32,
+                   "--label", "cloudforge.dev/build-version=a", "--build-arg", "CLOUDFORGE_VERSION=a", "--tag", new_image, "."]
+        self.assertEqual(pilot.build_identity(current), (new_owner, new_image))
+        for mutation in ([*current[:10], *current[12:]],
+                         [*current[:11], "cloudforge.dev/build-version=b", *current[12:]]):
+            with self.subTest(mutation=mutation), self.assertRaises(pilot.helpers.QualificationError):
+                pilot.build_identity(mutation)
         self.assertIsNone(pilot.build_identity(["version"]))
         for value in ([*arguments[:-1], ".."], [*arguments, "--secret", "x"],
                       [*arguments[:-2], "cloudforge/other:0123abcd-a", "."],

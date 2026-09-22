@@ -1,10 +1,14 @@
-# Runtime configuration and pilot support
+# Runtime configuration
 
 CloudForge tests one HTTP application with one selected Dockerfile and at most one
 single-container Deployment. Explicit Redis provisioning and safe test bindings
-are described in [dependency runtime](dependency-runtime.md). PostgreSQL, arbitrary
-manifest application, Helm rendering and production credentials remain unsupported.
-The historical stateless pilot evidence is separate from subsequent private pilots.
+are described in [dependency runtime](dependency-runtime.md). PostgreSQL/pgvector,
+preparation, ClamAV and Redis-heartbeat workers use explicit experimental contracts.
+Arbitrary manifest application, Helm execution and production credentials remain
+unsupported. The [current support and maturity table](supported-applications.md)
+is authoritative; planner SUPPORTED does not mean a feature is stable.
+Current configuration versions are v1alpha1–v1alpha7; current reports are v1alpha8.
+Historical pilot evidence does not qualify the current release candidate.
 
 Place `cloudforge.yaml` at the application root or use `verify --config FILE`:
 
@@ -34,14 +38,16 @@ their command text is omitted and runtime verification rejects them. HTTP
 headers/host overrides, lifecycle hooks, environment configuration, mounted
 volumes, sidecars, scheduling and security overrides currently require a
 supported test deployment instead of being silently copied or discarded.
-Only CPU-utilization HPAs are supported; their scaling behavior is preserved.
+Only CPU-utilization HPAs are implemented; HPA experiments remain experimental.
 
 CloudForge preserves replica count, resources, rollout strategy, minimum-ready
 time and termination grace. Generated names, image references and Service
 exposure are deliberately adapted to the isolated cluster. Missing resources
 receive explicit defaults (100m/64Mi requests, 500m/256Mi limits), recorded in
 the report. Replicas/HPA maxima above five are rejected. Aggregate workload
-limits, including rollout surge, must fit four CPUs and 2 GiB. The cluster has
+limits, including planned rollout surge, must fit four CPUs and 2 GiB. This is a
+planned bounded estimate, not a reservation or proof of a strict whole-host
+maximum; terminating-pod overlap and concurrent host activity can add usage. The cluster has
 4 GiB and the private BuildKit builder has two CPUs/2 GiB. Build timeout is ten
 minutes; readiness and lifecycle experiment windows are bounded to two minutes.
 After a lifecycle requirement window expires, CloudForge may spend at most five
@@ -107,11 +113,14 @@ effective configuration/resources and a normalized workload hash. Baselines
 require a complete matching compatibility key; source commits and image IDs
 may differ. Dirty or unidentified CloudForge builds and missing image identity
 do not establish a compatible baseline. Legacy reports remain readable but cannot establish compatible
-runtime baselines. Timing tolerance remains 10%; repeated trials measure noise
-and do not themselves prove statistical significance.
+runtime baselines. Numerical grading is experimental and advisory. The 10%
+timing tolerance is a heuristic; repeated trials measure noise and do not
+themselves prove statistical significance. Numerical changes alone do not turn
+a successful verification into an application FAIL.
 
 The pilot workflow runs five trials of each healthy Node/FastAPI fixture,
-planted failures, four interruption stages and two pinned public apps. It
+planted failures, build/cluster/readiness/lifecycle/load interruption stages and
+two pinned public apps. Redis startup cancellation is qualified separately. It
 publishes full JSON reports and variance summaries. External tests use a
 declared two-replica reference deployment; the small FastAPI example receives
 a standard Dockerfile because upstream does not supply one. Application source
@@ -137,11 +146,17 @@ They are labeled as explicit test configuration, preserving supported source
 probes and per-pod resources. See [controlled topology comparison](controlled-topology.md)
 for defaults, safety limits, HPA exclusions and interpretation of paired evidence.
 
-## Backend configuration
+## Experimental backend configuration
 
 The strict `v1alpha5` contract adds fixed backend providers, generated test values,
 one-time preparation, and a bounded backend profile. See [isolated backend
 verification](backend-runtime.md) for its limits and network boundary.
+
+## Experimental worker configuration
+
+The strict `v1alpha6` contract selects one worker and a run-owned Redis heartbeat.
+It establishes bounded process liveness and sequential recovery, not job
+completion or exactly-once delivery. See [worker runtime](worker-runtime.md).
 
 ## HTTP probe pacing
 

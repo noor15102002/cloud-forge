@@ -65,5 +65,6 @@ runs:
             owner: context.repo.owner,
             repo: context.repo.repo,
             pullRequestNumber: process.env.CLOUDFORGE_PR_NUMBER,
-            body
+            body,
+            artifactURL: context.payload.workflow_run?.html_url || `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
           })

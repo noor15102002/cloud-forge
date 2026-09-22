@@ -1,32 +1,27 @@
-# Product Definition
+# Product definition
 
-CloudForge answers one question: can this change behave safely under
-production-like Kubernetes conditions?
+CloudForge produces bounded, reproducible evidence about one selected supported
+application's behavior under a disposable Kubernetes test configuration. It does
+not certify production readiness or infer success when observations are missing.
 
-It will analyze supported containerized applications, select relevant risks,
-run controlled experiments in disposable environments, normalize observations
-as evidence, compare runs, and report regressions locally and on pull requests.
+The [current support and maturity table](supported-applications.md) is the single
+authoritative scope. The Linux/amd64 prerelease core covers supported HTTP services,
+Docker builds, image-A scanning, explicit Redis, readiness, sampled lifecycle
+availability, same-source rollout, configured GET load, restoration, cancellation,
+owned cleanup and terminal/JSON/Markdown/GitHub evidence.
 
-The current release slice provides deterministic analysis, normalized
-container, Kubernetes, and Trivy findings, environment diagnostics, and
-measured container-build and Deployment-readiness evidence in an isolated k3d
-cluster. It also measures HTTP readiness, pod replacement, graceful shutdown,
-and version-to-version rolling deployment behavior under continuous traffic.
-It also runs a bounded deterministic k6 profile and observes CPU-based HPA
-scale-up when the repository declares one. Results are available as concise
-terminal output, canonical versioned JSON, or pull-request-ready Markdown.
-An explicit previous report can be supplied to classify status and measurement
-regressions, improvements, and unavailable comparisons without coupling the
-core engine to an artifact provider.
-The GitHub Action packages this flow for Ubuntu, uploads both report formats,
-and publishes one stable pull-request comment through a separate trusted
-reporting workflow.
+A same-source rollout exercises new image references from the same selected source;
+it does not validate compatibility between independent application releases.
+Sampled probes cannot exclude interruptions between requests. Baseline restoration
+checks runtime requirements and does not reset arbitrary business state. Scanner
+findings are reported observations, not proof of exploitability. Numerical baseline
+grades are experimental and advisory.
 
-CloudForge is not a deployment platform, CI system, static Kubernetes linter,
-generic security scanner, hosted dashboard, or AI decision engine.
+Backend providers, preparation, ClamAV, worker heartbeats, HPA and controlled
+readiness/shutdown experiments remain experimental. Planner SUPPORTED means a
+capability can be scheduled for this configuration; maturity is separate.
 
-The supported runtime scope now includes explicitly declared Redis dependencies.
-CloudForge plans supported, skipped and blocked capabilities before expensive
-execution, isolates Redis, injects only declared safe test configuration and
-checks optional semantic HTTP readiness. Recognition is not a promise to run
-arbitrary repositories. See [supported applications](supported-applications.md).
+CloudForge does not execute arbitrary Compose/Helm topologies, deploy to cloud
+backends, validate login/billing/tenant/business flows, grade AI answer quality,
+certify worker jobs or provide an arbitrary-code sandbox. Verification executes
+trusted Dockerfiles and application source using disposable test data.

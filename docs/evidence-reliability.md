@@ -3,6 +3,9 @@
 This milestone improves existing verification evidence. It adds no workload
 category, dependency provider, cloud backend or application remediation.
 
+Product maturity is defined separately in the [current support table](supported-applications.md).
+Planner and compatibility dispositions do not assign stable maturity.
+
 ## Compatibility and build identity
 
 The installer selects kubectl 1.35.5 and k3d 5.9.0. Cluster creation explicitly

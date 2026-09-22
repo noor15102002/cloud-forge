@@ -33,7 +33,7 @@ jobs:
       - name: Interrupt selected build and verify ownership cleanup
         env:
           CF_BINARY: ${{ steps.verify.outputs.binary }}
-        run: python3 scripts/pilot-cancellation.py "$CF_BINARY" "$RUNNER_TEMP/monorepo-evidence" --stages build --monorepo
+        run: python3 scripts/pilot-cancellation.py "$CF_BINARY" "$RUNNER_TEMP/monorepo-evidence/cancellation" --stages build --monorepo
       - name: Preserve acceptance evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

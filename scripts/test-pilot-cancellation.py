@@ -21,6 +21,22 @@ IMPORT_ARGS = ["image", "import", "cloudforge/healthy-node-redis:0123abcd-a", "-
 
 
 class CleanupCaptureTests(unittest.TestCase):
+    def test_lifecycle_cancellation_fixture_is_bounded_and_owned(self):
+        environment = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux"}
+        with tempfile.TemporaryDirectory(prefix="cloudforge-cancel-") as temporary, patch.dict(os.environ, environment):
+            fixture = Path(temporary).resolve() / "app"
+            pilot.fixture_copy(fixture, "lifecycle", False)
+            pilot.validate_public_fixture(fixture, "lifecycle", False)
+            self.assertIn("process.exit(0)), 20000)", (fixture / "server.js").read_text())
+            self.assertNotIn("experiments:", (fixture / "cloudforge.yaml").read_text())
+
+    def test_builder_ownership_token_accepts_current_exact_shape(self):
+        name = "cloudforge-" + "a" * 32
+        options = "memory=2g,cpu-period=100000,cpu-quota=200000,env.CLOUDFORGE_RUN_ID=" + name + ",env.CLOUDFORGE_OWNER_ID=" + "b" * 32
+        arguments = ["buildx", "create", "--name", name, "--driver", "docker-container", "--driver-opt", options]
+        self.assertEqual(pilot.created_run("docker", arguments), name)
+        self.assertIsNone(pilot.created_run("docker", [*arguments[:-1], options + ",foreign=true"]))
+
     def test_probe_pacing_is_fixed_and_restricted_to_public_readiness(self):
         environment = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux"}
         with tempfile.TemporaryDirectory(prefix="cloudforge-cancel-") as temporary, patch.dict(os.environ, environment):

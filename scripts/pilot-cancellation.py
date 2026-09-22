@@ -24,7 +24,7 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("bounded_command_evidence", REPOSITORY / "scripts/pilot-backend-cancellation.py")
 helpers = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helpers)
-STAGES = ("build", "cluster", "readiness", "load", "redis")
+STAGES = ("build", "cluster", "readiness", "lifecycle", "load", "redis")
 CLEANUP_SECONDS = 720
 RUN_NAME = re.compile(r"cloudforge-[a-f0-9]{8,32}")
 INJECTED_EXIT = 70
@@ -43,6 +43,10 @@ def fixture_copy(target, stage, monorepo, probe_pacing=False):
     if stage == "readiness":
         server = target / "server.js"
         server.write_text(server.read_text().replace("let ready = true", "let ready = false"))
+    if stage == "lifecycle":
+        server = target / "server.js"
+        # Public cancellation fixture: keep the real pod deletion in progress.
+        server.write_text(server.read_text().replace("process.exit(0)), 2000)", "process.exit(0)), 20000)"))
     config = target / "cloudforge.yaml"
     config.write_text(config.read_text().split("experiments:")[0])
     if probe_pacing:
@@ -73,7 +77,8 @@ def created_run(tool, arguments):
         name = arguments[3]
         base = "memory=2g,cpu-period=100000,cpu-quota=200000"
         if (RUN_NAME.fullmatch(name) and arguments[4:7] == ["--driver", "docker-container", "--driver-opt"]
-                and arguments[7] in (base, base + ",env.CLOUDFORGE_RUN_ID=" + name)):
+                and (arguments[7] in (base, base + ",env.CLOUDFORGE_RUN_ID=" + name)
+                     or re.fullmatch(re.escape(base + ",env.CLOUDFORGE_RUN_ID=" + name) + r",env.CLOUDFORGE_OWNER_ID=[a-f0-9]{32}", arguments[7]))):
             return name
     if tool == "k3d" and len(arguments) >= 4 and arguments[:2] == ["cluster", "create"] and RUN_NAME.fullmatch(arguments[2]):
         # Only register the name; no create output, runtime flags or credentials
@@ -187,6 +192,7 @@ def tool_wrapper(tool, arguments):
                 or (stage == "build" and tool == "docker" and "build" in arguments)
                 or (stage == "cluster" and tool == "k3d" and "create" in arguments)
                 or (stage == "readiness" and tool == "kubectl" and "rollout" in arguments and "status" in arguments)
+                or (stage == "lifecycle" and tool == "kubectl" and "delete" in arguments and "pod" in arguments and "--wait=true" in arguments)
                 or (stage == "load" and tool == "k6" and "run" in arguments))
     if not selected:
         os.execv(real, [real, *arguments])
@@ -300,10 +306,15 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
             assert any(item["code"] == "builder_cleanup_failed" for item in report["diagnostics"]), "Original injected cleanup failure disappeared"
             assert not any(item["code"] == "builder_remnant_cleanup_failed" for item in report["diagnostics"]), "Builder fallback failed"
         evidence = {item["experiment_id"]: item for item in report["evidence"]}
-        target = {"build": "container-build", "readiness": "deployment-readiness", "load": "load-profile"}.get(stage)
+        target = {"build": "container-build", "readiness": "deployment-readiness", "lifecycle": "graceful-shutdown", "load": "load-profile"}.get(stage)
         if target:
             assert evidence[target]["execution"]["executed"], "Started experiment was presented as never executed"
             assert evidence[target]["status"] == "error", "Started experiment lost ERROR"
+        if stage == "lifecycle":
+            assert evidence["graceful-shutdown"]["execution"]["mutation_attempted"], "Lifecycle mutation was not attempted"
+            assert not evidence["pod-recovery"]["execution"]["executed"], "New lifecycle work started after cancellation"
+            assert evidence["container-build"]["status"] == "pass", "Earlier build evidence was erased"
+            assert evidence["deployment-readiness"]["status"] == "pass", "Earlier readiness evidence was erased"
         assert not list(root.glob("cloudforge-verify-*")), "Temporary kubeconfig/runtime directory leaked"
         if stage == "redis":
             assert report["dependencies"][0]["status"] == "error"
@@ -341,6 +352,8 @@ def main():
     args.binary = str(Path(args.binary).resolve())
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
+    if any(args.output.iterdir()):
+        parser.error("qualification output must be empty; retain the previous attempt")
     with existing_state() as (sentinel_name, baseline, identities):
         for stage in args.stages:
             run_stage(args, stage, sentinel_name, baseline, identities)

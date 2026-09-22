@@ -141,7 +141,7 @@ can still require manual owned-resource recovery. No global prune is used.
 
 ## Backend extension
 
-The current v1alpha5 input contract also supports fixed PostgreSQL/pgvector and
+The experimental v1alpha5 input contract also supports fixed PostgreSQL/pgvector and
 ClamAV providers, generated values, preparation and explicit capacity/network
 controls. See [backend verification](backend-runtime.md); the Redis configuration
 examples and default profile above remain valid.

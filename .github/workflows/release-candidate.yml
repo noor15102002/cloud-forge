@@ -1,0 +1,262 @@
+name: Release candidate qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Prerelease version to embed in the candidate
+        required: true
+        default: v0.1.0-alpha.1
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.1
+      - name: Install existing analysis tools
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@5573d88ff78251eba05ca31a1d5f530f3b02eb89
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          go install github.com/rhysd/actionlint/cmd/actionlint@03d0035246f3e81f36aed592ffb4bebf33a03106
+      - name: Run all static, P0, cancellation, historical schema and reporter regressions
+        run: |
+          set -o pipefail
+          mkdir "$RUNNER_TEMP/static-evidence"
+          test -z "$(gofmt -l cmd internal pkg)"
+          go test ./... 2>&1 | tee "$RUNNER_TEMP/static-evidence/go-test.txt"
+          make check 2>&1 | tee "$RUNNER_TEMP/static-evidence/check.txt"
+          python3 scripts/test-pilot-cancellation.py 2>&1 | tee "$RUNNER_TEMP/static-evidence/cancellation.txt"
+          python3 scripts/test-probe-pacing.py 2>&1 | tee "$RUNNER_TEMP/static-evidence/probe-pacing.txt"
+          python3 scripts/test-qualification-command.py 2>&1 | tee "$RUNNER_TEMP/static-evidence/preservation.txt"
+      - name: Preserve this static attempt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: static-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/static-evidence
+          retention-days: 90
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      artifact: candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+      version: ${{ steps.build.outputs.version }}
+      commit: ${{ steps.build.outputs.commit }}
+      date: ${{ steps.build.outputs.date }}
+      sha256: ${{ steps.build.outputs.archive_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.1
+      - name: Build one immutable candidate and check reproducibility
+        id: build
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          bash scripts/build-release.sh "$RELEASE_VERSION" "$RUNNER_TEMP/release"
+          bash scripts/build-release.sh "$RELEASE_VERSION" "$RUNNER_TEMP/reproduced"
+          diff --recursive "$RUNNER_TEMP/release" "$RUNNER_TEMP/reproduced"
+          python3 - "$RUNNER_TEMP/release/release.json" >> "$GITHUB_OUTPUT" <<'PY'
+          import json, sys
+          for key, value in json.load(open(sys.argv[1])).items():
+              print(f"{key}={value}")
+          PY
+      - name: Preserve exactly the built release files
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release
+          retention-days: 90
+          if-no-files-found: error
+
+  install:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/install-candidate
+        id: candidate
+        with:
+          artifact: ${{ needs.build.outputs.artifact }}
+          version: ${{ needs.build.outputs.version }}
+          commit: ${{ needs.build.outputs.commit }}
+          date: ${{ needs.build.outputs.date }}
+          sha256: ${{ needs.build.outputs.sha256 }}
+      - name: Check the clean installation without a source build
+        env:
+          CF_BINARY: ${{ steps.candidate.outputs.binary }}
+        run: |
+          mkdir "$RUNNER_TEMP/install-evidence"
+          "$CF_BINARY" version --format json > "$RUNNER_TEMP/install-evidence/version.json"
+          "$CF_BINARY" doctor --format json > "$RUNNER_TEMP/install-evidence/doctor.json"
+          cp "$RUNNER_TEMP/candidate-install/installation.json" "$RUNNER_TEMP/install-evidence/"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: install-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/install-evidence
+          retention-days: 90
+
+  generic:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        case:
+          - healthy-node
+          - healthy-python
+          - redis-node
+          - redis-python
+          - external
+          - reliability
+          - topology
+          - probe-pacing
+          - operational-scanner-null
+          - operational-scanner-empty
+          - operational-scanner-unsupported
+          - operational-scanner-truncated
+          - operational-scanner-case-alias
+          - operational-scanner-zero
+          - operational-scanner-findings
+          - operational-scanner-subject
+          - operational-scanner-exit
+          - operational-docker-unavailable
+          - operational-disk-full
+          - operational-registry-503
+          - operational-node-observation
+          - operational-startup-failure
+          - operational-cleanup-inventory
+          - cancel-build
+          - cancel-cluster
+          - cancel-redis
+          - cancel-readiness
+          - cancel-lifecycle
+          - cancel-load
+          - cancel-redis-fallback
+          - backend-healthy
+          - backend-preparation-failure
+          - backend-missing-key
+          - backend-missing-schema
+          - backend-cancel-clamav
+          - backend-cancel-postgresql
+          - backend-cancel-preparation
+          - worker-healthy
+          - worker-never
+          - worker-stale
+          - worker-frozen
+          - worker-future
+          - worker-malformed
+          - worker-exit
+          - worker-first-pod-only
+          - worker-fail-second-start
+          - worker-cancel-startup
+          - worker-cancel-recovery
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Reserve disposable runner storage for existing backend cases
+        if: ${{ startsWith(matrix.case, 'backend-') || startsWith(matrix.case, 'worker-') }}
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo rm -rf -- /usr/share/dotnet /usr/local/lib/android /opt/ghc
+      - uses: ./.github/actions/install-candidate
+        id: candidate
+        with:
+          artifact: ${{ needs.build.outputs.artifact }}
+          version: ${{ needs.build.outputs.version }}
+          commit: ${{ needs.build.outputs.commit }}
+          date: ${{ needs.build.outputs.date }}
+          sha256: ${{ needs.build.outputs.sha256 }}
+      - name: Qualify the installed binary and preserve native evidence
+        env:
+          CF_BINARY: ${{ steps.candidate.outputs.binary }}
+          CF_CASE: ${{ matrix.case }}
+        run: python3 scripts/qualify-candidate.py "$CF_BINARY" "$CF_CASE" "$RUNNER_TEMP/qualification"
+      - name: Independently check cleanup
+        if: always()
+        run: timeout --signal=TERM --kill-after=5s 60s bash scripts/pilot-cleanup-check.sh
+      - name: Preserve this attempt, including every failed case
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: generic-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qualification
+          retention-days: 90
+
+  action:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [healthy-node, monorepo]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}/candidate-release
+      - name: Run the packaged Action with the distributed candidate
+        uses: ./
+        id: verify
+        with:
+          path: testdata/${{ matrix.fixture }}
+          candidate-path: ${{ runner.temp }}/candidate-release
+          candidate-version: ${{ needs.build.outputs.version }}
+          candidate-commit: ${{ needs.build.outputs.commit }}
+          candidate-date: ${{ needs.build.outputs.date }}
+          candidate-sha256: ${{ needs.build.outputs.sha256 }}
+          artifact-name: action-${{ matrix.fixture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+      - name: Verify selected workload, rejected build context and cancellation
+        if: ${{ matrix.fixture == 'monorepo' }}
+        env:
+          CF_BINARY: ${{ steps.verify.outputs.binary }}
+          CF_REPORT: ${{ steps.verify.outputs.report-json }}
+        run: |
+          python3 scripts/pilot-monorepo.py "$CF_BINARY" "$CF_REPORT" "$RUNNER_TEMP/monorepo-evidence"
+          python3 scripts/pilot-cancellation.py "$CF_BINARY" "$RUNNER_TEMP/monorepo-cancellation" --stages build --monorepo
+      - name: Assert report producer matches the distributed candidate
+        env:
+          CF_REPORT: ${{ steps.verify.outputs.report-json }}
+          CF_VERSION: ${{ needs.build.outputs.version }}
+          CF_COMMIT: ${{ needs.build.outputs.commit }}
+        run: jq --exit-status --arg version "$CF_VERSION" --arg commit "$CF_COMMIT" '.producer == {version:$version, commit:$commit}' "$CF_REPORT"
+      - name: Independently check cleanup
+        if: always()
+        run: timeout --signal=TERM --kill-after=5s 60s bash scripts/pilot-cleanup-check.sh
+      - if: ${{ always() && matrix.fixture == 'monorepo' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: action-monorepo-extra-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/monorepo-evidence
+            ${{ runner.temp }}/monorepo-cancellation
+          retention-days: 90

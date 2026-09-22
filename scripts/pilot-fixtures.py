@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import statistics
 import subprocess
+from qualification_command import run_observed
 
 parser = argparse.ArgumentParser()
 parser.add_argument("binary")
@@ -15,9 +16,8 @@ args.output.mkdir(parents=True, exist_ok=True)
 metrics = {}
 fingerprints = set()
 for number in range(1, 6):
-    result = subprocess.run([args.binary, "verify", f"testdata/{args.fixture}", "--format", "json"], capture_output=True, text=True, timeout=900)
     path = args.output / f"{args.fixture}-{number}.json"
-    path.write_text(result.stdout)
+    result = run_observed([args.binary, "verify", f"testdata/{args.fixture}", "--format", "json"], path, timeout=900)
     report = json.loads(result.stdout)
     print(f"{args.fixture} trial {number}: exit={result.returncode} status={report['status']}", flush=True)
     assert result.returncode == 0, json.dumps(report.get("diagnostics"))
@@ -42,8 +42,7 @@ print(json.dumps(summary, indent=2))
 
 broken = ["broken-shutdown", "broken-rollout"] if args.fixture == "healthy-node" else ["broken-python-shutdown", "broken-python-readiness"]
 for fixture in broken:
-    result = subprocess.run([args.binary, "verify", f"testdata/{fixture}", "--format", "json"], capture_output=True, text=True, timeout=900)
-    (args.output / f"{fixture}.json").write_text(result.stdout)
+    result = run_observed([args.binary, "verify", f"testdata/{fixture}", "--format", "json"], args.output / f"{fixture}.json", timeout=900)
     report = json.loads(result.stdout)
     expected = "rolling-deployment" if "rollout" in fixture else "readiness-gating" if "readiness" in fixture else "inflight-shutdown"
     assert result.returncode == 1, report

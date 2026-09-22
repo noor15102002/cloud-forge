@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from qualification_command import run_observed
 
 parser = argparse.ArgumentParser()
 parser.add_argument("binary")
@@ -42,11 +43,9 @@ sys.exit(result.returncode)
         wrapper.chmod(0o700)
         environment.update(CF_REAL_IMPORT_K3D=shutil.which("k3d"), CF_IMPORT_LOG=str((args.output / f"{name}.image-import.txt").resolve()))
         environment["PATH"] = private + os.pathsep + environment["PATH"]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=1000, env=environment)
+        result = run_observed(command, args.output / f"{name}.json", timeout=1000, env=environment)
         assert not list(Path(private).glob("cloudforge-verify-*")), "Temporary kubeconfig/runtime directory leaked"
     path = args.output / f"{name}.json"
-    path.write_text(result.stdout)
-    (args.output / f"{name}.stderr.txt").write_text(result.stderr)
     report = json.loads(result.stdout)
     assert report["schema_version"] == "v1alpha8"
     # Exercise the same strict schema loader used by users and the Action.

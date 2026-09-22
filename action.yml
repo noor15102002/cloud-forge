@@ -7,6 +7,30 @@ branding:
   color: blue
 
 inputs:
+  release-version:
+    description: Qualified release asset version for an external full-commit Action pin.
+    required: false
+    default: v0.1.0-alpha.1
+  candidate-path:
+    description: Internal qualification input; directory containing the already-built candidate archive, release.json and checksums.txt.
+    required: false
+    default: ""
+  candidate-version:
+    description: Expected candidate version; required with candidate-path.
+    required: false
+    default: ""
+  candidate-commit:
+    description: Expected full candidate source commit; required with candidate-path.
+    required: false
+    default: ""
+  candidate-date:
+    description: Expected candidate UTC build date; required with candidate-path.
+    required: false
+    default: ""
+  candidate-sha256:
+    description: Expected candidate archive SHA-256; required with candidate-path.
+    required: false
+    default: ""
   path:
     description: Application directory, or repository boundary when build selection is configured; relative to the GitHub workspace.
     required: false
@@ -48,7 +72,7 @@ outputs:
     description: Absolute path to the sanitized Markdown report.
     value: ${{ steps.verify.outputs.report-markdown }}
   binary:
-    description: Absolute path to the CloudForge binary built from this action ref.
+    description: Absolute path to the installed CloudForge binary. Released and candidate runs never rebuild it.
     value: ${{ steps.build.outputs.binary }}
   exit-code:
     description: CloudForge verification exit code.
@@ -72,6 +96,7 @@ runs:
       run: bash "$GITHUB_ACTION_PATH/scripts/validate-action-inputs.sh"
 
     - name: Set up Go
+      if: ${{ inputs.candidate-path == '' && github.action_ref == '' }}
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: 1.27.1
@@ -115,25 +140,19 @@ runs:
         fi
         echo "path=$baseline" >> "$GITHUB_OUTPUT"
 
-    - name: Build pinned CloudForge action ref
+    - name: Install and verify the CloudForge candidate
       id: build
       shell: bash
       working-directory: ${{ github.action_path }}
       env:
         CLOUDFORGE_ACTION_REF: ${{ github.action_ref }}
-      run: |
-        set -euo pipefail
-        install_dir="$(mktemp -d "$RUNNER_TEMP/cloudforge-action.XXXXXX")"
-        binary="$install_dir/cloudforge"
-        build_flags=()
-        if [[ "$CLOUDFORGE_ACTION_REF" =~ ^[0-9a-f]{40}$ ]]; then
-          build_flags=(-ldflags "-X github.com/noor15102002/cloud-forge/internal/cli.Commit=$CLOUDFORGE_ACTION_REF")
-        elif [ "$(git rev-parse --show-toplevel 2>/dev/null || true)" != "$PWD" ]; then
-          echo "Pin the external CloudForge Action to a full commit SHA so runtime evidence identifies the executed verifier." >&2
-          exit 2
-        fi
-        go build -trimpath "${build_flags[@]}" -o "$binary" ./cmd/cloudforge
-        echo "binary=$binary" >> "$GITHUB_OUTPUT"
+        CLOUDFORGE_RELEASE_VERSION: ${{ inputs.release-version }}
+        CLOUDFORGE_CANDIDATE_PATH: ${{ inputs.candidate-path }}
+        CLOUDFORGE_CANDIDATE_VERSION: ${{ inputs.candidate-version }}
+        CLOUDFORGE_CANDIDATE_COMMIT: ${{ inputs.candidate-commit }}
+        CLOUDFORGE_CANDIDATE_DATE: ${{ inputs.candidate-date }}
+        CLOUDFORGE_CANDIDATE_SHA256: ${{ inputs.candidate-sha256 }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/action-binary.sh"
 
     - name: Verify application and render reports
       id: verify
@@ -149,6 +168,7 @@ runs:
         report_dir="$(mktemp -d "$RUNNER_TEMP/cloudforge-report.XXXXXX")"
         json_report="$report_dir/verification.json"
         markdown_report="$report_dir/verification.md"
+        stderr_report="$report_dir/verification.stderr.txt"
         arguments=(verify "$CLOUDFORGE_APPLICATION_PATH" --format json)
         if [ -n "$CLOUDFORGE_CONFIG_PATH" ]; then
           arguments+=(--config "$CLOUDFORGE_CONFIG_PATH")
@@ -157,9 +177,15 @@ runs:
           arguments+=(--baseline "$CLOUDFORGE_BASELINE_PATH")
         fi
         set +e
-        "$CLOUDFORGE_BINARY" "${arguments[@]}" > "$json_report"
+        "$CLOUDFORGE_BINARY" "${arguments[@]}" > "$json_report" 2> "$stderr_report"
         status="$?"
         set -e
+        printf '{"exit_code":%s}\n' "$status" > "$report_dir/verification.exit.json"
+        "$CLOUDFORGE_BINARY" version --format json > "$report_dir/verifier.json"
+        candidate_record="$(dirname "$CLOUDFORGE_BINARY")/installation.json"
+        if [ -f "$candidate_record" ]; then
+          cp "$candidate_record" "$report_dir/candidate.json"
+        fi
         if [ -s "$json_report" ]; then
           if ! "$CLOUDFORGE_BINARY" report "$json_report" --format markdown > "$markdown_report"; then
             status=2
@@ -172,16 +198,15 @@ runs:
         fi
         echo "report-json=$json_report" >> "$GITHUB_OUTPUT"
         echo "report-markdown=$markdown_report" >> "$GITHUB_OUTPUT"
+        echo "report-directory=$report_dir" >> "$GITHUB_OUTPUT"
         echo "exit-code=$status" >> "$GITHUB_OUTPUT"
 
     - name: Upload verification reports
-      if: ${{ always() && steps.verify.outputs.report-json != '' }}
+      if: ${{ always() && steps.verify.outputs.report-directory != '' }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ inputs.artifact-name }}
-        path: |
-          ${{ steps.verify.outputs.report-json }}
-          ${{ steps.verify.outputs.report-markdown }}
+        path: ${{ steps.verify.outputs.report-directory }}
         if-no-files-found: warn
         retention-days: ${{ inputs.retention-days }}
 

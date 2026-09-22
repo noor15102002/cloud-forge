@@ -27,6 +27,11 @@ jobs:
         run: node --test .github/actions/report/comment.test.cjs
       - name: Test Action input validation
         run: bash scripts/test-action-inputs.sh
+      - name: Test release identity and retained qualification output
+        run: |
+          python3 scripts/test-release.py
+          python3 scripts/test-release-harnesses.py
+          python3 scripts/test-qualification-command.py
       - name: Vet
         run: go vet ./...
       - name: Install analysis tools

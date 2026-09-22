@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+from qualification_command import run_observed
 
 parser = argparse.ArgumentParser()
 parser.add_argument("binary")
@@ -47,8 +48,7 @@ for command in ("analyze", "verify"):
 # never silently replace it with the repository root or start a cluster.
 config = args.output / "wrong-context.yaml"
 config.write_text((root / "cloudforge.yaml").read_text().replace("context: .", "context: apps/http"))
-with (args.output / "wrong-context.json").open("w") as stdout:
-    process = subprocess.run([args.binary, "verify", str(root), "--config", str(config), "--format", "json"], stdout=stdout, timeout=900)
+process = run_observed([args.binary, "verify", str(root), "--config", str(config), "--format", "json"], args.output / "wrong-context.json", timeout=900)
 assert process.returncode == 1
 wrong = json.loads((args.output / "wrong-context.json").read_text())
 assert wrong["status"] == "fail"

@@ -1,5 +1,9 @@
 # Security and Trust Model
 
+The [current support and maturity table](supported-applications.md) defines the
+release scope. No feature certifies business correctness, continuous availability
+or hostile-code isolation. Use disposable test credentials and data only.
+
 Repository analysis is read-only. CloudForge resolves the selected root,
 does not follow repository symbolic links, skips common generated directories,
 limits traversal to 2,000 files, and limits each parsed file to 2 MiB.
@@ -87,6 +91,9 @@ must be explicitly configured. HTTP redirects are not followed. Source HPAs
 above five replicas are rejected before execution. Neither raw response bodies
 nor source environment values enter the load report.
 
+Trivy runs against locally built image A only. Its supported scan envelope must
+match the independently observed image identity; unusable output produces ERROR.
+The scan does not establish image B security state or confirmed exploitability.
 Trivy runs against the locally built image. CloudForge parses bounded JSON and
 retains vulnerability identifier, package, installed version, fixed version,
 severity, and image target metadata. Raw scanner output is not included in the
