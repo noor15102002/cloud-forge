@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,6 +64,8 @@ func TestRemoveImageTreatsMissingImageAsAlreadyClean(t *testing.T) {
 			FailureType: model.FailureExit, Stderr: "Error response from daemon: No such image: cloudforge/api:test",
 		}
 	}))
+	client.IsolateBuild("cloudforge-0123abcd")
+	client.attemptedImages = map[string]bool{"cloudforge/api:test": true}
 	result := client.RemoveImage(context.Background(), "cloudforge/api:test")
 	if result.ExitCode != 0 || result.FailureType != model.FailureNone {
 		t.Fatalf("missing image cleanup was not idempotent: %#v", result)
@@ -74,16 +77,24 @@ func TestRemnantCleanupRequiresOwnershipAndExactRunName(t *testing.T) {
 	client := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := model.CommandResult{}
 		if len(request.Args) > 1 && request.Args[1] == "ls" {
-			result.Stdout = "123456abcdef k3d-cloudforge-0123abcd\nabcdef123456 k3d-cloudforge-0123abcd-other\nfedcba123456 k3d-cloudforge-ffffaaaa\n"
+			result.Stdout = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb k3d-cloudforge-0123abcd-other\ncccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc k3d-cloudforge-ffffaaaa\n"
+			if len(removals) == 0 {
+				result.Stdout += "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa k3d-cloudforge-0123abcd\n"
+			}
+		}
+		if len(request.Args) > 1 && request.Args[1] == "inspect" {
+			result.Stdout = `"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "k3d-cloudforge-0123abcd" true`
 		}
 		if len(request.Args) > 1 && request.Args[1] == "rm" {
 			removals = append(removals, request.Args[len(request.Args)-1])
 		}
 		return result
 	}))
-	client.RemoveClusterRemnants(context.Background(), "cloudforge-0123abcd", "network")
-	if len(removals) != 1 || removals[0] != "123456abcdef" {
-		t.Fatalf("cleanup targeted unrelated resources: %#v", removals)
+	client.clusterPrepared, client.clusterCreated, client.clusterProven = "cloudforge-0123abcd", true, true
+	client.clusterNetworkID = strings.Repeat("a", 64)
+	result := client.RemoveClusterRemnants(context.Background(), "cloudforge-0123abcd", "network")
+	if builderCleanupFailed(result) || len(removals) != 1 || removals[0] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("cleanup targeted unrelated resources: %#v result=%+v", removals, result)
 	}
 }
 

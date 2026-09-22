@@ -81,6 +81,7 @@ metricsComplete:
 	if startReplicas == 0 {
 		startReplicas = current.desiredReplicas
 	}
+	hasScalingHeadroom := current.hpaMaxReplicas <= 0 || startReplicas < current.hpaMaxReplicas
 	startDesiredReplicas := starting.DesiredReplicas
 	peakReplicas := startReplicas
 	peakDesiredReplicas := startDesiredReplicas
@@ -116,10 +117,10 @@ metricsComplete:
 		if observeErr != nil || failed(result) {
 			return finishLoad(), lifecycleExecutionError("horizontal-autoscaling", "Horizontal autoscaling under load", "hpa_observation_failed", "CloudForge could not inspect HPA behavior during load.", commandGuidance(result, observeErr), trafficObservation{})
 		}
-		if state.DesiredReplicas > startReplicas {
+		if hasScalingHeadroom && state.DesiredReplicas > startReplicas {
 			scaleExpected = true
 		}
-		if !loadFinished && state.CurrentCPU != nil && float64(*state.CurrentCPU) > float64(current.hpaTargetCPU)*1.1 {
+		if hasScalingHeadroom && !loadFinished && state.CurrentCPU != nil && float64(*state.CurrentCPU) > float64(current.hpaTargetCPU)*1.1 {
 			if demandSince.IsZero() {
 				demandSince = time.Now()
 			}
@@ -153,7 +154,7 @@ metricsComplete:
 		select {
 		case execution = <-loadDone:
 			loadFinished = true
-			if peakReady > startReplicas {
+			if peakReady > startReplicas || !hasScalingHeadroom {
 				goto scaleComplete
 			}
 		case <-scaleCtx.Done():
@@ -179,12 +180,19 @@ scaleComplete:
 		{Name: "peak_desired_replicas", Value: strconv.FormatInt(int64(peakDesiredReplicas), 10), Unit: "pods"},
 		{Name: "minimum_replicas", Value: strconv.FormatInt(int64(current.hpaMinReplicas), 10), Unit: "pods"},
 		{Name: "maximum_replicas", Value: strconv.FormatInt(int64(current.hpaMaxReplicas), 10), Unit: "pods"},
+		{Name: "scaling_headroom", Value: strconv.FormatBool(hasScalingHeadroom)},
 		{Name: "scale_up_duration_ms", Value: strconv.FormatInt(scaleDuration, 10), Unit: "ms"},
 		{Name: "target_cpu_percent", Value: strconv.FormatInt(int64(current.hpaTargetCPU), 10), Unit: "percent"},
 		{Name: "peak_cpu_percent", Value: strconv.FormatInt(int64(peakCPU), 10), Unit: "percent"},
 		{Name: "request_count", Value: strconv.FormatInt(summary.RequestCount, 10), Unit: "requests"},
 		{Name: "failed_requests", Value: strconv.FormatInt(failedRequests(summary), 10), Unit: "requests"},
 		{Name: "latency_p95_ms", Value: decimal(summary.P95MS), Unit: "ms"},
+	}
+	if !hasScalingHeadroom {
+		outcome := skippedAutoscaling("The HPA started at its configured maximum replica count; no scaling headroom existed, so replica growth was not required.")
+		outcome.Evidence.Measurements = measurements
+		outcome.Diagnostic = &model.Diagnostic{Code: "hpa_no_scaling_headroom", Status: model.StatusSkipped, Message: outcome.Evidence.Summary}
+		return loadOutcome, outcome
 	}
 	if peakReady <= startReplicas && !scaleExpected {
 		outcome := skippedAutoscaling("Insufficient scaling demand was observed; remaining at the starting replica count is not an application failure.")

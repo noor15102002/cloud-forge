@@ -5,9 +5,10 @@ Evidence: 1 passed, 1 warned, 0 failed, 0 blocked, 1 skipped, 0 errors
 PASS    Container build              Image built. (400 ms)
 SKIPPED Horizontal autoscaling       No HPA configured. (0 ms)
 WARN    Bounded load                 Latency crossed | target (800 ms)
-Baseline: FAIL against run baseline-100; 1 regressions, 1 improvements, 1 unavailable
-REGRESSION load-profile/latency_p95_ms: latency_p95_ms changed from 90.000 ms to 120.000 ms
-IMPROVEMENT load-profile/throughput_rps: throughput_rps changed from 40.000 requests/second to 50.000 requests/second
+Baseline: FAIL against run baseline-100; 0 status regressions, 0 status improvements, 2 advisory numerical changes, 1 unavailable
+Numerical comparisons are experimental and advisory; fixed percentage thresholds do not establish statistical significance.
+ADVISORY load-profile/latency_p95_ms: latency_p95_ms changed from 90.000 ms to 120.000 ms
+ADVISORY load-profile/throughput_rps: throughput_rps changed from 40.000 requests/second to 50.000 requests/second
 UNAVAILABLE horizontal-autoscaling status: status comparison is unavailable for baseline pass and current skipped
 Actionable findings: 1
 WARN/MEDIUM runtime.load-profile: Latency exceeded the expected threshold. Investigate.

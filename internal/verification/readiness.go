@@ -144,6 +144,9 @@ func (c *readinessChecker) evidence(duration int64) model.Evidence {
 		status = model.StatusPass
 	}
 	measurements := []model.Measurement{{Name: "http_transport_available", Value: strconv.FormatBool(last.Transport)}, {Name: "http_status", Value: strconv.Itoa(last.HTTPStatus)}, {Name: "expected_status_matched", Value: strconv.FormatBool(last.StatusMatches)}}
+	if !last.Success && last.Reason != "" {
+		measurements = append(measurements, model.Measurement{Name: "readiness_failure_category", Value: semanticFailureClass(last)})
+	}
 	keys := make([]string, 0, len(c.acceptance.JSON))
 	for key := range c.acceptance.JSON {
 		keys = append(keys, key)

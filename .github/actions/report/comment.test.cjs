@@ -4,12 +4,61 @@ const assert = require('node:assert/strict')
 const test = require('node:test')
 
 const {
+  commentBody,
   marker,
   maximumBodyBytes,
   updateComment,
   validateBody,
   validatePullRequestNumber
 } = require('./comment.cjs')
+
+test('keeps rendered apostrophes, quotes, pipes, Unicode and neutralized markup unchanged', () => {
+  const body = `${marker}\n## CloudForge verification\n\n**Status:** FAIL · **Application:** worker's "ready" — yes&#124;no &amp; &lt;unknown&gt;\n\n| Experiment | Status | Duration | Result |\n|---|---:|---:|---|\n| worker's "ready" | **FAIL** | 1 ms | one &#124; two &amp; three — &#64;team |\n`
+  assert.equal(commentBody(body, 'https://github.com/owner/repo/actions/runs/123'), body)
+  assert.ok(!body.includes('&&#35;39;'))
+})
+
+test('large reports retain verdict, earlier failure, scan summary and important findings in bounded fallback', () => {
+  const header = `${marker}\n## CloudForge verification\n\n**Status:** ERROR · **Application:** worker's "ready" — example\n\n### Container scan\n\n**Status:** WARN\n\n- **Findings:** 235\n- **High:** 52\n- **Known fix available:** 8\n- **Scan scope:** image&#95;a\n\n### Completed evidence\n\n| Experiment | Status | Duration | Result |\n|---|---:|---:|---|\n`
+  const rows = [
+    '| Earlier application experiment | **FAIL** | 1 ms | connection&#95;closed&#58; 1 / 14 |',
+    '| Baseline restoration | **PASS** | 1 ms | restored |',
+    '| Cleanup | **ERROR** | 1 ms | inventory incomplete |',
+    ...Array.from({length: 600}, (_, index) => `| Evidence ${index} | **WARN** | 1 ms | ${'é — '.repeat(100)} |`)
+  ]
+  const body = `${header}${rows.join('\n')}\n\n<details>\n<summary>Findings</summary>\n\n### security.critical · WARN/CRITICAL\n\nTrivy reported a critical finding, not confirmed exploitability.\n\n</details>\n`
+  assert.ok(Buffer.byteLength(body, 'utf8') > maximumBodyBytes)
+  const compact = commentBody(body, 'https://github.com/owner/repo/actions/runs/123')
+  assert.ok(Buffer.byteLength(compact, 'utf8') <= maximumBodyBytes)
+  assert.ok(compact.startsWith(`${marker}\n`))
+  for (const expected of ["**Status:** ERROR · **Application:** worker's", 'Earlier application experiment | **FAIL**', 'Cleanup | **ERROR**', '1 PASS', '**Findings:** 235', '**Known fix available:** 8', 'security.critical', 'https://github.com/owner/repo/actions/runs/123', 'additional non-passing evidence']) {
+    assert.ok(compact.includes(expected), `missing ${expected}`)
+  }
+  assert.ok(!compact.includes('Measurements ('))
+  assert.ok(!compact.includes('\uFFFD'))
+})
+
+test('compact fallback never emits an arbitrary artifact link', () => {
+  const body = `${marker}\n${'x'.repeat(maximumBodyBytes)}`
+  for (const artifactURL of ['javascript:alert(1)', 'https://user:secret@github.com/owner/repo/actions/runs/1', 'https://github.com/o/r/actions/runs/1)@team', 'https://example.test/secret']) {
+    const compact = commentBody(body, artifactURL)
+    assert.ok(compact.includes('retained in the workflow artifact'))
+    assert.ok(!compact.includes(artifactURL))
+  }
+})
+
+test('publishes a large report through the existing bot-owned comment update path', async () => {
+  const calls = []
+  const github = fakeGitHub([{id: 10, user: {login: 'github-actions[bot]'}, body: `${marker}\nold`}], calls)
+  let posted
+  github.rest.issues.updateComment = async ({body}) => { posted = body }
+  const body = `${marker}\n## CloudForge verification\n\n**Status:** FAIL\n\n${'é'.repeat(maximumBodyBytes)}`
+  const id = await updateComment({github, owner: 'owner', repo: 'repo', pullRequestNumber: 7, body, artifactURL: 'https://github.com/owner/repo/actions/runs/123'})
+  assert.equal(id, '10')
+  assert.ok(posted.includes('**Status:** FAIL'))
+  assert.ok(Buffer.byteLength(posted, 'utf8') <= maximumBodyBytes)
+  assert.ok(posted.includes('download the workflow artifact'))
+})
 
 test('validates pull request numbers and marked bounded bodies', () => {
   assert.equal(validatePullRequestNumber('42'), 42)

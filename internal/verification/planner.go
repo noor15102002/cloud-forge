@@ -133,6 +133,8 @@ func capabilityPlan(analysis model.AnalysisResult, current plan, config model.Ru
 		"Baseline restoration validates deployment state and health, not business-data equivalence.",
 		"No PodDisruptionBudget or production topology is inferred.",
 		"Service availability probes open new connections; persistent-client session continuity is not inferred.",
+		"HTTP availability is sampled: downtime_ms is the maximum sampled failure window, and shorter interruptions between samples cannot be excluded.",
+		"Same-source rollout tests a rebuilt image reference, not compatibility between independent application releases. Trivy scans image A only; image B is not separately scanned.",
 		"Minimum ready pod counts are sampled observations, excluding terminating pods; transitions between samples may be missed.",
 	}
 	if config.Topology != nil {

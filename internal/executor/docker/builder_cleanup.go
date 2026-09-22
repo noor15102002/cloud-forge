@@ -12,7 +12,7 @@ import (
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
-var builderRunName = regexp.MustCompile(`^cloudforge-[a-f0-9]{8}$`)
+var builderRunName = regexp.MustCompile(`^cloudforge-(?:[a-f0-9]{8}|[a-f0-9]{32})$`)
 var builderContainerID = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 // The Docker-container Buildx driver supports env.<NAME>, names the first node
@@ -93,7 +93,7 @@ func (c *Client) inspectBuilderContainer(ctx context.Context, reference string) 
 		return builderOwnership{}, false, result
 	}
 	// Emit only a marker boolean, never the environment array or other mounts.
-	format := `{{json .Id}} {{json .Name}} {{$owned := false}}{{range .Config.Env}}{{if eq . "CLOUDFORGE_RUN_ID=` + c.builder + `"}}{{$owned = true}}{{end}}{{end}}{{json $owned}} {{range .Mounts}}{{if eq .Destination "/var/lib/buildkit"}}{{json .Type}} {{json .Name}}{{end}}{{end}}`
+	format := `{{json .Id}} {{json .Name}} {{$owned := false}}{{range .Config.Env}}{{if eq . "CLOUDFORGE_OWNER_ID=` + c.ownershipToken + `"}}{{$owned = true}}{{end}}{{end}}{{json $owned}} {{range .Mounts}}{{if eq .Destination "/var/lib/buildkit"}}{{json .Type}} {{json .Name}}{{end}}{{end}}`
 	result := c.runner.Run(ctx, command.Request{Name: "docker", Args: []string{"container", "inspect", "--format", format, reference}, Timeout: 5 * time.Second, OutputLimit: 4096})
 	if builderObjectMissing(result, "container", reference) {
 		return builderOwnership{}, false, model.CommandResult{}

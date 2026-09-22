@@ -90,3 +90,23 @@ func TestCreateAcceptsOnlyFixedMemoryBudgets(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateCarriesIndependentInvocationOwnership(t *testing.T) {
+	const token = "abcdef0123456789abcdef0123456789"
+	client := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+		found := false
+		for index, argument := range request.Args {
+			if argument == "cloudforge.dev/ownership="+token+"@all" && index > 0 && request.Args[index-1] == "--runtime-label" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("cluster creation lacks invocation ownership marker")
+		}
+		return model.CommandResult{}
+	}))
+	client.SetOwnership(token)
+	if result := client.Create(context.Background(), "cloudforge-0123abcd", 30080); result.ExitCode != 0 || result.FailureType != model.FailureNone {
+		t.Fatal(result)
+	}
+}

@@ -17,10 +17,16 @@ const KubernetesVersion = "1.35.5+k3s1"
 const NodeImage = "rancher/k3s:v1.35.5-k3s1"
 
 // Client manages one-run k3d clusters.
-type Client struct{ runner command.Runner }
+type Client struct {
+	runner         command.Runner
+	ownershipToken string
+}
 
 // New creates a k3d CLI adapter.
 func New(runner command.Runner) *Client { return &Client{runner: runner} }
+
+// SetOwnership adds this invocation's private token to every created runtime node.
+func (c *Client) SetOwnership(token string) { c.ownershipToken = token }
 
 // Create creates a minimal cluster, publishes one NodePort on loopback, and waits for its API.
 func (c *Client) Create(ctx context.Context, name string, nodePort int) model.CommandResult {
@@ -34,7 +40,10 @@ func (c *Client) CreateWithMemory(ctx context.Context, name string, nodePort int
 		return model.CommandResult{Command: "k3d", ExitCode: -1, FailureType: model.FailureExecution, Stderr: "Unsupported bounded cluster memory profile."}
 	}
 	portMapping := "127.0.0.1:0:" + strconv.Itoa(nodePort) + "@server:0"
-	args := []string{"cluster", "create", name, "--image", NodeImage, "--servers-memory", memory, "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false", "--runtime-label", "cloudforge.dev/owned=true@all", "--servers", "1", "--agents", "0"}
+	args := []string{"cluster", "create", name, "--image", NodeImage, "--servers-memory", memory, "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false", "--runtime-label", "cloudforge.dev/owned=true@all", "--runtime-label", "cloudforge.dev/run-id=" + name + "@all", "--servers", "1", "--agents", "0"}
+	if c.ownershipToken != "" {
+		args = append(args, "--runtime-label", "cloudforge.dev/ownership="+c.ownershipToken+"@all")
+	}
 	if nodePort > 0 {
 		args = append(args, "--port", portMapping)
 	}

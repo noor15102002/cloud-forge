@@ -68,8 +68,11 @@ func (s *Service) runReadinessGating(ctx context.Context, client *kubernetes.Cli
 	if base == "" || current.desiredReplicas < 2 {
 		return controlledSkip(id, title)
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.recoveryTimeout)
+	parent := ctx
+	ctx, cancel := context.WithTimeout(parent, s.recoveryTimeout)
 	defer cancel()
+	observation := lifecycleObservation{parent: parent, experiment: ctx}
+	defer observation.close()
 	pods, result, err := client.ObservePods(ctx, current.clusterName, namespace, "app.kubernetes.io/name="+current.workloadName)
 	if err != nil || failed(result) {
 		return controlError(id, title, "Could not inspect pods before readiness control.")
@@ -111,31 +114,42 @@ func (s *Service) runReadinessGating(ctx context.Context, client *kubernetes.Cli
 		return controlError(id, title, "The selected pod did not acknowledge its controlled unready state.")
 	}
 	unready := false
-	for ctx.Err() == nil {
-		pods, result, err = client.ObservePods(ctx, current.clusterName, namespace, "app.kubernetes.io/name="+current.workloadName)
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			break
+	var deadlineReached bool
+	for {
+		if parent.Err() != nil {
+			return controlError(id, title, "Readiness control was interrupted.")
+		}
+		pods, result, deadlineReached, err = observation.pods(client, current, "app.kubernetes.io/name="+current.workloadName)
+		if parent.Err() != nil {
+			return controlError(id, title, "Readiness control was interrupted.")
 		}
 		if err != nil || failed(result) {
 			return controlError(id, title, "Could not observe the controlled readiness transition.")
 		}
+		present := false
 		for _, pod := range pods {
-			if pod.Name == target && !pod.Ready {
-				unready = true
+			if pod.Name == target {
+				present = true
+				unready = !pod.Ready
 			}
 		}
-		if unready {
+		if !present {
+			return controlError(id, title, "The selected pod disappeared; its controlled readiness transition could not be observed.")
+		}
+		if unready || deadlineReached {
 			break
 		}
-		if !pause(ctx, s.poll) {
-			break
-		}
+		pause(ctx, s.poll)
 	}
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return controlError(id, title, "Readiness control was interrupted.")
-	}
+	transitionMeasurements := append([]model.Measurement{{Name: "target_pod", Value: target}, {Name: "target_ready", Value: strconv.FormatBool(!unready)}}, lifecycleDeadlineMeasurements(deadlineReached)...)
 	if !unready {
-		return lifecycleFailure(id, title, "runtime."+id, "The pod remained Kubernetes-ready after the controlled unready transition.", "Make readinessProbe reflect the application's readiness state.", 0, trafficObservation{}, nil)
+		failure := lifecycleFailure(id, title, "runtime."+id, "The controlled target was still Kubernetes-ready in the final observation; no unready transition was observed before the deadline.", "Make readinessProbe reflect the application's readiness state.", 0, trafficObservation{}, transitionMeasurements)
+		failure.Finding.Observed = "The selected target was observed Ready after acknowledging the unready control request."
+		failure.Finding.Expected = "The selected target is observed Kubernetes-unready before the deadline."
+		return failure
+	}
+	if deadlineReached {
+		return lifecycleCompletionUnobserved(id, title, "readiness_transition_unobserved", "The target was observed unready only after the deadline; timely readiness gating was not established.", 0, trafficObservation{}, transitionMeasurements)
 	}
 	// Allow bounded EndpointSlice/kube-proxy propagation, then require a sustained
 	// sample with no traffic to the unready pod. A broken readiness fixture fails
@@ -167,12 +181,21 @@ func (s *Service) runReadinessGating(ctx context.Context, client *kubernetes.Cli
 	}
 	for ctx.Err() == nil {
 		sample, e := serviceIdentity(ctx, endpoint.String())
-		if e == nil && sample.Pod == target {
+		if e != nil {
+			return controlError(id, title, "Service identity traffic could not be observed after readiness restoration.")
+		}
+		if ctx.Err() != nil {
+			return controlError(id, title, "Service routing completion was not observed before the readiness-gating deadline.")
+		}
+		if sample.Pod == target {
 			return lifecycleSuccess(id, title, "runtime."+id, "Service routing excluded the unready pod and resumed after readiness was restored.", 0, "controlled readiness transition", measurements)
 		}
 		if !pause(ctx, s.poll) {
 			break
 		}
+	}
+	if parent.Err() != nil {
+		return controlError(id, title, "Readiness gating was interrupted.")
 	}
 	return lifecycleFailure(id, title, "runtime."+id, "Service routing did not resume to the restored pod before the deadline.", "Inspect readiness recovery and Service routing.", 0, trafficObservation{}, measurements)
 }
@@ -185,8 +208,11 @@ func (s *Service) runInFlightShutdown(ctx context.Context, client *kubernetes.Cl
 	if base == "" {
 		return controlledSkip(id, title)
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.recoveryTimeout)
+	parent := ctx
+	ctx, cancel := context.WithTimeout(parent, s.recoveryTimeout)
 	defer cancel()
+	observation := lifecycleObservation{parent: parent, experiment: ctx}
+	defer observation.close()
 	pods, result, err := client.ObservePods(ctx, current.clusterName, namespace, "app.kubernetes.io/name="+current.workloadName)
 	if err != nil || failed(result) {
 		return controlError(id, title, "Could not inspect pods before the targeted request.")
@@ -284,17 +310,42 @@ func (s *Service) runInFlightShutdown(ctx context.Context, client *kubernetes.Cl
 		return controlError(id, title, "Request completed, but the application did not acknowledge SIGTERM while that request was active.")
 	}
 	measurements = append(measurements, model.Measurement{Name: "sigterm_received", Value: "true"})
-	// Restore the requested replica count before the next experiment.
-	for ctx.Err() == nil {
-		ready, total, _, res, e := client.ReadyPods(ctx, current.clusterName, namespace, "app.kubernetes.io/name="+current.workloadName)
-		if e == nil && !failed(res) && ready == int(current.desiredReplicas) && total == ready {
+	unobservableRecovery := func(message string) recoveryOutcome {
+		failure := controlError(id, title, message)
+		failure.Evidence.Measurements = measurements
+		return failure
+	}
+	// Observe recovery within the requirement deadline; a final bounded read can
+	// distinguish an unmet requirement from unavailable observation, never extend
+	// the time allowed for this experiment to pass.
+	for {
+		if parent.Err() != nil {
+			return unobservableRecovery("Targeted shutdown recovery was interrupted.")
+		}
+		pods, res, expired, e := observation.pods(client, current, "app.kubernetes.io/name="+current.workloadName)
+		if parent.Err() != nil {
+			return unobservableRecovery("Targeted shutdown recovery was interrupted.")
+		}
+		if e != nil || failed(res) {
+			return unobservableRecovery("Replica recovery could not be observed after the targeted request completed.")
+		}
+		ready, total, _ := summarizePods(pods)
+		if ready == int(current.desiredReplicas) && total == ready && !expired {
 			return lifecycleSuccess(id, title, "runtime."+id, "The identified request remained active at SIGTERM, completed on the targeted pod, and replicas recovered.", 0, "targeted request completed", measurements)
 		}
-		if !pause(ctx, s.poll) {
-			break
+		if expired {
+			measurements = append(measurements, model.Measurement{Name: "ready_pods", Value: strconv.Itoa(ready)}, model.Measurement{Name: "total_pods", Value: strconv.Itoa(total)}, model.Measurement{Name: "expected_replicas", Value: strconv.Itoa(int(current.desiredReplicas))})
+			measurements = append(measurements, lifecycleDeadlineMeasurements(true)...)
+			if ready == int(current.desiredReplicas) && total == ready {
+				return lifecycleCompletionUnobserved(id, title, "targeted_recovery_completion_unobserved", "Replicas were observed recovered only after the deadline; timely recovery was not established.", 0, trafficObservation{}, measurements)
+			}
+			failure := lifecycleFailure(id, title, "runtime."+id, "The targeted request completed, but the final observed replicas did not meet the recovery requirement.", "Inspect application readiness and replica replacement within the configured recovery deadline.", 0, trafficObservation{}, measurements)
+			failure.Finding.Observed = fmt.Sprintf("The targeted request completed; final ready replicas %d/%d, total pods %d.", ready, current.desiredReplicas, total)
+			failure.Finding.Expected = "The targeted request completes and the requested replicas recover before the deadline."
+			return failure
 		}
+		pause(ctx, s.poll)
 	}
-	return controlError(id, title, "Replicas did not recover after the targeted shutdown experiment.")
 }
 
 func pause(ctx context.Context, duration time.Duration) bool {

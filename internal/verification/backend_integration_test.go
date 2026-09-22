@@ -40,6 +40,7 @@ type backendIntegrationRunner struct {
 	applicationEnv []corev1.EnvVar
 	cleanupErrors  []error
 	providers      map[string]bool
+	images         map[string]bool
 }
 
 func (r *backendIntegrationRunner) Run(ctx context.Context, request command.Request) model.CommandResult {
@@ -48,10 +49,18 @@ func (r *backendIntegrationRunner) Run(ctx context.Context, request command.Requ
 	r.calls = append(r.calls, request)
 	result := successfulCommand(request)
 	if request.Name == "docker" && containsArgument(request.Args, "build") {
+		if r.images == nil {
+			r.images = map[string]bool{}
+		}
+		for index, arg := range request.Args {
+			if arg == "--tag" && index+1 < len(request.Args) {
+				r.images[request.Args[index+1]] = true
+			}
+		}
 		if containsArgument(request.Args, "CLOUDFORGE_VERSION=b") {
 			r.events = append(r.events, "build-b")
 			if r.mode == "preparation-failure" {
-				return model.CommandResult{Command: "docker", FailureType: model.FailureExit, ExitCode: 1, Stderr: "private-build-failure-marker"}
+				return model.CommandResult{Command: "docker", FailureType: model.FailureExit, ExitCode: 1, Stderr: "process /bin/sh -c private-build-failure-marker did not complete successfully: exit code: 1"}
 			}
 		} else {
 			r.events = append(r.events, "build-a")
@@ -61,8 +70,16 @@ func (r *backendIntegrationRunner) Run(ctx context.Context, request command.Requ
 		r.events = append(r.events, "builder-stop")
 		r.cleanupErrors = append(r.cleanupErrors, ctx.Err())
 	}
-	if request.Name == "docker" && containsArgument(request.Args, "inspect") && containsArgument(request.Args, "image") {
+	if request.Name == "docker" && strings.Contains(strings.Join(request.Args, " "), ".RepoDigests") {
 		result.Stdout = `"sha256:` + strings.Repeat("a", 64) + `" []`
+	}
+	if request.Name == "docker" && len(request.Args) > 1 && request.Args[0] == "image" && request.Args[1] == "inspect" && strings.Contains(strings.Join(request.Args, " "), "cloudforge.dev/ownership") && r.images[request.Args[len(request.Args)-1]] {
+		result.ExitCode, result.FailureType, result.Stderr = 0, model.FailureNone, ""
+		letter := "a"
+		if strings.HasSuffix(request.Args[len(request.Args)-1], "-b") {
+			letter = "b"
+		}
+		result.Stdout = `"sha256:` + strings.Repeat(letter, 64) + `" true`
 	}
 	if request.Name == "k3d" && containsArgument(request.Args, "create") {
 		r.events = append(r.events, "cluster-create")
@@ -72,6 +89,15 @@ func (r *backendIntegrationRunner) Run(ctx context.Context, request command.Requ
 		r.cleanupErrors = append(r.cleanupErrors, ctx.Err())
 	}
 	if request.Name == "docker" && containsArgument(request.Args, "image") && containsArgument(request.Args, "rm") {
+		for name := range r.images {
+			letter := "a"
+			if strings.HasSuffix(name, "-b") {
+				letter = "b"
+			}
+			if request.Args[len(request.Args)-1] == "sha256:"+strings.Repeat(letter, 64) {
+				r.images[name] = false
+			}
+		}
 		r.events = append(r.events, "image-cleanup")
 		r.cleanupErrors = append(r.cleanupErrors, ctx.Err())
 	}
@@ -345,7 +371,7 @@ func TestBackendBaselineRequiresEveryEnabledProvider(t *testing.T) {
 						result.Stdout = "ClamAV 1.5.4/28001/Mon Sep 21 09:00:00 2026"
 					}
 				case containsArgument(request.Args, "pods"):
-					result.Stdout = fmt.Sprintf(`{"items":[{"metadata":{"ownerReferences":[{"kind":"ReplicaSet","uid":"rs","controller":true}]},"spec":{"containers":[{"image":%q}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}},{"metadata":{"ownerReferences":[{"kind":"ReplicaSet","uid":"rs","controller":true}]},"spec":{"containers":[{"image":%q}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`, current.image, current.image)
+					result.Stdout = fmt.Sprintf(`{"items":[{"metadata":{"name":"observed-pod","ownerReferences":[{"kind":"ReplicaSet","uid":"rs","controller":true}]},"spec":{"containers":[{"image":%q}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}},{"metadata":{"name":"observed-pod","ownerReferences":[{"kind":"ReplicaSet","uid":"rs","controller":true}]},"spec":{"containers":[{"image":%q}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`, current.image, current.image)
 					for _, name := range enabledProviders(current.config) {
 						if containsArgument(request.Args, "cloudforge.dev/dependency="+name) {
 							seen[name] = true

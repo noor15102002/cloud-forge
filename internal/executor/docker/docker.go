@@ -16,9 +16,17 @@ import (
 
 // Client builds application images through the Docker CLI.
 type Client struct {
-	runner           command.Runner
-	builder          string
-	builderOwnership *builderOwnership
+	runner            command.Runner
+	builder           string
+	ownershipToken    string
+	builderOwnership  *builderOwnership
+	clusterPrepared   string
+	clusterCreated    bool
+	clusterProven     bool
+	clusterNetworkID  string
+	clusterVolumeName string
+	clusterResources  map[string]string
+	attemptedImages   map[string]bool
 }
 
 // New creates a Docker CLI adapter.
@@ -53,11 +61,25 @@ func (c *Client) BuildSelected(ctx context.Context, root, image, version string,
 		build = &resolved
 		buildContext = "./" + build.Context
 	}
+	if c.builder != "" {
+		if result := c.prepareImage(ctx, image); builderCleanupFailed(result) {
+			return result
+		}
+		if c.attemptedImages == nil {
+			c.attemptedImages = map[string]bool{}
+		}
+		c.attemptedImages[image] = true
+	}
 	args := []string{"build"}
 	if c.builder != "" {
-		args = []string{"buildx", "build", "--builder", c.builder, "--load", "--provenance=false", "--label", "cloudforge.dev/run-id=" + c.builder}
+		args = []string{"buildx", "build", "--builder", c.builder, "--load", "--provenance=false", "--label", "cloudforge.dev/run-id=" + c.builder, "--label", "cloudforge.dev/ownership=" + c.ownershipToken}
 	}
 	if version != "" {
+		if c.builder != "" {
+			// Distinct image configuration keeps same-source A/B builds independently
+			// removable even when the Dockerfile ignores the public build argument.
+			args = append(args, "--label", "cloudforge.dev/build-version="+version)
+		}
 		args = append(args, "--build-arg", "CLOUDFORGE_VERSION="+version)
 	}
 	if build != nil {
@@ -68,20 +90,6 @@ func (c *Client) BuildSelected(ctx context.Context, root, image, version string,
 		Name: "docker", Args: args, Dir: root,
 		Timeout: 10 * time.Minute, OutputLimit: 256 * 1024,
 	})
-}
-
-// RemoveImage removes the uniquely tagged image created for a verification run.
-func (c *Client) RemoveImage(ctx context.Context, image string) model.CommandResult {
-	result := c.runner.Run(ctx, command.Request{
-		Name: "docker", Args: []string{"image", "rm", "--force", image},
-		Timeout: time.Minute, OutputLimit: 128 * 1024,
-	})
-	output := strings.ToLower(result.Stdout + " " + result.Stderr)
-	if strings.Contains(output, "no such image") || strings.Contains(output, "image does not exist") {
-		result.ExitCode = 0
-		result.FailureType = model.FailureNone
-	}
-	return result
 }
 
 // PublishedPort returns Docker's dynamically selected loopback port for a k3d load balancer.

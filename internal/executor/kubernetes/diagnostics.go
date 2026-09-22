@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
+	"github.com/noor15102002/cloud-forge/internal/jsoninput"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -61,12 +62,30 @@ func (c *Client) NodeProblems(ctx context.Context, cluster string) ([]string, mo
 	if result.FailureType != model.FailureNone || result.ExitCode != 0 {
 		return nil, result, nil
 	}
+	if result.Truncated {
+		return nil, result, fmt.Errorf("node condition observation was truncated")
+	}
+	if err := jsoninput.Validate([]byte(result.Stdout)); err != nil {
+		return nil, result, fmt.Errorf("node observation was not complete unambiguous JSON")
+	}
 	var nodes corev1.NodeList
 	if err := json.Unmarshal([]byte(result.Stdout), &nodes); err != nil {
 		return nil, result, fmt.Errorf("decode node conditions: %w", err)
 	}
+	if len(nodes.Items) == 0 {
+		return nil, result, fmt.Errorf("node conditions were not observed")
+	}
 	set := map[string]bool{}
 	for _, node := range nodes.Items {
+		readyObserved := false
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady {
+				readyObserved = true
+			}
+		}
+		if !readyObserved {
+			return nil, result, fmt.Errorf("node Ready condition was not observed")
+		}
 		for _, condition := range node.Status.Conditions {
 			if condition.Type == corev1.NodeReady && condition.Status != corev1.ConditionTrue {
 				set["node_not_ready"] = true

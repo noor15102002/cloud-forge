@@ -323,7 +323,7 @@ func TestBaselineRequiresImageRevisionReplicasAndReadyPods(t *testing.T) {
 						r.Stdout = strings.ReplaceAll(r.Stdout, `"2"`, `"1"`)
 					}
 				case containsArgument(req.Args, "pods"):
-					r.Stdout = `{"items":[{"metadata":{"ownerReferences":[{"kind":"ReplicaSet","uid":"rs","controller":true}]},"spec":{"containers":[{"image":"image-a"}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
+					r.Stdout = `{"items":[{"metadata":{"name":"observed-pod","ownerReferences":[{"kind":"ReplicaSet","uid":"rs","controller":true}]},"spec":{"containers":[{"image":"image-a"}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
 					if broken == "ready" {
 						r.Stdout = strings.ReplaceAll(r.Stdout, `"True"`, `"False"`)
 					}

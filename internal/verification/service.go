@@ -79,6 +79,7 @@ type Service struct {
 	hpaMetricsTimeout     time.Duration
 	hpaScaleTimeout       time.Duration
 	cleanupTimeout        time.Duration
+	removeWorkspace       func(string) error
 	loadProfile           k6executor.Profile
 }
 
@@ -143,7 +144,11 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 	config.Build = analysis.Build
-	out.Run.Application = analysis.Application.Name
+	selectedApp := ""
+	if config.Build != nil {
+		selectedApp = config.Build.App
+	}
+	out.Run.Application = applicationIdentity(analysis.Application.Name, selectedApp, root)
 	out.Run.Findings = append(out.Run.Findings, verificationFindings(analysis.Findings, config)...)
 	out.Run.Diagnostics = append(out.Run.Diagnostics, analysis.Diagnostics...)
 	if !analysis.Supported {
@@ -207,7 +212,34 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addError("workspace_failed", "CloudForge could not create its temporary workspace.", err.Error())
 		return out
 	}
-	defer func() { _ = os.RemoveAll(temporary) }()
+	var cleanupStarted time.Time
+	defer func() {
+		status, summary := model.StatusPass, "Owned temporary resources and the private workspace were verified absent."
+		if out.Run.Environment.Kept {
+			status, summary = model.StatusSkipped, "The disposable cluster was retained by explicit request; other owned temporary resources and the private workspace were cleaned."
+		}
+		for _, diagnostic := range out.Run.Diagnostics {
+			if diagnostic.Status == model.StatusError && strings.Contains(diagnostic.Code, "cleanup") {
+				status, summary = model.StatusError, "Removal of all owned temporary resources could not be established; inspect the cleanup diagnostics."
+				break
+			}
+		}
+		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{ExperimentID: "environment-cleanup", Title: "Environment cleanup", Status: status, Summary: summary, DurationMS: elapsedMilliseconds(time.Since(cleanupStarted)), Execution: &model.ExperimentExecution{Executed: true}})
+	}()
+	defer func() {
+		if cleanupStarted.IsZero() {
+			cleanupStarted = time.Now()
+		}
+		remove := s.removeWorkspace
+		if remove == nil {
+			remove = os.RemoveAll
+		}
+		if err := remove(temporary); err != nil {
+			out.addError("workspace_cleanup_failed", "CloudForge could not remove its private temporary workspace.", "Remove the private workspace after inspecting local filesystem permissions; generated credentials may remain at "+temporary+".")
+		} else if _, err := os.Lstat(temporary); !os.IsNotExist(err) {
+			out.addError("workspace_cleanup_failed", "CloudForge could not establish removal of its private temporary workspace.", "Inspect and remove the private workspace; generated credentials may remain at "+temporary+".")
+		}
+	}()
 	manifestPath := filepath.Join(temporary, "workload.yaml")
 	if err := os.WriteFile(manifestPath, plan.manifest, 0o600); err != nil {
 		out.addError("manifest_write_failed", "CloudForge could not write the generated manifest.", err.Error())
@@ -233,6 +265,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	dockerClient.IsolateBuild(plan.clusterName)
 	builderAttempted := false
 	k3dClient := k3d.New(scoped)
+	k3dClient.SetOwnership(dockerClient.OwnershipToken())
 	kubernetesClient := kubernetes.New(scoped)
 	clusterAttempted := false
 	clusterCreated := false
@@ -240,11 +273,14 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	defer func() {
 		if options.KeepEnvironment && clusterCreated {
 			out.Run.Environment.Kept = true
-		} else if clusterAttempted {
+		} else if clusterCreated {
 			result := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult {
+				if proof := dockerClient.VerifyClusterOwnership(cleanupCtx, plan.clusterName); cleanupFailed(proof) {
+					return proof
+				}
 				return k3dClient.Delete(cleanupCtx, plan.clusterName)
 			})
-			if failed(result) {
+			if cleanupFailed(result) {
 				out.Run.Status = model.StatusError
 				out.ExitCode = 2
 				out.addCommandDiagnostic("cluster_cleanup_failed", "CloudForge could not remove its k3d cluster.", result)
@@ -255,8 +291,8 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 				result := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult {
 					return dockerClient.RemoveClusterRemnants(cleanupCtx, plan.clusterName, kind)
 				})
-				if failed(result) {
-					out.addError("cluster_remnant_cleanup_failed", "CloudForge could not remove a run-owned cluster remnant.", commandGuidance(result, nil))
+				if cleanupFailed(result) {
+					out.addError("cluster_remnant_cleanup_failed", "CloudForge could not establish removal of its run-owned cluster resources.", "Cleanup requires a complete Docker inventory and matching invocation ownership; inspect the remaining local resources before retrying.")
 				}
 			}
 		}
@@ -264,7 +300,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 			result := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult {
 				return dockerClient.RemoveBuilderRemnants(cleanupCtx)
 			})
-			if failed(result) {
+			if cleanupFailed(result) {
 				out.addError("builder_remnant_cleanup_failed", "CloudForge could not verify removal of its owned builder remnants.", commandGuidance(result, nil))
 			}
 		}
@@ -272,27 +308,40 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 			imageResult := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult {
 				return dockerClient.RemoveImage(cleanupCtx, image)
 			})
-			if failed(imageResult) {
+			if cleanupFailed(imageResult) {
 				out.Run.Status = model.StatusError
 				out.ExitCode = 2
-				out.addCommandDiagnostic("image_cleanup_failed", "CloudForge could not remove a temporary Docker image.", imageResult)
+				out.addCommandDiagnostic("image_cleanup_failed", "CloudForge could not establish removal of a temporary Docker image.", imageResult)
+			}
+		}
+		if len(imagesToCleanup) > 0 {
+			result := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult {
+				return dockerClient.RemoveOwnedImages(cleanupCtx)
+			})
+			if cleanupFailed(result) {
+				out.addError("image_cleanup_failed", "CloudForge could not establish removal of all owned temporary image objects.", "A complete Docker image inventory and matching invocation ownership are required, including untagged images.")
 			}
 		}
 	}()
 
 	defer func() {
+		cleanupStarted = time.Now()
 		if builderAttempted {
 			result := s.cleanupCommand(func(cleanupCtx context.Context) model.CommandResult { return dockerClient.RemoveBuilder(cleanupCtx) })
-			if failed(result) {
+			if cleanupFailed(result) {
 				out.addError("builder_cleanup_failed", "CloudForge could not remove its owned builder.", commandGuidance(result, nil))
 			}
 		}
 	}()
-	builderAttempted = true
-	if result := dockerClient.CreateBuilder(ctx); failed(result) {
+	if result := dockerClient.PrepareBuild(ctx, plan.image, plan.rolloutImage); cleanupFailed(result) {
+		out.addError("resource_ownership_unavailable", "CloudForge could not establish unused names for its temporary build resources.", "Existing resources were preserved; inspect the local Docker resource inventory and retry with a new run.")
+		return out
+	}
+	if result := dockerClient.CreateBuilder(ctx); cleanupFailed(result) {
 		out.addCommandDiagnostic("builder_create_failed", "CloudForge could not create its bounded build environment.", result)
 		return out
 	}
+	builderAttempted = true
 	buildResult := dockerClient.BuildSelected(ctx, root, plan.image, "a", plan.config.Build)
 	buildStatus := model.StatusPass
 	buildSummary := "Container image built successfully."
@@ -334,13 +383,19 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 
 	fingerprintImage(ctx, scoped, plan.image, out.Run.Fingerprint)
 	trivyClient := trivy.New(scoped)
-	scan, scanErr := trivyClient.ScanImage(ctx, plan.image)
-	if scanErr != nil {
-		out.addError("trivy_output_invalid", "CloudForge could not parse Trivy's JSON report.", scanErr.Error())
-		return out
-	}
-	if failed(scan.Command) {
-		out.addCommandDiagnostic("trivy_scan_failed", "Trivy could not scan the application image.", scan.Command)
+	scan, scanErr := trivyClient.ScanImage(ctx, plan.image, out.Run.Fingerprint.ImageID)
+	if scanErr != nil || failed(scan.Command) {
+		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{
+			ExperimentID: "container-scan", Title: "Container vulnerability scan (image A)", Status: model.StatusError,
+			Summary:    "The image A vulnerability observation was unusable; no finding count is established.",
+			DurationMS: scan.Command.DurationMS,
+			Execution:  &model.ExperimentExecution{Executed: scan.Started},
+		})
+		if scanErr != nil {
+			out.addError("trivy_output_invalid", "CloudForge could not establish a valid image A vulnerability observation.", scanErr.Error())
+		} else {
+			out.addCommandDiagnostic("trivy_scan_failed", "Trivy could not scan the application image reliably.", scan.Command)
+		}
 		return out
 	}
 	out.Run.Findings = append(out.Run.Findings, scan.Findings...)
@@ -349,9 +404,9 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		scanStatus = model.StatusWarn
 	}
 	out.Run.Evidence = append(out.Run.Evidence, model.Evidence{
-		ExperimentID: "container-scan", Title: "Container vulnerability scan", Status: scanStatus,
+		ExperimentID: "container-scan", Title: "Container vulnerability scan (image A)", Status: scanStatus,
 		Summary: scanSummary(scan.Findings), DurationMS: scan.Command.DurationMS,
-		Measurements: []model.Measurement{{Name: "vulnerabilities", Value: strconv.Itoa(countVulnerabilities(scan.Findings)), Unit: "findings"}},
+		Measurements: scan.Measurements,
 	})
 
 	var prebuiltRollout *model.CommandResult
@@ -372,17 +427,21 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		if ctx.Err() != nil {
 			return out
 		}
-		if cleanup := dockerClient.RemoveBuilder(ctx); failed(cleanup) {
+		if cleanup := dockerClient.RemoveBuilder(ctx); cleanupFailed(cleanup) {
 			out.addCommandDiagnostic("builder_cleanup_failed", "The bounded builder could not be stopped before starting backend resources.", cleanup)
 			return out
 		}
 		builderAttempted = false
 	} else if backendProfile(config) {
-		if cleanup := dockerClient.RemoveBuilder(ctx); failed(cleanup) {
+		if cleanup := dockerClient.RemoveBuilder(ctx); cleanupFailed(cleanup) {
 			out.addCommandDiagnostic("builder_cleanup_failed", "The bounded builder could not be stopped before starting backend resources.", cleanup)
 			return out
 		}
 		builderAttempted = false
+	}
+	if result := dockerClient.PrepareCluster(ctx, plan.clusterName); cleanupFailed(result) {
+		out.addError("resource_ownership_unavailable", "CloudForge could not establish unused names for its disposable cluster.", "Existing resources were preserved; inspect the local Docker resource inventory and retry with a new run.")
+		return out
 	}
 	clusterAttempted = true
 	publishedNodePort := nodePort
@@ -394,6 +453,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 	clusterCreated = true
+	dockerClient.ClusterCreated()
 	credentials := k3dClient.Kubeconfig(ctx, plan.clusterName)
 	if failed(credentials) || credentials.Truncated {
 		out.addError("kubeconfig_failed", "CloudForge could not obtain its private kubeconfig.", "Inspect the disposable cluster and retry.")
@@ -486,6 +546,8 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 				{Name: "failed_startup_requests", Value: strconv.Itoa(httpResult.Failures), Unit: "requests"},
 			},
 		})
+		index := len(out.Run.Evidence) - 1
+		out.Run.Evidence[index].Measurements = append(out.Run.Evidence[index].Measurements, httpResult.diagnostics()...)
 		if acceptance != nil {
 			evidence := acceptance.evidence(httpResult.DurationMS)
 			if !httpResult.Success {
@@ -519,6 +581,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		readinessSummary = "The readiness endpoint did not satisfy the configured HTTP readiness contract."
 	}
 	if podErr != nil || failed(podResult) {
+		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{ExperimentID: "deployment-readiness", Title: "Deployment readiness", Status: model.StatusError, Summary: "Pod state could not be observed reliably.", Measurements: httpResult.diagnostics()})
 		blockUnobservedReadiness(&out, "Pod state could not be observed reliably.")
 		out.addError("pod_observation_failed", "CloudForge could not decode the deployed pod state.", commandGuidance(podResult, podErr))
 		return out
@@ -530,6 +593,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		{Name: "readiness_duration_ms", Value: strconv.FormatInt(waitResult.DurationMS, 10), Unit: "ms"},
 	}
 	readinessMeasurements = append(readinessMeasurements, podTerminationMeasurements(pods)...)
+	readinessMeasurements = append(readinessMeasurements, httpResult.diagnostics()...)
 	if plan.readinessURL != "" {
 		readinessMeasurements = append(readinessMeasurements,
 			model.Measurement{Name: "startup_duration_ms", Value: strconv.FormatInt(httpResult.DurationMS, 10), Unit: "ms"},
@@ -574,7 +638,15 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 			return out
 		}
 		problems, nodeResult, nodeErr := kubernetesClient.NodeProblems(ctx, plan.clusterName)
-		if nodeErr == nil && !failed(nodeResult) && len(problems) > 0 {
+		if nodeErr != nil || failed(nodeResult) || nodeResult.Truncated {
+			index := len(out.Run.Evidence) - 1
+			out.Run.Evidence[index].Status = model.StatusError
+			out.Run.Evidence[index].Summary = "The test node health could not be observed reliably; application startup could not be assessed."
+			blockUnobservedReadiness(&out, "Test node health was unobservable.")
+			out.addError("runtime_environment_unobserved", out.Run.Evidence[index].Summary, "Restore reliable node observation before attributing the unmet startup requirement to the application.")
+			return out
+		}
+		if len(problems) > 0 {
 			index := len(out.Run.Evidence) - 1
 			out.Run.Evidence[index].Status = model.StatusError
 			out.Run.Evidence[index].Summary = "The test node was unhealthy; application startup could not be assessed reliably."
@@ -590,19 +662,11 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		})
 		out.Run.Status = model.StatusFail
 		out.ExitCode = 1
-		if failed(waitResult) {
-			out.addCommandDiagnostic("readiness_failed", readinessSummary, waitResult)
-		} else if plan.readinessURL != "" && !httpResult.Success {
-			out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
-				Code: "readiness_http_failed", Status: model.StatusFail, Message: readinessSummary,
-				Guidance: fmt.Sprintf("Observed HTTP status %d after %d attempts; verify the readiness path and Service port.", httpResult.Status, httpResult.Attempts),
-			})
-		} else {
-			out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
-				Code: "readiness_failed", Status: model.StatusFail, Message: readinessSummary,
-				Guidance: fmt.Sprintf("Requested %d replicas; observed %d ready of %d total pods.", plan.desiredReplicas, ready, total),
-			})
-		}
+		out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{
+			Code: "readiness_failed", Status: model.StatusFail,
+			Message:  startupFailureSummary(ready, int(plan.desiredReplicas), restarts, s.readinessTimeout, pods),
+			Guidance: "Root cause is not established by retained evidence. Inspect bounded private startup diagnostics and the declared test configuration; generated limits are not application sizing measurements.",
+		})
 		return out
 	}
 
@@ -1125,7 +1189,7 @@ func resolveRoot(path string) (string, error) {
 }
 
 func randomID() (string, error) {
-	value := make([]byte, 4)
+	value := make([]byte, 16)
 	if _, err := rand.Read(value); err != nil {
 		return "", err
 	}
@@ -1212,14 +1276,6 @@ func diagnosticPath(source *model.SourceReference) string {
 	return source.Path
 }
 
-func isApplicationBuildFailure(result model.CommandResult) bool {
-	if result.FailureType != model.FailureNone && result.FailureType != model.FailureExit {
-		return false
-	}
-	output := strings.ToLower(result.Stdout + " " + result.Stderr)
-	return !isDockerDaemonFailure(output)
-}
-
 func isDockerDaemonFailure(output string) bool {
 	for _, fragment := range []string{
 		"cannot connect to the docker daemon",
@@ -1246,6 +1302,10 @@ func (s *Service) cleanupCommand(run func(context.Context) model.CommandResult) 
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return run(cleanupCtx)
+}
+
+func cleanupFailed(result model.CommandResult) bool {
+	return failed(result) || result.Truncated
 }
 
 func failed(result model.CommandResult) bool {
@@ -1323,9 +1383,9 @@ func countVulnerabilities(values []model.Finding) int {
 func scanSummary(values []model.Finding) string {
 	count := countVulnerabilities(values)
 	if count == 0 {
-		return "Trivy detected no known vulnerabilities."
+		return "Trivy reported zero normalized vulnerability findings in scanned image A."
 	}
-	return fmt.Sprintf("Trivy detected %d known vulnerabilities.", count)
+	return fmt.Sprintf("Trivy reported %d normalized vulnerability findings in scanned image A.", count)
 }
 
 func outcomeForFindings(values []model.Finding) (model.Status, int) {

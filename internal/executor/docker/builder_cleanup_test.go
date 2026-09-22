@@ -150,13 +150,14 @@ func TestBuilderRunMarkerUsesSupportedDriverOptionWithoutChangingLimits(t *testi
 	calls := 0
 	c := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		calls++
-		want := "memory=2g,cpu-period=100000,cpu-quota=200000,env.CLOUDFORGE_RUN_ID=" + cleanupBuilderName
+		want := "memory=2g,cpu-period=100000,cpu-quota=200000,env.CLOUDFORGE_RUN_ID=" + cleanupBuilderName + ",env.CLOUDFORGE_OWNER_ID=" + strings.Repeat("d", 32)
 		if !slices.Equal(request.Args, []string{"buildx", "create", "--name", cleanupBuilderName, "--driver", "docker-container", "--driver-opt", want}) || request.Timeout != time.Minute {
 			t.Fatalf("unexpected create request: %+v", request)
 		}
 		return model.CommandResult{}
 	}))
 	c.IsolateBuild(cleanupBuilderName)
+	c.ownershipToken = strings.Repeat("d", 32)
 	if result := c.CreateBuilder(context.Background()); builderCleanupFailed(result) {
 		t.Fatal(result)
 	}
@@ -175,7 +176,7 @@ func TestBuilderOwnershipFormatOmitsEnvironmentAndUnrelatedMounts(t *testing.T) 
 		}
 		data := map[string]any{
 			"Id": strings.Repeat("a", 64), "Name": "/buildx_buildkit_" + cleanupBuilderName + "0",
-			"Config": map[string]any{"Env": []string{"PRIVATE_TOKEN=secret-canary", "CLOUDFORGE_RUN_ID=" + cleanupBuilderName}},
+			"Config": map[string]any{"Env": []string{"PRIVATE_TOKEN=secret-canary", "CLOUDFORGE_RUN_ID=" + cleanupBuilderName, "CLOUDFORGE_OWNER_ID=" + strings.Repeat("d", 32)}},
 			"Mounts": []map[string]string{{"Type": "volume", "Name": "buildx_buildkit_" + cleanupBuilderName + "0_state", "Destination": "/var/lib/buildkit"}, {"Type": "bind", "Name": "unrelated-private-path", "Destination": "/unrelated"}},
 		}
 		var output bytes.Buffer
@@ -188,6 +189,7 @@ func TestBuilderOwnershipFormatOmitsEnvironmentAndUnrelatedMounts(t *testing.T) 
 		return model.CommandResult{Stdout: output.String()}
 	}))
 	c.IsolateBuild(cleanupBuilderName)
+	c.ownershipToken = strings.Repeat("d", 32)
 	proof, exists, result := c.inspectBuilderContainer(context.Background(), c.builderContainerName())
 	if !exists || builderCleanupFailed(result) || proof.containerID != strings.Repeat("a", 64) {
 		t.Fatalf("allowlisted inspect did not establish ownership: %+v %v %+v", proof, exists, result)

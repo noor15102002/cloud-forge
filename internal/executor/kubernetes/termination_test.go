@@ -63,7 +63,7 @@ func TestObservePodsTerminationBoundsAndUnknowns(t *testing.T) {
 		{name: "upper-bound", fields: `,"exitCode":255,"signal":64`, exit: int32Pointer(255), signal: int32Pointer(64)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			raw := fmt.Sprintf(`{"items":[{"status":{"containerStatuses":[{"name":"application","state":{"terminated":{"reason":"custom-private-reason","message":"private-message"%s}}}]}}]}`, tc.fields)
+			raw := fmt.Sprintf(`{"items":[{"metadata":{"name":"observed"},"status":{"containerStatuses":[{"name":"application","state":{"terminated":{"reason":"custom-private-reason","message":"private-message"%s}}}]}}]}`, tc.fields)
 			client := New(runnerFunc(func(context.Context, command.Request) model.CommandResult { return model.CommandResult{Stdout: raw} }))
 			pods, _, err := client.ObservePods(context.Background(), "test", "cloudforge", "app=api")
 			if err != nil || len(pods) != 1 || !pods[0].ApplicationStatusObserved {
@@ -91,14 +91,14 @@ func TestObservePodsTerminationIgnoresForeignAndAmbiguousContainers(t *testing.T
 		`[{"name":"application"},{"name":"application","lastState":{"terminated":{"reason":"OOMKilled","exitCode":137,"signal":9}}}]`,
 		`[]`,
 	} {
-		raw := `{"items":[{"status":{"initContainerStatuses":[{"name":"application","state":{"terminated":{"reason":"OOMKilled","exitCode":137}}}],"containerStatuses":` + statuses + `}}]}`
+		raw := `{"items":[{"metadata":{"name":"observed"},"status":{"initContainerStatuses":[{"name":"application","state":{"terminated":{"reason":"OOMKilled","exitCode":137}}}],"containerStatuses":` + statuses + `}}]}`
 		client := New(runnerFunc(func(context.Context, command.Request) model.CommandResult { return model.CommandResult{Stdout: raw} }))
 		pods, _, err := client.ObservePods(context.Background(), "test", "cloudforge", "app=api")
 		if err != nil || len(pods) != 1 || pods[0].ApplicationStatusObserved || pods[0].CurrentTermination != nil || pods[0].PreviousTermination != nil {
 			t.Fatalf("foreign or ambiguous status attributed to application: %+v %v", pods, err)
 		}
 	}
-	raw := `{"items":[{"status":{"containerStatuses":[{"name":"application","state":{"running":{}}},{"name":"foreign","state":{"terminated":{"reason":"OOMKilled","exitCode":137}}}]}}]}`
+	raw := `{"items":[{"metadata":{"name":"observed"},"status":{"containerStatuses":[{"name":"application","state":{"running":{}}},{"name":"foreign","state":{"terminated":{"reason":"OOMKilled","exitCode":137}}}]}}]}`
 	client := New(runnerFunc(func(context.Context, command.Request) model.CommandResult { return model.CommandResult{Stdout: raw} }))
 	pods, _, err := client.ObservePods(context.Background(), "test", "cloudforge", "app=api")
 	if err != nil || len(pods) != 1 || !pods[0].ApplicationStatusObserved || pods[0].CurrentTermination != nil || pods[0].PreviousTermination != nil {
