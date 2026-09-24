@@ -16,11 +16,15 @@ PostgreSQL/pgvector, preparation, ClamAV, workers, controlled tests, HPA and num
 regression grading remain experimental. See [release qualification](docs/releasing.md)
 for the candidate gate and retained evidence requirements.
 
-**First prerelease status: NO-GO pending qualification.** The latest completed
-development qualification passed 59 of 64 declared cases; it did not test an
-installed release archive. Remaining HTTP-core prerequisites and corrected
-fixtures are being checked separately from experimental HPA and worker results.
-No public binary has been released. See the [current project status](docs/project-status.md).
+**Archive qualification: GO for the bounded HTTP/Redis core; publication: NOT DONE.**
+The exact Linux/amd64 `v0.1.0-alpha.1` archive from merged commit
+`977d863e94722bc236201d2deb16a856def7dee2` passed
+[installed-archive qualification](https://github.com/noor15102002/cloud-forge/actions/runs/36044464022):
+44 declared contracts covering 63 native invocations, with their original verdicts
+preserved. No public binary has been released. See the
+[current project status](docs/project-status.md) for immutable checksums, retained
+earlier attempts and experimental exclusions. Qualification applies to that
+archive and commit, not later documentation revisions.
 
 ## Install the qualified prerelease
 
