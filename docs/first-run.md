@@ -1,10 +1,10 @@
 # First run: one HTTP service
 
-Use these installation commands only after the prerelease and its exact archive
-qualification record are public. A development candidate is not a published
-release, and an earlier archive's qualification does not transfer to changed
-bytes. For current release status, see
-[project status](project-status.md).
+Install the published [v0.1.0-alpha.1 prerelease](https://github.com/noor15102002/cloud-forge/releases/tag/v0.1.0-alpha.1) using
+the commands below. Its exact source commit is
+`90f1c3c1560d4360b8ec90806154f65ea3d3d5a0`; qualification applies to these archive
+bytes. See [project status](project-status.md) for the qualification and verified
+public-download hashes.
 
 This path exercises only the bounded HTTP core. It does not opt into HPA,
 controlled experiments, workers, backend preparation or numerical regression
@@ -18,6 +18,10 @@ Use Linux on amd64 with a local Docker Engine available to the current user at
 8 GiB the doctor reports a warning. The 4 GiB test cluster and 2 GiB build limits
 are bounded components, not a reservation or guarantee for total host use. Leave
 disk space and memory for image downloads and the host's other processes.
+Each image import can stage an archive of up to 4 GiB on the host and within the
+node, in addition to image/layer storage. Import uses the owned node's immutable
+ID, checks the exact image identity and cleans private staging after success,
+failure or cancellation; it does not retry a failed import transport.
 
 Remote Docker endpoints, Docker Desktop contexts, rootless/custom sockets and
 TLS-based Docker selection are outside this alpha's supported endpoint contract.
@@ -82,8 +86,9 @@ curl -fLO "$base/$archive"
 curl -fLO "$base/checksums.txt"
 curl -fLO "$base/release.json"
 sha256sum --check checksums.txt
+printf '%s  %s\n' 'f3220070f3c6e7f707914d257e37340b251eb68e475d051e9d9506fd70df1c6d' "$archive" | sha256sum --check
 tar -xzf "$archive" cloudforge
-python3 -c 'import hashlib,json,pathlib; m=json.load(open("release.json")); assert m["version"]=="v0.1.0-alpha.1" and m["os"]=="linux" and m["arch"]=="amd64"; assert hashlib.sha256(pathlib.Path("cloudforge").read_bytes()).hexdigest()==m["binary_sha256"]'
+python3 -c 'import hashlib,json,pathlib; m=json.load(open("release.json")); assert m["version"]=="v0.1.0-alpha.1" and m["os"]=="linux" and m["arch"]=="amd64" and m["commit"]=="90f1c3c1560d4360b8ec90806154f65ea3d3d5a0"; assert hashlib.sha256(pathlib.Path("cloudforge").read_bytes()).hexdigest()==m["binary_sha256"]=="bdcad6b55b8ae0d0c38cff7e3742cc2c95dff9d6de327e0a177a65b8c5c036d5"'
 install -Dm755 cloudforge "$HOME/.local/bin/cloudforge"
 export PATH="$HOME/.local/bin:$PATH"
 cloudforge version
