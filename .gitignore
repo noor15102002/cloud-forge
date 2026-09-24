@@ -7,3 +7,6 @@
 
 
 __pycache__/
+
+# Generated public qualification profiles are not verifier source.
+/.qualification-core/

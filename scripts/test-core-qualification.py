@@ -18,6 +18,27 @@ from core_fixture import (CONTROL, CORE_HEALTHY, EXPERIMENTAL, FIXTURES, ROOT, h
 
 
 class CoreProfileTests(unittest.TestCase):
+    def test_generated_profile_does_not_dirty_verifier_checkout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            checkout = root / "checkout"
+            checkout.mkdir()
+            (checkout / ".gitignore").write_bytes((ROOT / ".gitignore").read_bytes())
+            (checkout / "verifier.go").write_text("package verifier\n")
+            git = ["git", "-C", str(checkout)]
+            subprocess.run([*git, "init", "--quiet"], check=True)
+            subprocess.run([*git, "add", ".gitignore", "verifier.go"], check=True)
+            subprocess.run([*git, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                            "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Initial fixture"], check=True)
+            prepare("healthy-node", checkout / ".qualification-core/healthy-node", root / "profile.json")
+            self.assertEqual(subprocess.check_output([*git, "status", "--porcelain"], text=True), "")
+            (checkout / "verifier.go").write_text("package changed\n")
+            (checkout / "new-verifier.go").write_text("package changed\n")
+            status = subprocess.check_output([*git, "status", "--porcelain"], text=True)
+            self.assertIn("verifier.go", status)
+            self.assertIn("?? new-verifier.go", status)
+            self.assertNotIn(".qualification-core", status)
+
     def test_profiles_change_only_declared_configuration_and_are_repeatable(self):
         for name in sorted(FIXTURES):
             with self.subTest(fixture=name), tempfile.TemporaryDirectory() as temporary:
