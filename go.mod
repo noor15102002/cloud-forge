@@ -10,7 +10,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.1
 	github.com/yuin/goldmark v1.7.13
-	golang.org/x/net v0.55.0
+	golang.org/x/net v0.56.0
 	k8s.io/api v0.34.1
 	k8s.io/apimachinery v0.34.1
 	sigs.k8s.io/yaml v1.6.0

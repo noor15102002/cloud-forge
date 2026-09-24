@@ -18,6 +18,7 @@ import (
 // lifecycle for service tests. Custom runner failures and nonempty observations
 // remain authoritative; no fault is replaced by a successful default.
 func clusterProvisionFixture(inner command.Runner) command.Runner {
+	inner = importNodeFixture(inner)
 	var lock sync.Mutex
 	objects := map[string]map[string]any{}
 	return runnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {

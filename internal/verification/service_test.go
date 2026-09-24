@@ -909,6 +909,11 @@ func successRunner() command.Runner {
 
 func successfulCommand(request command.Request) model.CommandResult {
 	result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+	if request.StdoutFile != nil {
+		if err := os.WriteFile(request.StdoutFile.Path, []byte("test image archive"), 0o600); err != nil {
+			result.ExitCode, result.FailureType = -1, model.FailureExecution
+		}
+	}
 	if request.Name == "docker" && strings.Contains(strings.Join(request.Args, " "), ".RepoDigests") {
 		result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" []`
 	}

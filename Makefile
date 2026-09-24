@@ -46,6 +46,7 @@ actions:
 	python3 scripts/test-worker-heartbeat-observation.py
 	python3 scripts/test-pilot-cancellation.py
 	python3 scripts/test-pilot-reliability-import.py
+	python3 scripts/test-local-import-observer.py
 	actionlint
 
 external: build

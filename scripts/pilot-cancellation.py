@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import local_import_observer as local_import
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("bounded_command_evidence", REPOSITORY / "scripts/pilot-backend-cancellation.py")
@@ -99,18 +100,10 @@ def cleanup_operation(tool, arguments, owner):
     return None
 
 
-def validate_public_import(arguments, owner, stage, monorepo):
-    """Allow only the registered run's exact bundled image A/B tools-node import."""
-    if (stage not in STAGES or (monorepo and stage != "build")
-            or len(arguments) != 7 or arguments[:2] != ["image", "import"]
-            or arguments[3] != "--cluster" or arguments[5:] != ["--mode", "tools-node"]):
-        raise helpers.QualificationError("import_capture_requires_known_public_import")
-    if not isinstance(owner, str) or not RUN_NAME.fullmatch(owner) or arguments[4] != owner:
-        raise helpers.QualificationError("import_capture_requires_registered_owner")
-    name = "monorepo-http" if monorepo else "healthy-node-redis" if stage == "redis" else "healthy-node-api"
-    image = "cloudforge/" + name + ":" + owner.removeprefix("cloudforge-")
-    if arguments[2] not in (image + "-a", image + "-b"):
-        raise helpers.QualificationError("import_capture_refused_unrelated_image")
+def public_import_images(stage, monorepo):
+    if stage not in STAGES or (monorepo and stage != "build"):
+        raise helpers.QualificationError("import_capture_requires_known_public_fixture")
+    return ["monorepo-http" if monorepo else "healthy-node-redis" if stage == "redis" else "healthy-node-api"]
 
 
 def finish_signal(code):
@@ -210,11 +203,14 @@ def tool_wrapper(tool, arguments):
             raise helpers.QualificationError("cleanup_capture_multiple_run_names")
         owner = created
         helpers.write_json(owner_path, {"run_name": owner})
-    if tool == "k3d" and arguments[:2] == ["image", "import"]:
-        validate_public_import(arguments, owner, stage, monorepo)
+    handled, code = local_import.observe(tool, arguments, owner_path.with_name("local-import.json"), owner,
+                                        public_import_images(stage, monorepo), real, helpers, sys.stdout.buffer, sys.stderr.buffer)
+    if handled:
+        return finish_signal(code)
+    if tool == "docker" and local_import.is_import(arguments):
         return finish_signal(helpers.tee_command([real, *arguments], Path(os.environ[PREFIX + "IMPORT_OUTPUT"]),
                 stage, sys.stdout.buffer, sys.stderr.buffer, scope="bundled_public_cancellation_fixture_only",
-                tool=tool, name="k3d-import", native_timeout_seconds=180))
+                tool=tool, name="local-image-import", native_timeout_seconds=180))
     operation = cleanup_operation(tool, arguments, owner)
     if operation:
         output = Path(os.environ[PREFIX + "CLEANUP_OUTPUT"])
@@ -409,4 +405,7 @@ if __name__ == "__main__":
         sys.exit(main())
     except helpers.QualificationError as error:
         print(str(error), file=sys.stderr)
+        sys.exit(2)
+    except (ValueError, OSError, KeyError):
+        print("public fixture command observation could not be established", file=sys.stderr)
         sys.exit(2)

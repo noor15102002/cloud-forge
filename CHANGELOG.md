@@ -5,8 +5,12 @@ Versioning once releases begin.
 
 ## Unreleased — narrow prerelease hardening
 
-- Stage image imports through the owned k3d image volume, preserve importer
-  failures and require an exact Docker-to-CRI image identity match before use.
+- Update the networking dependency for GO-2026-5942; the affected DNS package
+  was outside CloudForge's imported/called code paths.
+
+- Import one bounded private image archive through the runtime's explicit local
+  importer; preserve failures, verify owned-node and exact image identities, and
+  remove staging files after success, failure or cancellation.
 - Continue independent Redis qualification cases only after confirmed cleanup;
   retain early execution errors and fail the complete qualification contract.
 - Isolate Trivy configuration, ignore rules, environment and cache; record the

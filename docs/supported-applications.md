@@ -39,5 +39,7 @@ dependencies produce BLOCKED. Use `cloudforge verify --plan` before executing co
 Start with [the HTTP-core first run](first-run.md) to avoid opting into experimental
 fixtures. Local runtime execution supports the default Unix Docker Engine socket;
 custom/rootless sockets, remote engines and Docker Desktop contexts are rejected.
+Image transfer accepts a maximum 4 GiB archive per image; larger images are outside
+the bounded runtime contract and fail before deployment.
 See [runtime configuration](runtime-configuration.md), [release qualification](releasing.md),
 [backend limits](backend-runtime.md) and [worker limits](worker-runtime.md).

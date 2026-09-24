@@ -13,6 +13,7 @@ import shutil
 import signal
 import stat
 import sys
+import local_import_observer as local_import
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = importlib.util.spec_from_file_location("bounded_import_evidence", ROOT / "scripts/pilot-backend-cancellation.py")
@@ -84,36 +85,30 @@ def created_run(arguments):
     return owner
 
 
-def validate_import(arguments, owner):
-    if (not isinstance(owner, str) or not RUN_NAME.fullmatch(owner) or len(arguments) != 7
-            or arguments[:2] != ["image", "import"] or arguments[3:5] != ["--cluster", owner]
-            or arguments[5:] != ["--mode", "tools-node"]):
-        raise helpers.QualificationError("import_observer_requires_registered_tools_node_import")
-    image = "cloudforge/healthy-node-api:" + owner.removeprefix("cloudforge-")
-    if arguments[2] not in (image + "-a", image + "-b"):
-        raise helpers.QualificationError("import_observer_refused_unrelated_image")
-
-
-def tool_wrapper(arguments):
+def tool_wrapper(tool, arguments):
     helpers.require_runner()
-    real = os.environ[PREFIX + "REAL_K3D"]
-    if arguments[:2] not in (["cluster", "create"], ["image", "import"]):
-        # In particular, no kubeconfig, cluster logs, or delete output is saved.
-        os.execv(real, [real, *arguments])
+    if tool not in ("docker", "k3d"):
+        raise helpers.QualificationError("import_observer_unknown_tool")
+    real = os.environ[PREFIX + "REAL_" + tool.upper()]
     fixture, case = Path(os.environ[PREFIX + "FIXTURE"]), os.environ[PREFIX + "CASE"]
     validate_fixture(fixture, case)
     owner_path = fixture.parent / "import-observer" / "owner.json"
     owner = json.loads(owner_path.read_text())["run_name"] if owner_path.exists() else None
-    if arguments[:2] == ["cluster", "create"]:
+    if tool == "k3d" and arguments[:2] == ["cluster", "create"]:
         created = created_run(arguments)
         if owner not in (None, created):
             raise helpers.QualificationError("import_observer_multiple_run_names")
-        helpers.write_json(owner_path, {"run_name": created})
+        owner = created
+        helpers.write_json(owner_path, {"run_name": owner})
+    handled, code = local_import.observe(tool, arguments, owner_path.with_name("local-import.json"), owner,
+                                        ["healthy-node-api"], real, helpers, sys.stdout.buffer, sys.stderr.buffer)
+    if not handled and tool == "docker" and local_import.is_import(arguments):
+        code = helpers.tee_command([real, *arguments], Path(os.environ[PREFIX + "OUTPUT"]), case,
+                                   sys.stdout.buffer, sys.stderr.buffer, tool="docker", name="local-image-import",
+                                   scope="bundled_public_topology_fixture_only", native_timeout_seconds=180)
+        handled = True
+    if not handled:
         os.execv(real, [real, *arguments])
-    validate_import(arguments, owner)
-    code = helpers.tee_command([real, *arguments], Path(os.environ[PREFIX + "OUTPUT"]), case,
-                               sys.stdout.buffer, sys.stderr.buffer,
-                               scope="bundled_public_topology_fixture_only", native_timeout_seconds=180)
     if code < 0:
         received = -code
         if received not in (signal.SIGKILL, signal.SIGSTOP):
@@ -126,24 +121,26 @@ def tool_wrapper(arguments):
 def observe_imports(fixture, case, output):
     fixture = fixture.absolute()
     validate_fixture(fixture, case)
-    real = shutil.which("k3d")
-    if real is None:
+    real = {tool: shutil.which(tool) for tool in ("k3d", "docker")}
+    if any(value is None for value in real.values()):
         # Preserve the product's own missing-tool diagnosis.
         yield {}
         return
     private = fixture.parent / "import-observer"
     private.mkdir(mode=0o700)
-    wrapper = private / "k3d"
-    wrapper.write_text("#!/usr/bin/env python3\nimport os,sys\nos.execv(sys.executable,[sys.executable," + repr(str(Path(__file__).resolve())) + ",*sys.argv[1:]])\n")
-    wrapper.chmod(0o700)
+    for tool in ("k3d", "docker"):
+        wrapper = private / tool
+        wrapper.write_text("#!/usr/bin/env python3\nimport os,sys\nos.execv(sys.executable,[sys.executable," + repr(str(Path(__file__).resolve())) + "," + repr(tool) + ",*sys.argv[1:]])\n")
+        wrapper.chmod(0o700)
     yield {"PATH": str(private) + os.pathsep + os.environ.get("PATH", ""),
-           PREFIX + "REAL_K3D": str(Path(real).resolve()), PREFIX + "FIXTURE": str(fixture),
-           PREFIX + "CASE": case, PREFIX + "OUTPUT": str(output.resolve())}
+           PREFIX + "REAL_K3D": str(Path(real["k3d"]).resolve()), PREFIX + "REAL_DOCKER": str(Path(real["docker"]).resolve()),
+           PREFIX + "FIXTURE": str(fixture), PREFIX + "CASE": case, PREFIX + "OUTPUT": str(output.resolve())}
+
 
 
 if __name__ == "__main__":
     try:
-        sys.exit(tool_wrapper(sys.argv[1:]))
+        sys.exit(tool_wrapper(sys.argv[1], sys.argv[2:]))
     except (helpers.QualificationError, OSError, ValueError, KeyError):
         print("Public topology import observation could not be established.", file=sys.stderr)
         sys.exit(2)

@@ -50,6 +50,11 @@ planned bounded estimate, not a reservation or proof of a strict whole-host
 maximum; terminating-pod overlap and concurrent host activity can add usage. The cluster has
 4 GiB and the private BuildKit builder has two CPUs/2 GiB. Build timeout is ten
 minutes; readiness and lifecycle experiment windows are bounded to two minutes.
+Image transfer streams at most 4 GiB into a private archive, then copies it into
+the verified owned node for the pinned runtime's local import operation. The
+transfer has a three-minute total deadline and a separate thirty-second staging
+cleanup budget. Larger archives or incomplete identity observations are execution
+errors. Archives and their contents are never included in reports.
 After a lifecycle requirement window expires, CloudForge may spend at most five
 additional seconds on one final pod observation and HTTP health check, sharing
 that observation budget. Traffic generation and mutation do not continue during

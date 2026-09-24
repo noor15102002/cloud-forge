@@ -14,7 +14,6 @@ import (
 
 	"github.com/noor15102002/cloud-forge/internal/analyzer"
 	"github.com/noor15102002/cloud-forge/internal/command"
-	"github.com/noor15102002/cloud-forge/internal/executor/k3d"
 	"github.com/noor15102002/cloud-forge/internal/executor/kubernetes"
 	"github.com/noor15102002/cloud-forge/internal/regression"
 	"github.com/noor15102002/cloud-forge/pkg/model"
@@ -43,7 +42,7 @@ func runTestLifecycle(t *testing.T, name string, service *Service, current plan)
 	case "pod-recovery":
 		return service.runPodRecovery(context.Background(), client, current)
 	case "rolling-deployment":
-		return service.runRollingDeployment(context.Background(), k3d.New(service.runner), client, current, model.CommandResult{FailureType: model.FailureNone})
+		return service.runRollingDeployment(context.Background(), testImportClient(t, service.runner), client, current, model.CommandResult{FailureType: model.FailureNone})
 	default:
 		t.Fatal("unknown test experiment", name)
 		return recoveryOutcome{}
@@ -104,7 +103,7 @@ func TestImagePreparationRevalidatesBaselineBeforeRollout(t *testing.T) {
 			var importedB, changedImage, cleaned atomic.Bool
 			service := fixedService(runnerFunc(func(_ context.Context, r command.Request) model.CommandResult {
 				result := successfulCommand(r)
-				if r.Name == "k3d" && containsArgument(r.Args, "import") {
+				if r.Name == "docker" && containsArgument(r.Args, "inspecti") {
 					for _, arg := range r.Args {
 						if strings.HasSuffix(arg, "-b") {
 							importedB.Store(true)

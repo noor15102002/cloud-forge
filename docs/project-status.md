@@ -33,11 +33,23 @@ were retained. A harness assumption about missing dependency results then stoppe
 its final independent case, leaving that qualification contract INCOMPLETE.
 This archive has **NO GO** and will not be published.
 
-The follow-up stages imports through the owned image volume, independently checks
-the exact imported identity and preserves logged errors. The Redis harness now
-records all independent cases after proven cleanup, while cancellation or cleanup
-uncertainty stops scheduling. These changes need protected checks and a new exact
-archive qualification; neither earlier archive is a substitute.
+A [focused follow-up run](https://github.com/noor15102002/cloud-forge/actions/runs/36060254004)
+at `7e772ae003129f425a51069136514d631aa5f513` exposed a second import failure:
+the staged k3d importer logged an inner containerd transfer EOF yet exited zero.
+CloudForge correctly rejected that false success. All four Python cases were
+attempted after confirmed cleanup; the original healthy-case ERROR remained,
+and the later three expected outcomes were retained. Node Redis and both
+cancellation contracts passed. The focused run remains **NO GO**. Available
+records do not establish an OOM, daemon restart, disk-pressure or exact internal
+transfer cause.
+
+The next correction uses the pinned runtime's explicit local archive importer,
+with a 4 GiB streaming cap, private staging, immutable owned-node targeting,
+exact Docker-to-CRI identity verification and bounded staging cleanup. It does
+not retry the failing transport or reinterpret its previous errors. The Redis
+harness records all independent cases after proven cleanup, while cancellation
+or cleanup uncertainty stops scheduling. These changes need protected checks
+and a new exact archive qualification; neither earlier archive is a substitute.
 
 ## Historical qualified candidate (unpublished)
 

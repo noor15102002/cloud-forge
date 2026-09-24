@@ -19,7 +19,9 @@ SPEC = importlib.util.spec_from_file_location("pilot_cancellation", Path(__file_
 pilot = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(pilot)
 NAME = "cloudforge-0123abcd"
-IMPORT_ARGS = ["image", "import", "cloudforge/healthy-node-redis:0123abcd-a", "--cluster", NAME, "--mode", "tools-node"]
+NODE_ID = "c" * 64
+NODE_ARCHIVE = "/tmp/cloudforge-import-123/image.tar"
+IMPORT_ARGS = ["exec", NODE_ID, *pilot.local_import.CTR, NODE_ARCHIVE]
 PREFLIGHT_ARGS = ["info", "--format", "{{.ServerVersion}}"]
 
 
@@ -121,8 +123,7 @@ class CleanupCaptureTests(unittest.TestCase):
                 self.assertEqual(pilot.created_run("k3d", ["cluster", "create", name, "--wait"]), name)
                 self.assertEqual(pilot.cleanup_operation("docker", ["buildx", "rm", "--force", name], name), ("builder-remove", 60))
                 self.assertEqual(pilot.cleanup_operation("k3d", ["cluster", "delete", name], name), ("cluster-delete", 120))
-                image = "cloudforge/healthy-node-redis:" + "a" * public_length + "-a"
-                pilot.validate_public_import(["image", "import", image, "--cluster", name, "--mode", "tools-node"], name, "redis", False)
+                self.assertEqual(pilot.public_import_images("redis", False), ["healthy-node-redis"])
             for private_length in (8, 20, 31, 33):
                 with self.subTest(public_length=public_length, private_length=private_length):
                     self.assertIsNone(pilot.created_run("docker", [*arguments[:-1], options + "b" * private_length]))
@@ -209,6 +210,7 @@ sys.exit(int(os.environ['FAKE_EXIT']))
             output = root / "output"
             owner = root / "owner.json"
             pilot.helpers.write_json(owner, {"run_name": NAME})
+            pilot.local_import.save_state(root / "local-import.json", {"run": NAME, "node": NODE_ID, "node_archive": NODE_ARCHIVE, "image": "cloudforge/healthy-node-redis:0123abcd-a"})
             env = dict(os.environ, GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux",
                        FAKE_MODE=mode, FAKE_EXIT=str(code), FAKE_CALLS=str(root / "calls"), FAKE_ARGUMENTS=str(root / "arguments.json"))
             env.update({pilot.PREFIX+"STAGE":stage, pilot.PREFIX+"FIXTURE":str(fixture), pilot.PREFIX+"MONOREPO":"false",
@@ -219,7 +221,7 @@ sys.exit(int(os.environ['FAKE_EXIT']))
                         pilot.PREFIX+"MARKER":str(root / "marker.json"), "CLOUDFORGE_REAL_DOCKER":str(fake), "CLOUDFORGE_REAL_K3D":str(fake)})
             command = [sys.executable, str(Path(pilot.__file__)), "__tool", "docker", "buildx", "rm", "--force", NAME]
             if operation == "import":
-                command = command[:3] + ["k3d", *IMPORT_ARGS]
+                command = command[:3] + ["docker", *IMPORT_ARGS]
             if operation == "preflight":
                 command = command[:3] + ["docker", *PREFLIGHT_ARGS]
             yield root, output, env, command
@@ -252,9 +254,9 @@ sys.exit(int(os.environ['FAKE_EXIT']))
 
     def test_exact_original_bytes_exit_and_native_deadline(self):
         import_b = [*IMPORT_ARGS]
-        import_b[2] = import_b[2][:-1] + "b"
+        import_b = list(IMPORT_ARGS)  # The private registration binds image A/B; ctr consumes the archive path.
         for tool, args, timeout in (("docker", ["buildx", "rm", "--force", NAME], 60), ("k3d", ["cluster", "delete", NAME], 120),
-                                    ("k3d", IMPORT_ARGS, 180), ("k3d", import_b, 180), ("docker", PREFLIGHT_ARGS, 10)):
+                                    ("docker", IMPORT_ARGS, 180), ("docker", import_b, 180), ("docker", PREFLIGHT_ARGS, 10)):
             for code in (0, 17):
                 with self.subTest(tool=tool, code=code), self.setup_case(code=code) as (_, output, env, command):
                     result = subprocess.run(command[:3]+[tool]+args, env=env, capture_output=True, timeout=5)
@@ -411,14 +413,11 @@ sys.exit(int(os.environ['FAKE_EXIT']))
     def test_import_fixture_names_are_exact_for_every_supported_stage(self):
         for stage, monorepo, name in [(stage, False, "healthy-node-redis" if stage == "redis" else "healthy-node-api")
                                       for stage in pilot.STAGES] + [("build", True, "monorepo-http")]:
-            for suffix in ("a", "b"):
-                arguments = ["image", "import", "cloudforge/" + name + ":0123abcd-" + suffix,
-                             "--cluster", NAME, "--mode", "tools-node"]
-                with self.subTest(stage=stage,monorepo=monorepo,suffix=suffix):
-                    pilot.validate_public_import(arguments, NAME, stage, monorepo)
+            self.assertEqual(pilot.public_import_images(stage, monorepo), [name])
         for stage, monorepo in (("private", False), ("redis", True)):
-            with self.subTest(stage=stage,monorepo=monorepo), self.assertRaises(pilot.helpers.QualificationError):
-                pilot.validate_public_import(IMPORT_ARGS, NAME, stage, monorepo)
+            with self.subTest(stage=stage, monorepo=monorepo), self.assertRaises(pilot.helpers.QualificationError):
+                pilot.public_import_images(stage, monorepo)
+
 
     def test_artifact_failure_does_not_change_actual_cleanup(self):
         for operation in ("cleanup", "import", "preflight"):

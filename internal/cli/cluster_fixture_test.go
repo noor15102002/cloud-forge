@@ -24,6 +24,38 @@ type cliClusterFixture struct {
 func (f *cliClusterFixture) run(request command.Request) (model.CommandResult, bool) {
 	result := model.CommandResult{Command: request.Name, Arguments: request.Args}
 	args := request.Args
+	if request.Name == "k3d" && len(args) > 2 && args[0] == "cluster" && args[1] == "create" {
+		f.lock.Lock()
+		defer f.lock.Unlock()
+		cluster := args[2]
+		labels := map[string]string{"k3d.cluster": cluster, "k3d.role": "server"}
+		for i, arg := range args[:len(args)-1] {
+			if arg == "--runtime-label" {
+				label, _, _ := strings.Cut(args[i+1], "@")
+				key, value, _ := strings.Cut(label, "=")
+				labels[key] = value
+			}
+		}
+		name := "k3d-" + cluster + "-server-0"
+		f.objects["container:"+name] = map[string]any{"Id": strings.Repeat("c", 64), "Name": "/" + name, "Config": map[string]any{"Labels": labels}, "State": map[string]bool{"Running": true}}
+		return result, false
+	}
+	if request.Name == "docker" && len(args) == 5 && args[0] == "container" && args[1] == "inspect" && strings.Contains(args[3], `"owner":`) {
+		f.lock.Lock()
+		defer f.lock.Unlock()
+		if node := f.objects["container:"+args[4]]; node != nil {
+			format, err := template.New("node").Funcs(template.FuncMap{"json": func(value any) (string, error) { b, e := json.Marshal(value); return string(b), e }}).Parse(args[3])
+			var out bytes.Buffer
+			if err == nil {
+				err = format.Execute(&out, node)
+			}
+			if err != nil {
+				panic(err)
+			}
+			result.Stdout = out.String()
+			return result, true
+		}
+	}
 	if request.Name != "docker" || len(args) < 2 || (args[0] != "network" && args[0] != "volume") {
 		return result, false
 	}

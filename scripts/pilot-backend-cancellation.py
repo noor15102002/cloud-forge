@@ -26,6 +26,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+import local_import_observer as local_import
 
 
 HOLD_SECONDS = 90
@@ -87,15 +88,11 @@ def capture(arguments, timeout, limit=MAX_OUTPUT, environment=None):
             stream.close()
 
 
-def validate_public_import(arguments, fixture, stage):
-    """Allow recording only the exact bundled public fixture and import tuple."""
+def validate_public_import_fixture(fixture, stage):
+    """Allow recording only the exact bundled public backend fixture."""
     require_runner()
-    if stage not in STAGES or len(arguments) != 7 or arguments[:2] != ["image", "import"] or arguments[3] != "--cluster" or arguments[5:] != ["--mode", "tools-node"]:
+    if stage not in STAGES:
         raise QualificationError("import_observer_requires_known_public_import")
-    cluster, image = arguments[4], arguments[2]
-    match = re.fullmatch(r"cloudforge-([a-z0-9][a-z0-9-]{0,80})", cluster)
-    if not match or image not in ("cloudforge/backend-http:" + match.group(1) + "-a", "cloudforge/backend-http:" + match.group(1) + "-b"):
-        raise QualificationError("import_observer_refused_unrelated_image")
     if (fixture.is_symlink() or fixture.name != "fixture"
             or not fixture.parent.name.startswith("cf-backend-cancellation-")
             or fixture.resolve() != fixture):
@@ -215,17 +212,24 @@ def tee_command(arguments, directory, stage, stdout, stderr, *,
             stream.close()
 
 
-def k3d_wrapper(arguments):
+def import_tool_wrapper(tool, arguments):
     require_runner()
-    real = os.environ[ENV_PREFIX + "REAL_K3D"]
-    if arguments[:2] != ["image", "import"]:
-        # In particular, never capture kubeconfig retrieval or cluster commands.
-        os.execv(real, [real, *arguments])
+    real = os.environ[ENV_PREFIX + "REAL_" + tool.upper()]
     stage = os.environ[ENV_PREFIX + "STAGE"]
     fixture = Path(os.environ[ENV_PREFIX + "FIXTURE"])
-    validate_public_import(arguments, fixture, stage)
-    code = tee_command([real, *arguments], Path(os.environ[ENV_PREFIX + "IMPORT_OUTPUT"]), stage,
-                      sys.stdout.buffer, sys.stderr.buffer)
+    validate_public_import_fixture(fixture, stage)
+    state_path = Path(os.environ[ENV_PREFIX + "IMPORT_STATE"])
+    owner = local_import.read_state(state_path).get("run")
+    if tool == "k3d" and arguments[:2] == ["cluster", "create"]:
+        owner = arguments[2]
+    handled, code = local_import.observe(tool, arguments, state_path, owner, ["backend-http"], real,
+                                        sys.modules[__name__], sys.stdout.buffer, sys.stderr.buffer)
+    if not handled and tool == "docker" and local_import.is_import(arguments):
+        code = tee_command([real, *arguments], Path(os.environ[ENV_PREFIX + "IMPORT_OUTPUT"]), stage,
+                           sys.stdout.buffer, sys.stderr.buffer, tool="docker", name="local-image-import")
+        handled = True
+    if not handled:
+        os.execv(real, [real, *arguments])
     if code < 0:
         received = -code
         if received not in (signal.SIGKILL, signal.SIGSTOP):
@@ -589,6 +593,9 @@ def runtime(binary, fixture, output, repository, private, stage, qualification):
     real_k3d = shutil.which("k3d")
     if not real_k3d:
         raise QualificationError("k3d_missing")
+    real_docker = shutil.which("docker")
+    if not real_docker:
+        raise QualificationError("docker_missing")
     image_match = re.search(r"(?m)^FROM (\S+@sha256:[a-f0-9]{64})$", (fixture / "Dockerfile").read_text())
     if not image_match:
         raise QualificationError("sentinel_requires_pinned_public_fixture_image")
@@ -597,14 +604,16 @@ def runtime(binary, fixture, output, repository, private, stage, qualification):
     wrapper = wrapper_dir / "kubectl"
     wrapper.write_text("#!/usr/bin/env python3\nimport os,sys\nos.execv(sys.executable,[sys.executable,os.environ['CF_BACKEND_CANCEL_HARNESS'],'__kubectl',*sys.argv[1:]])\n")
     wrapper.chmod(0o700)
-    import_wrapper = wrapper_dir / "k3d"
-    import_wrapper.write_text("#!/usr/bin/env python3\nimport os,sys\nos.execv(sys.executable,[sys.executable,os.environ['CF_BACKEND_CANCEL_HARNESS'],'__k3d',*sys.argv[1:]])\n")
-    import_wrapper.chmod(0o700)
+    for tool in ("k3d", "docker"):
+        import_wrapper = wrapper_dir / tool
+        import_wrapper.write_text("#!/usr/bin/env python3\nimport os,sys\nos.execv(sys.executable,[sys.executable,os.environ['CF_BACKEND_CANCEL_HARNESS']," + repr("__" + tool) + ",*sys.argv[1:]])\n")
+        import_wrapper.chmod(0o700)
     marker = private / "observed-start.json"
     environment = dict(os.environ, TMPDIR=str(private), PATH=str(wrapper_dir) + os.pathsep + os.environ["PATH"])
     environment.update({ENV_PREFIX + "HARNESS": str(Path(__file__).resolve()), ENV_PREFIX + "REAL_KUBECTL": real,
                         ENV_PREFIX + "STAGE": stage, ENV_PREFIX + "MARKER": str(marker), ENV_PREFIX + "STATE": str(private / "preparation-state.json"),
-                        ENV_PREFIX + "REAL_K3D": real_k3d, ENV_PREFIX + "FIXTURE": str(fixture), ENV_PREFIX + "IMPORT_OUTPUT": str(output / "image-import")})
+                        ENV_PREFIX + "REAL_K3D": real_k3d, ENV_PREFIX + "REAL_DOCKER": real_docker,
+                        ENV_PREFIX + "IMPORT_STATE": str(private / "local-import.json"), ENV_PREFIX + "FIXTURE": str(fixture), ENV_PREFIX + "IMPORT_OUTPUT": str(output / "image-import")})
     qualification["import_observation"] = {"scope": "bundled_public_backend_fixture_only", "stream_limit_bytes": IMPORT_STREAM_LIMIT,
                                            "retention": "bounded_original_stream_tails", "retry_performed": False}
     command = [binary, "verify", str(fixture), "--format", "json"]
@@ -701,10 +710,12 @@ sys.exit(int(os.environ['FAKE_IMPORT_EXIT']))
                 output = root / "image-import"
                 environment = dict(os.environ, GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted", RUNNER_OS="Linux",
                                    FAKE_IMPORT_MODE=mode, FAKE_IMPORT_EXIT=str(code), FAKE_IMPORT_CALLED=str(root / "called"))
-                environment.update({ENV_PREFIX + "STAGE": "postgresql", ENV_PREFIX + "REAL_K3D": str(fake),
-                                    ENV_PREFIX + "FIXTURE": str(fixture), ENV_PREFIX + "IMPORT_OUTPUT": str(output)})
-                arguments = ["image", "import", "cloudforge/backend-http:test-run-a", "--cluster", "cloudforge-test-run", "--mode", "tools-node"]
-                command = [sys.executable, __file__, "__k3d", *arguments]
+                environment.update({ENV_PREFIX + "STAGE": "postgresql", ENV_PREFIX + "REAL_K3D": str(fake), ENV_PREFIX + "REAL_DOCKER": str(fake),
+                                    ENV_PREFIX + "IMPORT_STATE": str(root / "local-import.json"), ENV_PREFIX + "FIXTURE": str(fixture), ENV_PREFIX + "IMPORT_OUTPUT": str(output)})
+                arguments = ["exec", "c" * 64, *local_import.CTR, "/tmp/cloudforge-import-123/image.tar"]
+                local_import.save_state(root / "local-import.json", {"run": "cloudforge-" + "a" * 20, "node": "c" * 64,
+                                        "node_archive": arguments[-1], "image": "cloudforge/backend-http:" + "a" * 20 + "-a"})
+                command = [sys.executable, __file__, "__docker", *arguments]
                 yield root, output, environment, arguments, command
 
         def import_record(self, output):
@@ -984,9 +995,9 @@ sys.exit(int(os.environ['FAKE_IMPORT_EXIT']))
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "__k3d":
+    if len(sys.argv) > 1 and sys.argv[1] in ("__k3d", "__docker"):
         try:
-            return k3d_wrapper(sys.argv[2:])
+            return import_tool_wrapper(sys.argv[1].removeprefix("__"), sys.argv[2:])
         except (OSError, ValueError, TypeError, AttributeError, IndexError, KeyError, QualificationError, subprocess.SubprocessError):
             print("public fixture import observer could not establish bounded evidence", file=sys.stderr)
             return 2

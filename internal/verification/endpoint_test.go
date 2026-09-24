@@ -60,7 +60,7 @@ func TestRuntimePinsResolvedEndpointThroughCleanupDespiteEnvironmentChange(t *te
 			if req.Name == "k3d" && slices.Contains(req.Args, "create") {
 				phases["cluster"] = true
 			}
-			if req.Name == "k3d" && slices.Contains(req.Args, "import") {
+			if req.Name == "docker" && slices.Contains(req.Args, "import") {
 				phases["import"] = true
 			}
 			if req.Name == "k3d" && slices.Contains(req.Args, "delete") {

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
-	"github.com/noor15102002/cloud-forge/internal/executor/k3d"
 	"github.com/noor15102002/cloud-forge/internal/executor/kubernetes"
 	"github.com/noor15102002/cloud-forge/internal/regression"
 	"github.com/noor15102002/cloud-forge/pkg/model"
@@ -61,7 +60,7 @@ func TestRolloutDeadlineUsesFreshObservationWithoutInventingSuccess(t *testing.T
 			}))
 			service.rolloutTimeout = 50 * time.Millisecond
 			current := experimentTestPlan(t)
-			result := service.runRollingDeployment(parent, k3d.New(service.runner), kubernetes.New(service.runner), current, model.CommandResult{})
+			result := service.runRollingDeployment(parent, testImportClient(t, service.runner), kubernetes.New(service.runner), current, model.CommandResult{})
 			expected, expectedCalls := model.StatusError, 2
 			if final == "unready" {
 				expected = model.StatusFail

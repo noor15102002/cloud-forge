@@ -87,7 +87,7 @@ func (r *workerRunner) Run(ctx context.Context, request command.Request) model.C
 	defer r.mu.Unlock()
 	result := r.base.Run(ctx, request)
 	args := request.Args
-	if request.Name == "k3d" && containsArgument(args, "import") && containsArgument(args, r.current.rolloutImage) {
+	if request.Name == "docker" && containsArgument(args, "inspecti") && containsArgument(args, r.current.rolloutImage) {
 		r.importedB = true
 	}
 	if request.Name != "kubectl" {

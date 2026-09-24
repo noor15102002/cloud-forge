@@ -15,7 +15,8 @@ from unittest.mock import patch
 import reliability_import_observer as observer
 
 OWNER = "cloudforge-" + "a" * 20
-IMPORT = ["image", "import", "cloudforge/healthy-node-api:" + "a" * 20 + "-a", "--cluster", OWNER, "--mode", "tools-node"]
+NODE_ID = "c" * 64
+IMPORT = ["exec", NODE_ID, *observer.local_import.CTR, "/tmp/cloudforge-import-123/image.tar"]
 CREATE = ["cluster", "create", OWNER, "--runtime-label", "cloudforge.dev/owned=true@all", "--runtime-label",
           "cloudforge.dev/run-id=" + OWNER + "@all", "--runtime-label", "cloudforge.dev/ownership=" + "b" * 32 + "@all"]
 HOSTED = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux"}
@@ -57,10 +58,15 @@ sys.exit(int(os.environ.get('FAKE_EXIT','0')))
                 yield root, fixture, output, environment
 
     def invoke(self, environment, arguments):
-        return subprocess.run([sys.executable, observer.__file__, *arguments], env=environment, capture_output=True, timeout=10)
+        tool = "docker" if arguments[:1] == ["exec"] else "k3d"
+        return subprocess.run([sys.executable, observer.__file__, tool, *arguments], env=environment, capture_output=True, timeout=10)
 
     def register(self, environment):
         self.assertEqual(self.invoke(environment, CREATE).returncode, 0)
+        private = Path(environment[observer.PREFIX + "FIXTURE"]).parent / "import-observer/local-import.json"
+        state = observer.local_import.read_state(private)
+        state.update(node=NODE_ID, node_archive=IMPORT[-1], image="cloudforge/healthy-node-api:" + "a" * 20 + "-a")
+        observer.local_import.save_state(private, state)
 
     def record(self, output):
         records = list(output.glob("*.json"))
@@ -71,10 +77,8 @@ sys.exit(int(os.environ.get('FAKE_EXIT','0')))
         for case in observer.CASES:
             with self.subTest(case=case), self.setup_case(case) as (_, fixture, _, _):
                 observer.validate_fixture(fixture, case)
-                for suffix in ("a", "b"):
-                    arguments = list(IMPORT)
-                    arguments[2] = arguments[2][:-1] + suffix
-                    observer.validate_import(arguments, OWNER)
+                state = {"node": NODE_ID, "node_archive": IMPORT[-1], "image": "cloudforge/healthy-node-api:" + "a" * 20 + "-a"}
+                observer.local_import.validate_import(IMPORT, state)
 
     def test_fixture_changes_and_nonregular_inputs_stop_before_tool_execution(self):
         for mutation in ("source", "secret", "symlink", "fifo", "oversized"):
@@ -99,8 +103,8 @@ sys.exit(int(os.environ.get('FAKE_EXIT','0')))
 
     def test_unregistered_foreign_or_changed_import_is_never_executed(self):
         variants = [(IMPORT, None), (IMPORT, OWNER.replace("a", "c")),
-                    ([*IMPORT, "--extra"], OWNER), ([*IMPORT[:-1], "tools"], OWNER),
-                    ([*IMPORT[:2], "private/image:latest", *IMPORT[3:]], OWNER)]
+                    ([*IMPORT, "--extra"], OWNER), ([*IMPORT[:-1], "/tmp/foreign/image.tar"], OWNER),
+                    (["exec", "d" * 64, *IMPORT[2:]], OWNER)]
         for arguments, owner in variants:
             with self.subTest(arguments=arguments, owner=owner), self.setup_case() as (root, fixture, output, environment):
                 if owner is not None:
