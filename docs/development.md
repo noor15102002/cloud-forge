@@ -12,6 +12,11 @@ make actions
 make build
 ```
 
+Use `make release RELEASE_VERSION=v0.1.0-alpha.1` only from a clean committed
+checkout to create a reproducible candidate with full producer identity. Follow
+[release qualification](releasing.md) before distributing it. `make build` and
+local Action source builds remain development builds.
+
 Run `make external` when changing analysis behavior. It builds CloudForge,
 fetches exact revisions from the documented public repository matrix, and runs
 read-only analysis without building or executing those applications.

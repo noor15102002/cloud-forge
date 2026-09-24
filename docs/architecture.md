@@ -2,7 +2,8 @@
 
 CloudForge uses explicit boundaries between repository discovery, architecture
 models, capability planning, execution, evidence, regression comparison, and
-reporting.
+reporting. The [current support and maturity table](supported-applications.md)
+defines the qualified core separately from implemented experimental paths.
 
 The implemented slice contains:
 
@@ -56,14 +57,19 @@ loopback-only host port. This allows the Go HTTP probe to measure readiness and
 send traffic during controlled pod deletion without exposing the application
 on a non-loopback interface.
 
-Verification rebuilds the same working tree as synthetic versions `a` and `b`,
-using distinct immutable image tags and the public `CLOUDFORGE_VERSION` build
-argument. Kubernetes pod image metadata proves the transition to version `b`.
-Continuous loopback traffic spans controlled SIGTERM deletion and rollout so
-request failures, downtime, readiness-count changes, and final health remain
-part of the versioned evidence contract.
+Verification builds the same selected source as synthetic images `a` and `b`,
+using distinct image references and the public `CLOUDFORGE_VERSION` build argument.
+An explicit build-version image label keeps A/B image configuration identities
+distinct even when the Dockerfile ignores that argument; source and selected build
+context remain the same.
+Kubernetes pod image metadata verifies the transition to image B. This same-source
+rollout observes rollout mechanics, not compatibility between independent releases.
+Trivy scans image A only. Serial sampled loopback requests span pod deletion and
+rollout; failed requests, maximum sampled failure window, sample interval/count,
+readiness-count changes and final health remain evidence. Interruptions between
+samples cannot be excluded. Use an unchanged reviewed source tree for both builds.
 
-The autoscaler is applied only after replica-sensitive lifecycle experiments.
+The experimental autoscaler is applied only after replica-sensitive lifecycle experiments.
 CloudForge waits for metrics-server to report CPU utilization, then runs a
 bounded k6 profile against the loopback endpoint. It normalizes request count,
 throughput, error rate, and P50/P95/P99 latency, while the Kubernetes adapter
@@ -72,11 +78,13 @@ required metrics block the HPA assertion with a diagnostic cause; insufficient d
 
 Verification JSON is canonicalized on a copy of the result before encoding:
 evidence, measurements, findings, diagnostics, and comparison collections use
-complete deterministic sort keys. The checked-in `v1alpha1` JSON Schema defines
+complete deterministic sort keys. The checked-in `v1alpha8` JSON Schema defines
 required fields and enums. Explicit baselines are loaded through a bounded,
-strict decoder before verification starts. The regression engine compares only
+strict decoder that rejects duplicate object keys before verification starts.
+Supported historical v1alpha1–v1alpha8 contracts retain their original meaning. The regression engine compares only
 compatible environment/workload fingerprints, then statuses and normalized
-metrics with declared quality directions; it does not
+metrics with declared quality directions. Numerical grading is advisory and
+experimental; the fixed tolerance does not establish statistical significance. It does not
 change the current run's absolute findings or status. Terminal output summarizes
 experiments and actionable findings, while Markdown includes detailed
 collapsible measurements and findings for pull-request comment integration.

@@ -10,6 +10,10 @@ is not a Compose engine, a production migration runner, an arbitrary-code
 sandbox, or proof of business transactions. The source image, command and
 readiness contract still determine what the run can establish.
 
+This contract is **EXPERIMENTAL** for v0.1.0-alpha.1. See the authoritative
+[support and maturity table](supported-applications.md). Earlier generic backend
+qualification remains historical evidence and does not qualify a newer binary.
+
 ## Configuration
 
 See `testdata/backend-http/cloudforge.yaml` for a complete runnable reference.
@@ -91,7 +95,9 @@ it does not rerun migrations, erase data, or promise schema rollback.
 The existing default profile remains 4 CPU / 2 GiB aggregate workload capacity
 and a 4 GiB cluster. Explicit `bounded_backend` allows 4 CPU / 5 GiB aggregate
 workload capacity and a 6 GiB cluster. Both include providers, replicas, rollout
-surge, and the separate preparation phase. Preparation is limited to 1 CPU /
+surge, and the separate preparation phase. These are planned bounded estimates,
+not whole-host reservations or strict observed maxima; terminating overlap and
+concurrent activity can add usage. Preparation is limited to 1 CPU /
 512 MiB; PostgreSQL to 500m / 512 MiB; ClamAV to 1 CPU / 3 GiB. Replica and load
 limits remain unchanged.
 

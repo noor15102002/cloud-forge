@@ -1,5 +1,11 @@
 # Testing
 
+The [release candidate workflow](../.github/workflows/release-candidate.yml) is the
+authoritative exact-binary gate: it builds one reproducible Linux/amd64 archive and
+installs those bytes across every generic runtime case and the packaged Action.
+Existing development workflows rebuild source and are not substitutes for that
+gate. See [release qualification and failed-attempt retention](releasing.md).
+
 The `explicit-topology` reliability job compares the unchanged monorepo fixture
 under one and two configured replicas. Application PASS/FAIL remains measured;
 the gate requires complete evidence, restoration, source integrity and cleanup.
@@ -51,8 +57,9 @@ Schema is also parsed during tests.
 Regression tests cover strict and bounded baseline loading, schema mismatch,
 duplicate evidence, status ordering, metric direction, missing measurements,
 and separation of current findings from relative changes. CLI tests confirm an
-invalid baseline prevents execution and a detected regression produces a full
-report with exit status `1`.
+invalid baseline prevents execution and an evidence-status regression produces a full
+report with exit status `1`. Numerical-only differences are advisory WARN and do
+not convert successful verification to exit `1`; historical grades are retained.
 
 GitHub integration tests execute the packaged composite action against the real
 healthy fixture and continue to exercise the intentionally broken shutdown and
@@ -98,9 +105,9 @@ Unit tests cover invalid declarations, unsafe bindings, missing/duplicate/nested
 JSON fields, bounded bodies, resource accounting, startup order, failure/cancel
 classification, fingerprint omission and report schema loading.
 
-The private application pilot happens only after generic integration validation
-and protected-main merge. Private source and evidence must not enter public
-workflow artifacts. Dependency-loss disruption and richer HTTP workloads remain
+Historical private application pilots were separate from generic qualification.
+This prerelease task does not rerun them. Private source and evidence must not enter
+public workflow artifacts. Dependency-loss disruption and richer HTTP workloads remain
 unsupported rather than being claimed as tested.
 
 Validated dependency-runtime results and downloadable artifacts are recorded in

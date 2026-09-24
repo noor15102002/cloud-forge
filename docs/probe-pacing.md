@@ -1,5 +1,8 @@
 # Bounded HTTP probe pacing
 
+This is part of the sampled HTTP core in the
+[current support and maturity table](supported-applications.md).
+
 Rate-limited health endpoints can reject CloudForge's availability probes with
 HTTP 429. That is a real response under the tested request policy. CloudForge
 preserves it as evidence; it neither ignores 429 nor changes application limits.

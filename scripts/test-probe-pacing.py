@@ -131,6 +131,22 @@ class ProbePacingTests(unittest.TestCase):
         arguments = ["buildx", "build", "--builder", owner, "--load", "--provenance=false", "--label",
                      "cloudforge.dev/run-id=" + owner, "--tag", "cloudforge/rate-limited-http:0123abcd-a", "."]
         self.assertEqual(pilot.build_identity(arguments), (owner, arguments[-2]))
+        for public_length in (8, 20, 32):
+            new_owner = "cloudforge-" + "a" * public_length
+            new_image = "cloudforge/rate-limited-http:" + "a" * public_length + "-a"
+            current = ["buildx", "build", "--builder", new_owner, "--load", "--provenance=false", "--label",
+                       "cloudforge.dev/run-id=" + new_owner, "--label", "cloudforge.dev/ownership=" + "b" * 32,
+                       "--label", "cloudforge.dev/build-version=a", "--build-arg", "CLOUDFORGE_VERSION=a", "--tag", new_image, "."]
+            with self.subTest(public_length=public_length):
+                self.assertEqual(pilot.build_identity(current), (new_owner, new_image))
+            mutations = [[*current[:10], *current[12:]],
+                         [*current[:11], "cloudforge.dev/build-version=b", *current[12:]],
+                         [*current[:16], "cloudforge/rate-limited-http:" + "c" * public_length + "-a", "."]]
+            mutations += [[*current[:9], "cloudforge.dev/ownership=" + "b" * private_length, *current[10:]]
+                          for private_length in (8, 20, 31, 33)]
+            for mutation in mutations:
+                with self.subTest(public_length=public_length, mutation=mutation), self.assertRaises(pilot.helpers.QualificationError):
+                    pilot.build_identity(mutation)
         self.assertIsNone(pilot.build_identity(["version"]))
         for value in ([*arguments[:-1], ".."], [*arguments, "--secret", "x"],
                       [*arguments[:-2], "cloudforge/other:0123abcd-a", "."],

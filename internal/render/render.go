@@ -4,7 +4,6 @@ package render
 import (
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"sort"
 	"strings"
@@ -132,13 +131,19 @@ func VerificationText(w io.Writer, run model.VerificationRun) error {
 		if err := recoveryText(w, evidence); err != nil {
 			return err
 		}
+		if err := failureDetailsText(w, evidence); err != nil {
+			return err
+		}
+	}
+	if err := scanSummaryText(w, run); err != nil {
+		return err
 	}
 	if run.Comparison != nil {
 		if err := comparisonText(w, *run.Comparison); err != nil {
 			return err
 		}
 	}
-	actionable := actionableFindings(run.Findings)
+	actionable := priorityFindings(actionableFindings(run.Findings))
 	if len(actionable) > 0 {
 		if _, err := fmt.Fprintf(w, "Actionable findings: %d\n", len(actionable)); err != nil {
 			return err
@@ -219,6 +224,9 @@ func VerificationMarkdown(w io.Writer, run model.VerificationRun) error {
 	if err := dependenciesMarkdown(w, run); err != nil {
 		return err
 	}
+	if err := scanSummaryMarkdown(w, run); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintln(w, "\n### Completed evidence\n\n| Experiment | Status | Duration | Result |"); err != nil {
 		return err
 	}
@@ -272,7 +280,7 @@ func VerificationMarkdown(w io.Writer, run model.VerificationRun) error {
 		}
 	}
 	if len(run.Findings) > 0 {
-		visible := run.Findings
+		visible := priorityFindings(run.Findings)
 		if len(visible) > markdownFindingLimit {
 			visible = visible[:markdownFindingLimit]
 		}
@@ -399,8 +407,14 @@ func canonicalVerification(run model.VerificationRun) model.VerificationRun {
 }
 
 func comparisonText(w io.Writer, comparison model.BaselineComparison) error {
-	if _, err := fmt.Fprintf(w, "Baseline: %s against run %s; %d regressions, %d improvements, %d unavailable\n", strings.ToUpper(string(comparison.Status)), terminalText(comparison.BaselineRunID), len(comparison.Regressions), len(comparison.Improvements), len(comparison.Unavailable)); err != nil {
+	regressions, improvements, numerical := comparisonCounts(comparison)
+	if _, err := fmt.Fprintf(w, "Baseline: %s against run %s; %d status regressions, %d status improvements, %d advisory numerical changes, %d unavailable\n", strings.ToUpper(string(comparison.Status)), terminalText(comparison.BaselineRunID), regressions, improvements, numerical, len(comparison.Unavailable)); err != nil {
 		return err
+	}
+	if numerical > 0 {
+		if _, err := fmt.Fprintln(w, "Numerical comparisons are experimental and advisory; fixed percentage thresholds do not establish statistical significance."); err != nil {
+			return err
+		}
 	}
 	changes := append([]model.ComparisonChange(nil), comparison.Regressions...)
 	changes = append(changes, comparison.Improvements...)
@@ -412,6 +426,9 @@ func comparisonText(w io.Writer, comparison model.BaselineComparison) error {
 		label := "IMPROVEMENT"
 		if containsChange(comparison.Regressions, change) {
 			label = "REGRESSION"
+		}
+		if change.Kind == model.ComparisonMeasurement {
+			label = "ADVISORY"
 		}
 		if _, err := fmt.Fprintf(w, "%s %s: %s\n", label, terminalText(comparisonSubject(change.ExperimentID, change.Measurement)), terminalText(change.Summary)); err != nil {
 			return err
@@ -437,13 +454,37 @@ func comparisonText(w io.Writer, comparison model.BaselineComparison) error {
 }
 
 func comparisonMarkdown(w io.Writer, comparison model.BaselineComparison) error {
-	if _, err := fmt.Fprintf(w, "\n### Baseline comparison\n\n**Status:** %s · **Baseline run:** %s · **Regressions:** %d · **Improvements:** %d · **Unavailable:** %d\n", strings.ToUpper(string(comparison.Status)), markdownText(comparison.BaselineRunID), len(comparison.Regressions), len(comparison.Improvements), len(comparison.Unavailable)); err != nil {
+	regressions, improvements, numerical := comparisonCounts(comparison)
+	if _, err := fmt.Fprintf(w, "\n### Baseline comparison\n\n**Status:** %s · **Baseline run:** %s · **Status regressions:** %d · **Status improvements:** %d · **Advisory numerical changes:** %d · **Unavailable:** %d\n", strings.ToUpper(string(comparison.Status)), markdownText(comparison.BaselineRunID), regressions, improvements, numerical, len(comparison.Unavailable)); err != nil {
 		return err
 	}
-	if err := comparisonChangesMarkdown(w, "Regressions", comparison.Regressions); err != nil {
+	if numerical > 0 {
+		if _, err := fmt.Fprintln(w, "\nNumerical comparisons are experimental and advisory; fixed percentage thresholds do not establish statistical significance."); err != nil {
+			return err
+		}
+	}
+	var regressionsOnly, improvementsOnly, numericalOnly []model.ComparisonChange
+	for _, change := range comparison.Regressions {
+		if change.Kind == model.ComparisonStatus {
+			regressionsOnly = append(regressionsOnly, change)
+		} else {
+			numericalOnly = append(numericalOnly, change)
+		}
+	}
+	for _, change := range comparison.Improvements {
+		if change.Kind == model.ComparisonStatus {
+			improvementsOnly = append(improvementsOnly, change)
+		} else {
+			numericalOnly = append(numericalOnly, change)
+		}
+	}
+	if err := comparisonChangesMarkdown(w, "Status regressions", regressionsOnly); err != nil {
 		return err
 	}
-	if err := comparisonChangesMarkdown(w, "Improvements", comparison.Improvements); err != nil {
+	if err := comparisonChangesMarkdown(w, "Status improvements", improvementsOnly); err != nil {
+		return err
+	}
+	if err := comparisonChangesMarkdown(w, "Advisory numerical comparisons", numericalOnly); err != nil {
 		return err
 	}
 	if len(comparison.Unavailable) > 0 {
@@ -542,10 +583,10 @@ func markdownText(value string) string {
 	value = strings.ReplaceAll(value, "\r", " ")
 	value = strings.ReplaceAll(value, "\n", " ")
 	value = truncateRunes(value, displayRuneLimit)
-	value = html.EscapeString(value)
 	value = strings.NewReplacer(
+		"&", "&amp;", "<", "&lt;", ">", "&gt;",
 		"\\", "&#92;", "|", "&#124;", "`", "&#96;", "@", "&#64;", "[", "&#91;", "]", "&#93;",
-		"(", "&#40;", ")", "&#41;", "*", "&#42;", "_", "&#95;", "#", "&#35;", ":", "&#58;", ".", "&#46;",
+		"(", "&#40;", ")", "&#41;", "*", "&#42;", "_", "&#95;", "#", "&#35;", "://", "&#58;//", "www.", "www&#46;",
 	).Replace(value)
 	return value
 }

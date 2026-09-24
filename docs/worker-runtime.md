@@ -1,5 +1,9 @@
 # Bounded worker heartbeat verification
 
+This implemented contract is **EXPERIMENTAL** for v0.1.0-alpha.1. See the
+[authoritative support and maturity table](supported-applications.md). Planner
+SUPPORTED does not assign stable maturity or certify worker business behavior.
+
 Runtime configuration `v1alpha6` can explicitly select one background process.
 Plans and verification reports use `v1alpha8`; every earlier report schema remains
 loadable without reinterpretation. The HTTP default and older runtime inputs are

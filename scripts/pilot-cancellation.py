@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Interrupt bundled public fixtures and retain bounded import/cleanup evidence.
+"""Interrupt bundled public fixtures and retain bounded preflight/import/cleanup evidence.
 
 Public fixture validation and stream teeing add small wrapper overhead inside
 CloudForge's original command deadlines; no retry, new runtime API call, traffic
 change or command timeout extension is performed by the command observer.
 """
+from qualification_record import observation_started, observation_finished
 import argparse
 from contextlib import contextmanager
 import importlib.util
@@ -24,8 +25,9 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("bounded_command_evidence", REPOSITORY / "scripts/pilot-backend-cancellation.py")
 helpers = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helpers)
-STAGES = ("build", "cluster", "readiness", "load", "redis")
+STAGES = ("build", "cluster", "readiness", "lifecycle", "load", "redis")
 CLEANUP_SECONDS = 720
+# Public IDs are currently 20 hex characters; archived fixtures use 8 or 32.
 RUN_NAME = re.compile(r"cloudforge-[a-f0-9]{8,32}")
 INJECTED_EXIT = 70
 INJECTED_ERROR = b"CloudForge public qualification intentionally withheld the first builder removal.\n"
@@ -43,6 +45,10 @@ def fixture_copy(target, stage, monorepo, probe_pacing=False):
     if stage == "readiness":
         server = target / "server.js"
         server.write_text(server.read_text().replace("let ready = true", "let ready = false"))
+    if stage == "lifecycle":
+        server = target / "server.js"
+        # Public cancellation fixture: keep the real pod deletion in progress.
+        server.write_text(server.read_text().replace("process.exit(0)), 2000)", "process.exit(0)), 20000)"))
     config = target / "cloudforge.yaml"
     config.write_text(config.read_text().split("experiments:")[0])
     if probe_pacing:
@@ -73,7 +79,8 @@ def created_run(tool, arguments):
         name = arguments[3]
         base = "memory=2g,cpu-period=100000,cpu-quota=200000"
         if (RUN_NAME.fullmatch(name) and arguments[4:7] == ["--driver", "docker-container", "--driver-opt"]
-                and arguments[7] in (base, base + ",env.CLOUDFORGE_RUN_ID=" + name)):
+                and (arguments[7] in (base, base + ",env.CLOUDFORGE_RUN_ID=" + name)
+                     or re.fullmatch(re.escape(base + ",env.CLOUDFORGE_RUN_ID=" + name) + r",env.CLOUDFORGE_OWNER_ID=[a-f0-9]{32}", arguments[7]))):
             return name
     if tool == "k3d" and len(arguments) >= 4 and arguments[:2] == ["cluster", "create"] and RUN_NAME.fullmatch(arguments[2]):
         # Only register the name; no create output, runtime flags or credentials
@@ -128,7 +135,50 @@ def retain_cleanup(output, stage):
         return False
 
 
+def qualify_cancellation(report, stage):
+    """Require cancellation at the selected public phase without later work."""
+    assert stage in STAGES, "Unknown cancellation stage"
+    assert report["status"] == "error", "Unexpected native status"
+    assert any(item["code"] == "verification_canceled" for item in report["diagnostics"]), "Missing cancellation classification"
+    evidence = {item["experiment_id"]: item for item in report["evidence"]}
+    target = {"build": "container-build", "redis": "dependency.redis", "readiness": "deployment-readiness",
+              "lifecycle": "graceful-shutdown", "load": "load-profile"}.get(stage)
+    allowed = {"environment-cleanup"}
+    if target:
+        allowed.add(target)
+        assert evidence[target]["execution"]["executed"] is True, "Started experiment was presented as never executed"
+        assert evidence[target]["status"] == "error", "Started experiment lost ERROR"
+    if stage != "build":
+        for name, statuses in (("container-build", ("pass",)), ("container-scan", ("pass", "warn"))):
+            allowed.add(name)
+            assert evidence[name]["execution"]["executed"] is True and evidence[name]["status"] in statuses, "Earlier build or scan evidence was erased"
+    if stage in ("lifecycle", "load"):
+        allowed.add("deployment-readiness")
+        assert evidence["deployment-readiness"]["execution"]["executed"] is True and evidence["deployment-readiness"]["status"] == "pass", "Earlier readiness evidence was erased"
+    if stage == "lifecycle":
+        assert evidence[target]["execution"]["mutation_attempted"] is True, "Lifecycle mutation was not attempted"
+    if stage == "load":
+        # HPA observation and mutation run alongside load, not after it.
+        allowed.add("horizontal-autoscaling")
+        for name in ("graceful-shutdown", "pod-recovery", "rolling-deployment"):
+            allowed.add(name)
+            item = evidence[name]
+            assert item["execution"]["executed"] is True and item["status"] in ("pass", "fail"), "Earlier lifecycle evidence was erased"
+            recovery = item.get("recovery", {})
+            assert recovery.get("status") == "pass" and recovery.get("checks") and all(check["status"] == "pass" for check in recovery["checks"]), "Earlier restoration was not established"
+    if stage == "redis":
+        assert any(item.get("name") == "redis" and item["status"] == "error" for item in report["dependencies"]), "Redis cancellation evidence was erased"
+    expected = {"deployment-readiness", "semantic-readiness", "readiness-gating", "inflight-shutdown", "graceful-shutdown",
+                "pod-recovery", "rolling-deployment", "load-profile", "horizontal-autoscaling", "dependency-loss"}
+    for name in expected - allowed:
+        assert evidence.get(name, {}).get("execution", {}).get("executed") is False, "Missing evidence that later work remained unexecuted: " + name
+    for name, item in evidence.items():
+        if name not in allowed:
+            assert item.get("execution", {}).get("executed") is False, "New work started after cancellation: " + name
+
+
 def tool_wrapper(tool, arguments):
+    wrapper_entered_at = helpers.observer_timestamp()
     helpers.require_runner()
     if tool not in ("docker", "k3d", "kubectl", "k6"):
         raise helpers.QualificationError("cleanup_capture_unknown_tool")
@@ -142,6 +192,16 @@ def tool_wrapper(tool, arguments):
     validate_public_fixture(fixture, stage, monorepo, pacing_value == "true")
     if os.environ.get(PREFIX + "FORCE_BUILDER_FAILURE") == "true" and (stage != "redis" or monorepo):
         raise helpers.QualificationError("builder_fault_requires_public_redis_case")
+    if tool == "docker" and arguments == ["info", "--format", "{{.ServerVersion}}"]:
+        # Observe only the existing public-fixture prerequisite invocation. The
+        # runner still owns its ten-second deadline; no extra probe or retry.
+        # Entry is after Python imports; absent artifacts do not prove which
+        # earlier startup/validation phase was reached.
+        return finish_signal(helpers.tee_command([real, *arguments], Path(os.environ[PREFIX + "PREFLIGHT_OUTPUT"]),
+                stage, sys.stdout.buffer, sys.stderr.buffer, scope="bundled_public_cancellation_fixture_only",
+                tool=tool, name="docker-server-version", native_timeout_seconds=10,
+                observer_stages={"wrapper_entered_at": wrapper_entered_at,
+                                 "public_fixture_validated_at": helpers.observer_timestamp()}))
     owner_path = Path(os.environ[PREFIX + "OWNER"])
     owner = json.loads(owner_path.read_text())["run_name"] if owner_path.exists() else None
     created = created_run(tool, arguments)
@@ -187,6 +247,7 @@ def tool_wrapper(tool, arguments):
                 or (stage == "build" and tool == "docker" and "build" in arguments)
                 or (stage == "cluster" and tool == "k3d" and "create" in arguments)
                 or (stage == "readiness" and tool == "kubectl" and "rollout" in arguments and "status" in arguments)
+                or (stage == "lifecycle" and tool == "kubectl" and "delete" in arguments and "pod" in arguments and "--wait=true" in arguments)
                 or (stage == "load" and tool == "k6" and "run" in arguments))
     if not selected:
         os.execv(real, [real, *arguments])
@@ -251,6 +312,7 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
             PREFIX + "FIXTURE": str(app), PREFIX + "MONOREPO": str(args.monorepo).lower(),
             PREFIX + "PROBE_PACING": str(probe_pacing).lower(),
             PREFIX + "MARKER": str(marker), PREFIX + "OWNER": str(root / "owner.json"),
+            PREFIX + "PREFLIGHT_OUTPUT": str(args.output / ("preflight-commands-" + stage)),
             PREFIX + "IMPORT_OUTPUT": str(args.output / ("import-commands-" + stage)),
             PREFIX + "CLEANUP_OUTPUT": str(args.output / ("cleanup-commands-" + stage)),
             PREFIX + "FORCE_BUILDER_FAILURE": str(args.force_builder_cleanup_failure).lower(),
@@ -263,6 +325,7 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
         process, interrupted_at, cleanup_passed = None, None, False
         try:
             with report_path.open("wb") as stdout, (args.output / f"cancel-{stage}.stderr").open("wb") as stderr:
+                observation_started(report_path)
                 process = subprocess.Popen(command, stdout=stdout, stderr=stderr, env=environment)
                 deadline = time.monotonic() + 600
                 while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
@@ -287,11 +350,11 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
                     process.kill()
                     process.wait(timeout=10)
             if process is not None:
+                observation_finished(report_path, process.returncode if process else None)
                 helpers.write_json(args.output / f"cancel-{stage}.exit.json", {"exit_code": process.returncode})
             cleanup_passed = retain_cleanup(args.output, stage)
         report = json.loads(report_path.read_text())
-        assert report["status"] == "error", "Unexpected native status"
-        assert any(item["code"] == "verification_canceled" for item in report["diagnostics"]), "Missing cancellation classification"
+        qualify_cancellation(report, stage)
         if probe_pacing:
             assert report["plan"]["probes"] == {"interval": "2s"}, "Configured pacing missing from plan"
             assert report["fingerprint"]["configuration"]["probes"] == {"interval": "2s"}, "Configured pacing missing from fingerprint"
@@ -299,15 +362,7 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
             assert Path(environment[PREFIX + "INJECTION"]).exists(), "Declared builder fault was not exercised"
             assert any(item["code"] == "builder_cleanup_failed" for item in report["diagnostics"]), "Original injected cleanup failure disappeared"
             assert not any(item["code"] == "builder_remnant_cleanup_failed" for item in report["diagnostics"]), "Builder fallback failed"
-        evidence = {item["experiment_id"]: item for item in report["evidence"]}
-        target = {"build": "container-build", "readiness": "deployment-readiness", "load": "load-profile"}.get(stage)
-        if target:
-            assert evidence[target]["execution"]["executed"], "Started experiment was presented as never executed"
-            assert evidence[target]["status"] == "error", "Started experiment lost ERROR"
         assert not list(root.glob("cloudforge-verify-*")), "Temporary kubeconfig/runtime directory leaked"
-        if stage == "redis":
-            assert report["dependencies"][0]["status"] == "error"
-            assert not any(item["experiment_id"] == "deployment-readiness" and item["status"] == "pass" for item in report["evidence"])
         assert cleanup_passed, "CloudForge-owned resources remain after cleanup or could not be observed"
         current_config = Path.home() / ".kube" / "config"
         current_bytes = current_config.read_bytes() if current_config.exists() else None
@@ -341,6 +396,8 @@ def main():
     args.binary = str(Path(args.binary).resolve())
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
+    if any(args.output.iterdir()):
+        parser.error("qualification output must be empty; retain the previous attempt")
     with existing_state() as (sentinel_name, baseline, identities):
         for stage in args.stages:
             run_stage(args, stage, sentinel_name, baseline, identities)

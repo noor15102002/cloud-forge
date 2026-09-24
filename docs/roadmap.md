@@ -1,5 +1,12 @@
 # Roadmap and Backlog
 
+**Historical milestone record.** Version-like milestone names below describe
+completed development slices, not previously published release tags or the current
+stable support promise. Later sections may supersede earlier deferred work. The
+[current support and maturity table](supported-applications.md) and
+[prerelease qualification record](releasing.md) are authoritative today. Historical
+private application evidence is unchanged and is not part of this release task.
+
 This document mirrors the public GitHub milestones and project at a durable,
 reviewable level. Each milestone contains coherent work rather than an
 exhaustive task list.

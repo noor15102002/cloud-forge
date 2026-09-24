@@ -176,35 +176,49 @@ func qualifyTopology(outcome *recoveryOutcome, current plan) {
 		operation = "replacement of the only replica"
 	}
 	if id == "rolling-deployment" {
-		operation = "the version B rollout"
+		operation = "the same-source image B rollout"
+		outcome.Evidence.Measurements = append(outcome.Evidence.Measurements, model.Measurement{Name: "rollout_source", Value: "same_source"})
 	}
-	summary := "Availability requirement maintained during " + operation + "."
-	if outcome.Evidence.Status == model.StatusFail {
-		summary = "Availability requirement not maintained during " + operation + "."
-	}
-	failedRequests, total, downtime := "", "", ""
+	values := map[string]string{}
 	for _, m := range outcome.Evidence.Measurements {
-		switch m.Name {
-		case "failed_requests", "dropped_requests":
-			failedRequests = m.Value
-		case "request_count":
-			total = m.Value
-		case "downtime_ms":
-			downtime = m.Value
-		}
+		values[m.Name] = m.Value
 	}
+	failedRequests := values["failed_requests"]
+	if failedRequests == "" {
+		failedRequests = values["dropped_requests"]
+	}
+	total, downtime, interval, final := values["request_count"], values["downtime_ms"], values["probe_poll_interval_ms"], values["final_http_status"]
 	if total == "" {
 		return
 	}
-	if total != "" && failedRequests != "" && downtime != "" {
-		if outcome.Evidence.Status == model.StatusFail && failedRequests == "0" {
-			summary = "The required final health or deployment state was not established during " + operation + "."
-		}
-		summary += fmt.Sprintf(" %s/%s probes failed; %s ms observed downtime.", failedRequests, total, downtime)
+	summary := fmt.Sprintf("%s/%s sampled requests failed during %s.", failedRequests, total, operation)
+	if outcome.Evidence.Status == model.StatusPass {
+		summary = fmt.Sprintf("No failed requests were observed across %s probes during %s.", total, operation)
+	} else if failedRequests == "0" {
+		summary += " The required final health or deployment state was not established."
 	}
+	if interval != "" {
+		summary += " Sampling interval: " + interval + " ms."
+	}
+	if downtime == "0" {
+		summary += " No sampled failure window was observed."
+	} else if downtime != "" {
+		summary += " Maximum sampled failure window: " + downtime + " ms."
+	}
+	if final != "" {
+		if final == "0" {
+			summary += " Final HTTP response unavailable."
+		} else {
+			summary += " Final HTTP status: " + final + "."
+		}
+	}
+	summary += " Shorter interruptions between samples cannot be excluded."
 	if current.topology != nil {
 		origin := strings.ReplaceAll(current.topology.Origin, "_", " ")
 		summary += fmt.Sprintf(" Test topology: %s, %d replica(s), %s.", origin, replicas, current.topology.Strategy)
+	}
+	if id == "rolling-deployment" {
+		summary += " This tests rollout mechanics from the same source; image B is not separately scanned."
 	}
 	if id == "graceful-shutdown" {
 		summary += " Service probes do not establish a defective SIGTERM handler."

@@ -21,6 +21,7 @@ defaults=(
   "CLOUDFORGE_BASELINE_RUN_ID="
   "CLOUDFORGE_HAS_GITHUB_TOKEN=false"
   "CLOUDFORGE_RETENTION_DAYS=14"
+  "CLOUDFORGE_UPLOAD_ARTIFACT=true"
 )
 
 expect_failure() {
@@ -74,3 +75,9 @@ expect_failure "relative single-line" $'CLOUDFORGE_CONFIG_PATH=config.yaml\nforg
 expect_failure "must not escape" CLOUDFORGE_CONFIG_PATH=escape/config.yaml
 expect_failure "regular file" CLOUDFORGE_CONFIG_PATH=fifo
 expect_failure "regular file" CLOUDFORGE_CONFIG_PATH=application
+
+# A typo must not silently disable both default upload and qualification records.
+for value in '' TRUE False yes tru; do
+  expect_failure "upload-artifact must be exactly" "CLOUDFORGE_UPLOAD_ARTIFACT=$value"
+done
+env "${defaults[@]}" "GITHUB_OUTPUT=$temporary/deferred-output" CLOUDFORGE_UPLOAD_ARTIFACT=false "$validator"

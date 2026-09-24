@@ -8,10 +8,14 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from qualification_command import run_observed
+from reliability_import_observer import observe_imports
 
 parser = argparse.ArgumentParser()
 parser.add_argument("binary")
 parser.add_argument("output", type=Path)
+parser.add_argument("--case", choices=("all", "source-1", "source-2", "generated-1"), default="all",
+                    help="Run one declared topology case, or the complete comparison (default).")
 args = parser.parse_args()
 args.binary = str(Path(args.binary).resolve())
 args.output.mkdir(parents=True, exist_ok=True)
@@ -21,6 +25,8 @@ source_hashes = {name: hashlib.sha256((reference / name).read_bytes()).hexdigest
 summary = []
 for origin, replicas in [("source", 1), ("source", 2), ("generated", 1)]:
     name = f"{origin}-{replicas}"
+    if args.case not in ("all", name):
+        continue
     with tempfile.TemporaryDirectory(prefix="cf-reliability-") as temporary:
         app = Path(temporary) / "application"
         shutil.copytree(reference, app)
@@ -38,10 +44,10 @@ for origin, replicas in [("source", 1), ("source", 2), ("generated", 1)]:
         environment = dict(os.environ, TMPDIR=temporary)
         planned = subprocess.run([args.binary, "verify", str(app), "--plan", "--format", "json"], capture_output=True, text=True, check=True, env=environment)
         (args.output / f"{name}.plan.json").write_text(planned.stdout)
-        result = subprocess.run([args.binary, "verify", str(app), "--format", "json"], capture_output=True, text=True, timeout=900, env=environment)
         path = args.output / f"{name}.json"
-        path.write_text(result.stdout)
-        (args.output / f"{name}.stderr.txt").write_text(result.stderr)
+        with observe_imports(app, name, args.output / f"{name}.import") as import_environment:
+            result = run_observed([args.binary, "verify", str(app), "--format", "json"], path, timeout=900,
+                                  env=dict(environment, **import_environment))
         report = json.loads(result.stdout)
         assert report["schema_version"] == "v1alpha8"
         assert report["producer"]["commit"] not in ["", "unknown"]

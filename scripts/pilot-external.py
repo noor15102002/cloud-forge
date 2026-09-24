@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+from qualification_command import run_observed
 
 parser = argparse.ArgumentParser()
 parser.add_argument("binary")
@@ -32,8 +33,7 @@ for name, url, revision, subdirectory, port in apps:
         # deployment requests two replicas; no existing source manifest is overwritten.
         deployment = {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "pilot"}, "spec": {"replicas": 2, "selector": {"matchLabels": {"app": "pilot"}}, "template": {"metadata": {"labels": {"app": "pilot"}}, "spec": {"terminationGracePeriodSeconds": 30, "containers": [{"name": "app", "image": "pilot:local", "ports": [{"name": "http", "containerPort": port}], "readinessProbe": {"httpGet": {"path": "/", "port": "http"}, "periodSeconds": 1}, "livenessProbe": {"httpGet": {"path": "/", "port": "http"}}, "resources": {"requests": {"cpu": "100m", "memory": "64Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}}}]}}}}
         (app / "cloudforge-pilot-deployment.yaml").write_text(json.dumps(deployment))
-        result = subprocess.run([args.binary, "verify", str(app), "--format", "json"], capture_output=True, text=True, timeout=900)
-        (args.output / f"{name}.json").write_text(result.stdout)
+        result = run_observed([args.binary, "verify", str(app), "--format", "json"], args.output / f"{name}.json", timeout=900)
         report = json.loads(result.stdout)
         print(f"{name}: exit={result.returncode} status={report['status']}", flush=True)
         # Preserve legitimate source findings, including Express's root image.

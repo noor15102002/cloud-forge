@@ -3,106 +3,211 @@ package trivy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
+	"github.com/noor15102002/cloud-forge/internal/jsoninput"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
-// Scan contains the command result and parsed vulnerability findings.
+// Scan contains only a validated image observation; unusable responses have no findings/counts.
 type Scan struct {
-	Command  model.CommandResult
-	Findings []model.Finding
+	Started      bool
+	Command      model.CommandResult
+	Findings     []model.Finding
+	Measurements []model.Measurement
 }
 
-// Client scans built images through the Trivy CLI.
+// Client adapts bounded image vulnerability observations.
 type Client struct{ runner command.Runner }
 
-// New creates a Trivy CLI adapter.
+// New creates a scanner using the shared command runner.
 func New(runner command.Runner) *Client { return &Client{runner: runner} }
 
-// ScanImage scans one local image and parses Trivy's JSON contract.
-func (c *Client) ScanImage(ctx context.Context, image string) (Scan, error) {
+var imageIDPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+var metadataToken = regexp.MustCompile(`^[a-zA-Z0-9_.+-]{1,64}$`)
+
+// ScanImage binds a reliable Trivy v2 observation to the independently inspected image ID.
+// The tag is run-owned; matching Metadata.ImageID prevents a report for another image being accepted.
+func (c *Client) ScanImage(ctx context.Context, image, expectedImageID string) (Scan, error) {
+	if !imageIDPattern.MatchString(expectedImageID) {
+		return Scan{}, fmt.Errorf("the expected scan image identity was not established")
+	}
 	result := c.runner.Run(ctx, command.Request{
 		Name: "trivy", Args: []string{"image", "--format", "json", "--quiet", "--scanners", "vuln", "--timeout", "5m", image},
 		Timeout: 6 * time.Minute, OutputLimit: 8 * 1024 * 1024,
 	})
-	scan := Scan{Command: result}
+	scan := Scan{Command: result, Started: true}
 	if result.FailureType != model.FailureNone || result.ExitCode != 0 {
 		return scan, nil
 	}
 	if result.Truncated {
-		return scan, fmt.Errorf("trivy JSON exceeded the %d MiB output limit", 8)
+		return scan, fmt.Errorf("trivy observation exceeded its output limit")
 	}
-	findings, err := Parse([]byte(result.Stdout))
+	value, err := parseReport([]byte(result.Stdout))
 	if err != nil {
 		return scan, err
 	}
-	scan.Findings = findings
+	if value.Metadata.ImageID != expectedImageID {
+		return scan, fmt.Errorf("trivy scan subject did not match the expected image identity")
+	}
+	// ArtifactName is the supplied local image reference in supported image reports.
+	if value.ArtifactName != image {
+		return scan, fmt.Errorf("trivy scan reference did not match the requested image")
+	}
+	scan.Findings, scan.Measurements = normalize(value)
+	scan.Measurements = append(scan.Measurements,
+		model.Measurement{Name: "scan_schema_version", Value: strconv.Itoa(value.SchemaVersion)},
+		model.Measurement{Name: "scanned_image_id", Value: expectedImageID},
+		model.Measurement{Name: "scanned_image_reference", Value: image},
+		model.Measurement{Name: "scan_scope", Value: "image_a"},
+	)
 	return scan, nil
 }
 
+// These fields are the bounded subset of Trivy v0.74.0 pkg/types/report.go.
+// Results and Vulnerabilities use omitempty upstream: absent/null/empty is valid
+// only with the complete supported image envelope. Empty objects are not scans.
 type report struct {
+	SchemaVersion int    `json:"SchemaVersion"`
+	ArtifactName  string `json:"ArtifactName"`
+	ArtifactType  string `json:"ArtifactType"`
+	Metadata      struct {
+		ImageID string `json:"ImageID"`
+	} `json:"Metadata"`
 	Results []result `json:"Results"`
 }
-
 type result struct {
 	Target          string          `json:"Target"`
+	Class           string          `json:"Class"`
+	Type            string          `json:"Type"`
 	Vulnerabilities []vulnerability `json:"Vulnerabilities"`
 }
-
 type vulnerability struct {
 	VulnerabilityID  string `json:"VulnerabilityID"`
 	PkgName          string `json:"PkgName"`
+	PkgID            string `json:"PkgID"`
+	PkgPath          string `json:"PkgPath"`
 	InstalledVersion string `json:"InstalledVersion"`
 	FixedVersion     string `json:"FixedVersion"`
 	Severity         string `json:"Severity"`
 }
 
-// Parse converts bounded Trivy JSON into stable findings without retaining raw output.
-func Parse(data []byte) ([]model.Finding, error) {
+func parseReport(data []byte) (report, error) {
 	var value report
-	if err := json.Unmarshal(data, &value); err != nil {
-		return nil, fmt.Errorf("decode Trivy JSON: %w", err)
+	if err := jsoninput.Validate(data); err != nil {
+		return value, fmt.Errorf("trivy JSON is incomplete or invalid")
 	}
-	byID := map[string]model.Finding{}
-	for _, scanResult := range value.Results {
-		for _, vulnerability := range scanResult.Vulnerabilities {
-			id := "security.trivy." + stablePart(vulnerability.VulnerabilityID) + "." + stablePart(vulnerability.PkgName)
-			severity := severityOf(vulnerability.Severity)
-			observed := safeText(strings.TrimSpace(vulnerability.VulnerabilityID + " in " + vulnerability.PkgName + " " + vulnerability.InstalledVersion))
-			remediation := "Review the vulnerability and update or replace the affected package."
-			if vulnerability.FixedVersion != "" {
-				remediation = safeText("Update " + vulnerability.PkgName + " to " + vulnerability.FixedVersion + " or a later compatible fixed version.")
+	if err := exactReportShape(data); err != nil {
+		return value, err
+	}
+	if json.Unmarshal(data, &value) != nil {
+		return value, fmt.Errorf("trivy JSON does not match the supported report shape")
+	}
+	if value.SchemaVersion != 2 || value.ArtifactType != "container_image" || strings.TrimSpace(value.ArtifactName) == "" || !imageIDPattern.MatchString(value.Metadata.ImageID) {
+		return value, fmt.Errorf("trivy did not provide a supported v2 container-image observation")
+	}
+	for _, r := range value.Results {
+		if strings.TrimSpace(r.Target) == "" || (r.Class != "os-pkgs" && r.Class != "lang-pkgs") || !metadataToken.MatchString(r.Type) {
+			return value, fmt.Errorf("trivy result has an unsupported or incomplete package observation")
+		}
+		for _, v := range r.Vulnerabilities {
+			if strings.TrimSpace(v.VulnerabilityID) == "" || strings.TrimSpace(v.PkgName) == "" || strings.TrimSpace(v.InstalledVersion) == "" {
+				return value, fmt.Errorf("trivy vulnerability record is incomplete")
 			}
-			item := model.Finding{
-				ID: id, Category: "security", Status: model.StatusWarn, Severity: severity,
-				Summary:  "Trivy detected a known vulnerability in the container image.",
-				Observed: observed, Expected: "no known vulnerabilities", Remediation: remediation,
-				Source: &model.SourceReference{Path: "container-image", Field: safeText(targetDetail(scanResult.Target))},
-			}
-			if previous, exists := byID[id]; !exists || severityRank(item.Severity) > severityRank(previous.Severity) {
-				byID[id] = item
+			switch v.Severity {
+			case "UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL":
+			default:
+				return value, fmt.Errorf("trivy vulnerability severity is unsupported")
 			}
 		}
 	}
-	if len(byID) == 0 {
-		return []model.Finding{{
-			ID: "security.trivy.vulnerabilities", Category: "security", Status: model.StatusPass, Severity: model.SeverityInfo,
-			Summary: "Trivy detected no known vulnerabilities in the container image.", Observed: "0 vulnerabilities", Expected: "no known vulnerabilities",
-			Source: &model.SourceReference{Path: "container-image"},
-		}}, nil
+	return value, nil
+}
+
+// Parse validates the report envelope before normalization; ScanImage additionally
+// checks it against the independently observed expected image subject.
+func Parse(data []byte) ([]model.Finding, error) {
+	value, err := parseReport(data)
+	if err != nil {
+		return nil, err
 	}
-	findings := make([]model.Finding, 0, len(byID))
-	for _, item := range byID {
+	findings, _ := normalize(value)
+	return findings, nil
+}
+
+type findingRecord struct {
+	finding model.Finding
+	fixed   bool
+	key     string
+}
+
+func normalize(value report) ([]model.Finding, []model.Measurement) {
+	byKey := map[string]findingRecord{}
+	for _, r := range value.Results {
+		for _, v := range r.Vulnerabilities {
+			// JSON tuples avoid separator and punctuation collisions. Raw paths are used
+			// only in the digest key, never published. Versions and targets remain distinct.
+			keyBytes, _ := json.Marshal([]string{v.VulnerabilityID, v.PkgName, v.InstalledVersion, v.PkgID, v.PkgPath, r.Class, r.Type, r.Target})
+			key := string(keyBytes)
+			id := "security.trivy." + stablePart(v.VulnerabilityID) + "." + stablePart(v.PkgName)
+			remediation := "Review the vulnerability and update or replace the affected package."
+			if v.FixedVersion != "" {
+				remediation = safeText("Update " + v.PkgName + " to " + v.FixedVersion + " or a later compatible fixed version.")
+			}
+			item := model.Finding{ID: id, Category: "security", Status: model.StatusWarn, Severity: severityOf(v.Severity),
+				Summary:  "Trivy reported a vulnerability finding in the scanned image A.",
+				Observed: safeText(strings.TrimSpace(v.VulnerabilityID + " in " + v.PkgName + " " + v.InstalledVersion)),
+				Expected: "no known vulnerabilities reported", Remediation: remediation,
+				Source: &model.SourceReference{Path: "container-image", Field: safeText(targetDetail(r.Target) + "; class=" + r.Class + "; type=" + r.Type)},
+			}
+			previous, exists := byKey[key]
+			// Stable selection for duplicate identical package records, independent of input order.
+			if !exists || severityRank(item.Severity) > severityRank(previous.finding.Severity) || (item.Severity == previous.finding.Severity && item.Remediation < previous.finding.Remediation) {
+				byKey[key] = findingRecord{finding: item, fixed: v.FixedVersion != "", key: key}
+			}
+		}
+	}
+	groups := map[string]int{}
+	for _, record := range byKey {
+		groups[record.finding.ID]++
+	}
+	counts := map[model.Severity]int{}
+	findings := make([]model.Finding, 0, len(byKey))
+	fixed := 0
+	for _, record := range byKey {
+		item := record.finding
+		if groups[item.ID] > 1 {
+			sum := sha256.Sum256([]byte(record.key))
+			item.ID += "." + hex.EncodeToString(sum[:])
+		}
+		counts[item.Severity]++
+		if record.fixed {
+			fixed++
+		}
 		findings = append(findings, item)
 	}
+	measurements := []model.Measurement{{Name: "vulnerabilities", Value: strconv.Itoa(len(findings)), Unit: "findings"}, {Name: "known_fix_available", Value: strconv.Itoa(fixed), Unit: "findings"}}
+	for _, severity := range []model.Severity{model.SeverityCritical, model.SeverityHigh, model.SeverityMedium, model.SeverityLow, model.SeverityInfo} {
+		measurements = append(measurements, model.Measurement{Name: "severity_" + string(severity), Value: strconv.Itoa(counts[severity]), Unit: "findings"})
+	}
+	if len(findings) == 0 {
+		findings = append(findings, model.Finding{
+			ID: "security.trivy.vulnerabilities", Category: "security", Status: model.StatusPass, Severity: model.SeverityInfo,
+			Summary: "Trivy reported zero vulnerability findings in the scanned image A.", Observed: "0 normalized findings", Expected: "no known vulnerabilities reported",
+			Source: &model.SourceReference{Path: "container-image"},
+		})
+	}
 	sort.Slice(findings, func(i, j int) bool { return findings[i].ID < findings[j].ID })
-	return findings, nil
+	return findings, measurements
 }
 
 func severityOf(value string) model.Severity {

@@ -94,6 +94,9 @@ func TestVersionObservationFailuresPreserveSafeDiagnosticsAndStopExecution(t *te
 					t.Fatal("unobservable version reached application deployment")
 				}
 				for _, evidence := range out.Run.Evidence {
+					if evidence.ExperimentID == "environment-cleanup" {
+						continue // Operational cleanup runs after a failed prerequisite.
+					}
 					if phase == "kubectl-server" && (evidence.ExperimentID == "container-build" || evidence.ExperimentID == "container-scan") {
 						continue // These observations precede the isolated server gate.
 					}

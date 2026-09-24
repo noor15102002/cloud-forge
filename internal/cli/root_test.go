@@ -40,10 +40,11 @@ func TestVerifyJSONContractAndExitCode(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, "Dockerfile"), []byte("FROM node:22-alpine\nUSER node\nEXPOSE 8080\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
-		result := successfulCLIRunner()(context.Background(), request)
+	base := successfulCLIRunner()
+	runner := cliRunnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {
+		result := base(ctx, request)
 		if request.Name == "trivy" && len(request.Args) > 1 {
-			result.Stdout = `{"Results":[]}`
+			result.Stdout = validTrivyReport(request)
 		}
 		for _, argument := range request.Args {
 			if argument == "pods" {
@@ -63,7 +64,7 @@ func TestVerifyJSONContractAndExitCode(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != model.VerificationSchemaVersion || result.Status != model.StatusPass || len(result.Evidence) != 12 {
+	if result.SchemaVersion != model.VerificationSchemaVersion || result.Status != model.StatusPass || len(result.Evidence) != 13 {
 		t.Fatalf("unexpected verification contract: %#v", result)
 	}
 }
@@ -76,10 +77,11 @@ func TestVerifyMarkdownReport(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, "Dockerfile"), []byte("FROM node:22-alpine\nUSER node\nEXPOSE 8080\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runner := cliRunnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
-		result := successfulCLIRunner()(context.Background(), request)
+	base := successfulCLIRunner()
+	runner := cliRunnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {
+		result := base(ctx, request)
 		if request.Name == "trivy" && len(request.Args) > 1 {
-			result.Stdout = `{"Results":[]}`
+			result.Stdout = validTrivyReport(request)
 		}
 		if containsCLIArgument(request.Args, "pods") {
 			result.Stdout = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"api"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
@@ -172,8 +174,15 @@ func successfulCLIRunner() cliRunnerFunc {
 }
 
 func cliTestRunner(vulnerable bool) cliRunnerFunc {
+	infrastructure := &cliClusterFixture{objects: map[string]map[string]any{}}
 	return func(_ context.Context, request command.Request) model.CommandResult {
+		if result, handled := infrastructure.run(request); handled {
+			return result
+		}
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		if request.Name == "docker" && strings.Contains(strings.Join(request.Args, " "), ".RepoDigests") {
+			result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" []`
+		}
 		if request.Name == "kubectl" && slices.Contains(request.Args, "/readyz") {
 			result.Stdout = "ok"
 		}
@@ -188,8 +197,8 @@ func cliTestRunner(vulnerable bool) cliRunnerFunc {
 		}
 		if request.Name == "docker" && slices.Contains(request.Args, "inspect") {
 			result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" []`
-			if len(request.Args) > 2 && (request.Args[0] == "container" || request.Args[0] == "volume") &&
-				strings.HasPrefix(request.Args[len(request.Args)-1], "buildx_buildkit_cloudforge-") {
+			if len(request.Args) > 2 && ((request.Args[0] == "container" || request.Args[0] == "volume") && strings.HasPrefix(request.Args[len(request.Args)-1], "buildx_buildkit_cloudforge-") ||
+				request.Args[0] == "image" && strings.Contains(strings.Join(request.Args, " "), "cloudforge.dev/ownership")) {
 				result.Stdout = ""
 				result.ExitCode, result.FailureType = 1, model.FailureExit
 				result.Stderr = "Error: No such object: " + request.Args[len(request.Args)-1]
@@ -198,9 +207,9 @@ func cliTestRunner(vulnerable bool) cliRunnerFunc {
 
 		if request.Name == "trivy" && len(request.Args) > 1 {
 			if vulnerable {
-				result.Stdout = `{"Results":[{"Target":"image","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libc","InstalledVersion":"1","Severity":"HIGH"}]}]}`
+				result.Stdout = trivyReportWithFindings(request, `[{"Target":"image","Class":"os-pkgs","Type":"alpine","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libc","InstalledVersion":"1","Severity":"HIGH"}]}]`)
 			} else {
-				result.Stdout = `{"Results":[]}`
+				result.Stdout = validTrivyReport(request)
 			}
 		}
 		if request.Name == "k6" && slices.Contains(request.Args, "run") {
@@ -367,4 +376,11 @@ func TestSelectedAnalyzeAndPlanResolvePathsAgainstRepository(t *testing.T) {
 			first = append([]byte(nil), out.Bytes()...)
 		}
 	}
+}
+
+func validTrivyReport(request command.Request) string { return trivyReportWithFindings(request, "[]") }
+func trivyReportWithFindings(request command.Request, results string) string {
+	subject := request.Args[len(request.Args)-1]
+	name, _ := json.Marshal(subject)
+	return `{"SchemaVersion":2,"ArtifactType":"container_image","ArtifactName":` + string(name) + `,"Metadata":{"ImageID":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"Results":` + results + `}`
 }

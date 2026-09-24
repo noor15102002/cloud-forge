@@ -12,19 +12,34 @@ permissions:
 jobs:
   readiness:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 145
     steps:
       - name: Check out repository without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Capture independent cleanup baseline
+        run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
+
+      - name: Prepare the declared HTTP-core fixture profile
+        run: python3 scripts/core_fixture.py healthy-node .qualification-core/healthy-node "$RUNNER_TEMP/core-profile.json"
+
       - name: Verify healthy Node fixture with the packaged action
         id: cloudforge
         uses: ./
         with:
-          path: testdata/healthy-node
+          upload-artifact: 'false'
+          path: .qualification-core/healthy-node
           artifact-name: cloudforge-verification
+
+      - name: Preserve the explicit test profile
+        if: always()
+        env:
+          REPORT_DIRECTORY: ${{ steps.cloudforge.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}
+        run: |
+          mkdir -p "$REPORT_DIRECTORY"
+          if [ -f "$RUNNER_TEMP/core-profile.json" ]; then cp "$RUNNER_TEMP/core-profile.json" "$REPORT_DIRECTORY/core-profile.json"; fi
 
       - name: Show safe verification result
         if: ${{ always() }}
@@ -48,42 +63,156 @@ jobs:
             any(.evidence[]; .experiment_id == "graceful-shutdown" and .status == "pass" and any(.measurements[]; .name == "requests_overlapping_deletion" and (.value | tonumber) > 0) and any(.measurements[]; .name == "dropped_requests" and .value == "0")) and
             any(.evidence[]; .experiment_id == "pod-recovery" and .status == "pass" and any(.measurements[]; .name == "failed_requests" and .value == "0") and any(.measurements[]; .name == "final_http_status" and ((.value | tonumber) >= 200 and (.value | tonumber) < 300))) and
             any(.evidence[]; .experiment_id == "rolling-deployment" and .status == "pass" and any(.measurements[]; .name == "source_version" and .value == "a") and any(.measurements[]; .name == "target_version" and .value == "b") and any(.measurements[]; .name == "target_ready_pods" and .value == "2") and any(.measurements[]; .name == "failed_requests" and .value == "0")) and
-            any(.evidence[]; .experiment_id == "load-profile" and .status == "pass" and any(.measurements[]; .name == "request_count" and (.value | tonumber) > 0) and any(.measurements[]; .name == "error_rate" and .value == "0.000") and any(.measurements[]; .name == "latency_p95_ms")) and
-            any(.evidence[]; .experiment_id == "horizontal-autoscaling" and .status == "pass" and any(.measurements[]; .name == "peak_replicas" and (.value | tonumber) > 2))
+            any(.evidence[]; .experiment_id == "load-profile" and .status == "pass" and any(.measurements[]; .name == "request_count" and (.value | tonumber) > 0) and any(.measurements[]; .name == "error_rate" and .value == "0.000") and any(.measurements[]; .name == "latency_p95_ms"))
           ' "$CLOUDFORGE_REPORT"
 
-      - name: Verify broken shutdown detection
+      - name: Require experimental experiments to be explicitly skipped
         env:
-          CLOUDFORGE_BINARY: ${{ steps.cloudforge.outputs.binary }}
+          CLOUDFORGE_REPORT: ${{ steps.cloudforge.outputs.report-json }}
         run: |
-          set +e
-          "$CLOUDFORGE_BINARY" verify testdata/broken-shutdown --format json > /tmp/cloudforge-broken-shutdown.json
-          status="$?"
-          set -e
-          jq . /tmp/cloudforge-broken-shutdown.json
-          test "$status" -eq 1
-          jq --exit-status '
-            .status == "fail" and
-            any(.evidence[]; .experiment_id == "inflight-shutdown" and .status == "fail") and
-            any(.findings[]; .id == "runtime.inflight-shutdown" and .status == "fail")
-          ' /tmp/cloudforge-broken-shutdown.json
+          PYTHONPATH=scripts python3 - <<'PYTHON'
+          import json, os
+          from core_fixture import require_experimental_skipped
+          report = json.load(open(os.environ["CLOUDFORGE_REPORT"]))
+          require_experimental_skipped({item["experiment_id"]: item for item in report["evidence"]})
+          PYTHON
 
-      - name: Verify broken rollout detection
+      - name: Verify the stable rollout fault with original streams and exits
         env:
-          CLOUDFORGE_BINARY: ${{ steps.cloudforge.outputs.binary }}
-        run: |
-          set +e
-          "$CLOUDFORGE_BINARY" verify testdata/broken-rollout --format json > /tmp/cloudforge-broken-rollout.json
-          status="$?"
-          set -e
-          jq . /tmp/cloudforge-broken-rollout.json
-          test "$status" -eq 1
-          jq --exit-status '
-            .status == "fail" and
-            any(.evidence[]; .experiment_id == "rolling-deployment" and .status == "fail" and any(.measurements[]; .name == "target_ready_pods" and .value == "0")) and
-            any(.diagnostics[]; .code == "rolling_deployment_failed" and .status == "fail")
-          ' /tmp/cloudforge-broken-rollout.json
+          CF_BINARY: ${{ steps.cloudforge.outputs.binary }}
+        run: python3 scripts/qualification-run.py --case core-integration-failures --binary "$CF_BINARY" --evidence "$RUNNER_TEMP/integration-failures" --records "$RUNNER_TEMP/failure-records" --timeout 2100 -- python3 scripts/pilot-integration-failures.py "$CF_BINARY" "$RUNNER_TEMP/integration-failures" --core
 
-      - name: Confirm all owned Docker resources were removed
-        if: ${{ always() }}
-        run: timeout --signal=TERM --kill-after=5s 60s bash scripts/pilot-cleanup-check.sh
+      - name: Independently check cleanup before any upload
+        if: always()
+        timeout-minutes: 3
+        run: python3 scripts/pilot-cleanup-check.py --baseline "$RUNNER_TEMP/cleanup-baseline.json" --output "$RUNNER_TEMP/cleanup.json"
+      - name: Preserve packaged Action evidence with the reporter artifact contract — compact result before uploads
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ steps.cloudforge.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ steps.cloudforge.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q5_small
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cloudforge-verification-record-initial
+          path: ${{ steps.cloudforge.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}/qualification-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q5_bulk
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cloudforge-verification
+          path: ${{ steps.cloudforge.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ steps.cloudforge.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q5_bulk.outcome }}
+          SMALL: ${{ steps.q5_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q5_final
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cloudforge-verification-record-final
+          path: ${{ steps.cloudforge.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}/qualification-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ steps.cloudforge.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q5_bulk.outcome }}
+          SMALL: ${{ steps.q5_small.outcome }}
+          FINAL: ${{ steps.q5_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi
+      - name: Preserve expected failures without rewriting their native verdict — compact result before uploads
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/failure-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ runner.temp }}/integration-failures
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q6_small
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-failures-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ runner.temp }}/failure-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q6_bulk
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-failures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/integration-failures
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/failure-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q6_bulk.outcome }}
+          SMALL: ${{ steps.q6_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q6_final
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-failures-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ runner.temp }}/failure-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/failure-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q6_bulk.outcome }}
+          SMALL: ${{ steps.q6_small.outcome }}
+          FINAL: ${{ steps.q6_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi

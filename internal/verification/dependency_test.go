@@ -294,7 +294,8 @@ func TestReadinessDeadlineRetainsLastHTTPResponseWithoutPassing(t *testing.T) {
 		return 0, context.Canceled
 	}
 	observed := service.waitForHTTP(ctx, "http://127.0.0.1/ready")
-	if observed.Success || observed.Status != 200 || observed.Failures != 2 {
+	// The interrupted final transport is not an observed application failure.
+	if observed.Success || observed.Status != 200 || observed.Attempts != 1 || observed.Failures != 1 {
 		t.Fatalf("lost observed response or accepted degraded readiness: %#v", observed)
 	}
 }

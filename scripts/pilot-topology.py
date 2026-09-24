@@ -9,9 +9,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import signal
 import subprocess
 import tempfile
+from qualification_command import run_observed
 
 parser = argparse.ArgumentParser()
 parser.add_argument("binary")
@@ -43,15 +43,9 @@ for replicas in (1, 2):
     assert plan["status"] == "pass" and plan["topology"]["origin"] == "explicit_test_configuration"
     assert plan["topology"]["replicas"] == replicas
     with tempfile.TemporaryDirectory(prefix="cf-explicit-topology-") as temporary:
-        with (output / "report.json").open("w") as stdout, (output / "stderr.txt").open("w") as stderr:
-            process = subprocess.Popen(command, stdout=stdout, stderr=stderr, env=dict(os.environ, TMPDIR=temporary))
-            try:
-                code = process.wait(timeout=900)
-            except subprocess.TimeoutExpired:
-                process.send_signal(signal.SIGINT)
-                process.wait(timeout=720)
-                raise
-        report = json.loads((output / "report.json").read_text())
+        observed = run_observed(command, output / "report.json", timeout=900, env=dict(os.environ, TMPDIR=temporary))
+        code = observed.returncode
+        report = json.loads(observed.stdout)
         assert report["schema_version"] == "v1alpha8" and report["producer"]["commit"] not in ("", "unknown")
         assert code in (0, 1) and report["status"] in ("pass", "warn", "fail")
         evidence = {e["experiment_id"]: e for e in report["evidence"]}

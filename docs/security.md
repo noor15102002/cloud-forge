@@ -1,5 +1,9 @@
 # Security and Trust Model
 
+The [current support and maturity table](supported-applications.md) defines the
+release scope. No feature certifies business correctness, continuous availability
+or hostile-code isolation. Use disposable test credentials and data only.
+
 Repository analysis is read-only. CloudForge resolves the selected root,
 does not follow repository symbolic links, skips common generated directories,
 limits traversal to 2,000 files, and limits each parsed file to 2 MiB.
@@ -44,8 +48,27 @@ environment values into the generated workload. Independent cleanup contexts
 delete the cluster after success, failure, timeout, or cancellation unless the
 operator explicitly passes `--keep-environment`. Each image and cluster removal
 gets its own bounded context, so one failed removal cannot consume the timeout
-for later resources. A partially created cluster is always deleted; the keep
-flag applies only after cluster creation succeeds.
+for later resources. Cleanup is attempted for proven-owned resources from a
+partially created cluster; uncertain ownership or removal is reported as ERROR.
+The keep flag applies only after cluster creation succeeds.
+
+Public run IDs use 20 hexadecimal characters so the `cloudforge-` cluster name
+fits k3d's 32-character limit. Independent private ownership tokens remain 32
+hexadecimal characters and are not report metadata.
+
+Before k3d starts, CloudForge creates its temporary network and image volume with
+private invocation labels and captures their identities. This lets cleanup
+identify k3d's transient helper even if creation stops before a server exists.
+Removal requires those captured identities and matching container attachments;
+a familiar name alone never proves ownership. A replaced resource or incomplete
+observation remains ERROR.
+
+With `--keep-environment`, the retained network is intentionally left in place.
+A later manual `k3d cluster delete` treats that network as external and does not
+remove it. After deleting the retained cluster, inspect its exact
+`k3d-<cluster-name>` network and confirm the `k3d.cluster` and
+`cloudforge.dev/ownership` labels identify the retained run, then remove that
+network by its full Docker ID. Never use a broad prune to clean a retained run.
 
 The BuildKit container carries an explicit run marker. Before removing its
 builder, CloudForge records the exact container ID and the identity of its
@@ -63,8 +86,9 @@ cleanup command deadlines. A failing or unreachable Docker daemon can still
 prevent cleanup; such errors and independently observed leftovers are retained.
 
 Each run uses private kubeconfig and Docker builder configuration. The default
-kubectl context and builder remain unchanged. Workload limits include rollout
-surge and HPA maxima; a private BuildKit builder bounds build CPU and memory.
+kubectl context and builder remain unchanged. The workload resource estimate includes
+rollout surge and HPA maxima; it does not reserve a strict whole-host maximum.
+A private BuildKit builder bounds build CPU and memory.
 See [runtime configuration](runtime-configuration.md) for exact budgets and
 unsupported deployment settings. A failed node reports only fixed condition
 codes; raw Kubernetes messages, pod logs and environment values are omitted.
@@ -87,6 +111,9 @@ must be explicitly configured. HTTP redirects are not followed. Source HPAs
 above five replicas are rejected before execution. Neither raw response bodies
 nor source environment values enter the load report.
 
+Trivy runs against locally built image A only. Its supported scan envelope must
+match the independently observed image identity; unusable output produces ERROR.
+The scan does not establish image B security state or confirmed exploitability.
 Trivy runs against the locally built image. CloudForge parses bounded JSON and
 retains vulnerability identifier, package, installed version, fixed version,
 severity, and image target metadata. Raw scanner output is not included in the

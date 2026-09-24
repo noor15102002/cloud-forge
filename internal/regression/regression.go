@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/noor15102002/cloud-forge/internal/jsoninput"
 	"github.com/noor15102002/cloud-forge/internal/safefile"
 
 	"github.com/noor15102002/cloud-forge/pkg/model"
@@ -86,6 +87,9 @@ func Load(path string) (model.VerificationRun, error) {
 	data, err := safefile.Read(filepath.Dir(path), filepath.Base(path), maxReportBytes)
 	if err != nil {
 		return model.VerificationRun{}, fmt.Errorf("read verification report: %w", err)
+	}
+	if err := jsoninput.Validate(data); err != nil {
+		return model.VerificationRun{}, fmt.Errorf("decode verification report %q: %w", path, err)
 	}
 
 	var identity struct {
@@ -237,10 +241,21 @@ func Compare(current, baseline model.VerificationRun) model.BaselineComparison {
 			compareMeasurements(&comparison, currentEvidence, baselineEvidence)
 		}
 	}
-	if len(comparison.Regressions) > 0 {
-		comparison.Status = model.StatusFail
-	} else if len(comparison.Unavailable) > 0 {
+	if len(comparison.Unavailable) > 0 {
 		comparison.Status = model.StatusWarn
+	}
+	for _, changes := range [][]model.ComparisonChange{comparison.Regressions, comparison.Improvements} {
+		for _, change := range changes {
+			if change.Kind == model.ComparisonMeasurement {
+				comparison.Status = model.StatusWarn
+			}
+		}
+	}
+	for _, change := range comparison.Regressions {
+		if change.Kind == model.ComparisonStatus {
+			comparison.Status = model.StatusFail
+			break
+		}
 	}
 	return comparison
 }
@@ -313,7 +328,7 @@ func compareMeasurements(comparison *model.BaselineComparison, current, baseline
 			Baseline:     baselineMeasurement.Value,
 			Current:      currentMeasurement.Value,
 			Unit:         currentMeasurement.Unit,
-			Summary:      fmt.Sprintf("%s changed from %s to %s", name, formatMeasurement(baselineMeasurement.Value, baselineMeasurement.Unit), formatMeasurement(currentMeasurement.Value, currentMeasurement.Unit)),
+			Summary:      fmt.Sprintf("Advisory numerical change: %s changed from %s to %s; this single-run comparison is not statistical evidence of regression or improvement", name, formatMeasurement(baselineMeasurement.Value, baselineMeasurement.Unit), formatMeasurement(currentMeasurement.Value, currentMeasurement.Unit)),
 		}
 		regressed := policy.direction == lowerIsBetter && currentValue > baselineValue || policy.direction == higherIsBetter && currentValue < baselineValue
 		if regressed {

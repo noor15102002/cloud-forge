@@ -133,15 +133,18 @@ reports cannot establish compatible runtime baselines. Timing tolerances remain
 observational; the existing 10% heuristic has not become statistically calibrated.
 
 All dependency resources carry run ownership labels inside the unique cluster.
-The existing independent cleanup deadlines remove the cluster and its dependency
+Independent bounded cleanup attempts remove the owned cluster and its dependency
 Deployment, Service and namespace after failure, timeout or cancellation, along
-with owned images/builders and private configuration. `--keep-environment`
+with owned images/builders and private configuration. Incomplete removal or
+observation remains ERROR. `--keep-environment`
 explicitly retains a created cluster for inspection; SIGKILL/host/daemon failure
-can still require manual owned-resource recovery. No global prune is used.
+can still require manual owned-resource recovery. The preprovisioned network is
+external to k3d, so manual cluster deletion leaves it behind; follow the
+[retained-resource guidance](security.md). No global prune is used.
 
 ## Backend extension
 
-The current v1alpha5 input contract also supports fixed PostgreSQL/pgvector and
+The experimental v1alpha5 input contract also supports fixed PostgreSQL/pgvector and
 ClamAV providers, generated values, preparation and explicit capacity/network
 controls. See [backend verification](backend-runtime.md); the Redis configuration
 examples and default profile above remain valid.

@@ -150,19 +150,45 @@ func TestBuilderRunMarkerUsesSupportedDriverOptionWithoutChangingLimits(t *testi
 	calls := 0
 	c := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		calls++
-		want := "memory=2g,cpu-period=100000,cpu-quota=200000,env.CLOUDFORGE_RUN_ID=" + cleanupBuilderName
+		want := "memory=2g,cpu-period=100000,cpu-quota=200000,env.CLOUDFORGE_RUN_ID=" + cleanupBuilderName + ",env.CLOUDFORGE_OWNER_ID=" + strings.Repeat("d", 32)
 		if !slices.Equal(request.Args, []string{"buildx", "create", "--name", cleanupBuilderName, "--driver", "docker-container", "--driver-opt", want}) || request.Timeout != time.Minute {
 			t.Fatalf("unexpected create request: %+v", request)
 		}
 		return model.CommandResult{}
 	}))
 	c.IsolateBuild(cleanupBuilderName)
+	c.ownershipToken = strings.Repeat("d", 32)
 	if result := c.CreateBuilder(context.Background()); builderCleanupFailed(result) {
 		t.Fatal(result)
 	}
 	c.IsolateBuild("unrelated; --all")
 	if result := c.CreateBuilder(context.Background()); !builderCleanupFailed(result) || calls != 1 {
 		t.Fatal("unsafe builder name reached Docker")
+	}
+}
+
+func TestBuilderAcceptsCurrentAndHistoricalPublicIdentityLengths(t *testing.T) {
+	for _, length := range []int{8, 20, 32, 19, 21} {
+		name := "cloudforge-" + strings.Repeat("a", length)
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			client := New(runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+				calls++
+				if request.Args[3] != name {
+					t.Fatal("builder public identity was changed")
+				}
+				return model.CommandResult{}
+			}))
+			client.IsolateBuild(name)
+			result := client.CreateBuilder(context.Background())
+			valid := length == 8 || length == 20 || length == 32
+			if valid && (calls != 1 || builderCleanupFailed(result)) || !valid && (calls != 0 || !builderCleanupFailed(result)) {
+				t.Fatalf("builder identity boundary changed: calls=%d result=%+v", calls, result)
+			}
+			if len(client.OwnershipToken()) != 32 {
+				t.Fatal("public identity length changed the private ownership token")
+			}
+		})
 	}
 }
 
@@ -175,7 +201,7 @@ func TestBuilderOwnershipFormatOmitsEnvironmentAndUnrelatedMounts(t *testing.T) 
 		}
 		data := map[string]any{
 			"Id": strings.Repeat("a", 64), "Name": "/buildx_buildkit_" + cleanupBuilderName + "0",
-			"Config": map[string]any{"Env": []string{"PRIVATE_TOKEN=secret-canary", "CLOUDFORGE_RUN_ID=" + cleanupBuilderName}},
+			"Config": map[string]any{"Env": []string{"PRIVATE_TOKEN=secret-canary", "CLOUDFORGE_RUN_ID=" + cleanupBuilderName, "CLOUDFORGE_OWNER_ID=" + strings.Repeat("d", 32)}},
 			"Mounts": []map[string]string{{"Type": "volume", "Name": "buildx_buildkit_" + cleanupBuilderName + "0_state", "Destination": "/var/lib/buildkit"}, {"Type": "bind", "Name": "unrelated-private-path", "Destination": "/unrelated"}},
 		}
 		var output bytes.Buffer
@@ -188,6 +214,7 @@ func TestBuilderOwnershipFormatOmitsEnvironmentAndUnrelatedMounts(t *testing.T) 
 		return model.CommandResult{Stdout: output.String()}
 	}))
 	c.IsolateBuild(cleanupBuilderName)
+	c.ownershipToken = strings.Repeat("d", 32)
 	proof, exists, result := c.inspectBuilderContainer(context.Background(), c.builderContainerName())
 	if !exists || builderCleanupFailed(result) || proof.containerID != strings.Repeat("a", 64) {
 		t.Fatalf("allowlisted inspect did not establish ownership: %+v %v %+v", proof, exists, result)

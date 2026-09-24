@@ -28,12 +28,30 @@ observed categories are emitted, in sorted order. At most 500 status counters an
 values are omitted. These descriptive counters use existing measurement entries
 and do not change the report schema or historical loading.
 
+Startup observations use the same safe counters with the `startup_probe_` prefix;
+final health observations use `final_probe_`. A retained HTTP 200 can still fail a
+semantic assertion, so use the failure category with the status. HTTP 0 does not
+identify a cause; `connection_closed`, `connection_reset`, `connection_refused`
+and `timeout` distinguish observed transport failures without retaining raw text.
+An unissued or canceled request is not counted as an observed failed request.
+
+New image-A scan measurements include `vulnerabilities`, severity counts,
+`known_fix_available`, `scan_schema_version`, `scanned_image_id`,
+`scanned_image_reference` and `scan_scope`. An unusable scan has no synthesized
+finding count. `environment-cleanup` is separate operational evidence: PASS means
+owned resource and private workspace absence was verified; ERROR means removal
+or its observation failed; SKIPPED identifies an explicitly retained environment.
+Earlier application failures remain visible even when cleanup changes the overall
+result to ERROR. Loading older reports does not add any of these measurements.
+
 `probe_timeout_ms` and `probe_poll_interval_ms` describe the bounded probe policy.
 The sampler is serial: slow requests reduce the sampling frequency.
-`downtime_ms` retains its existing convention, from the first failed response's
+`downtime_ms` is the maximum sampled failure window and retains its existing convention, from the first failed response's
 completion to a later successful response's completion, or the observation end.
 It does not locate the exact outage onset, include the first failed request's
-duration, or prove continuous unavailability between samples.
+duration, or prove continuous unavailability between samples. Zero failures means
+no failed requests were observed across the recorded probes at the configured
+interval; shorter interruptions between samples cannot be excluded.
 `downtime_window_censored=true` means the final failed window ended without an
 observed recovery. CloudForge-canceled requests are excluded from request and
 failure counts. Historical measurements are never recalculated.
@@ -60,7 +78,7 @@ cloudforge verify . --baseline baseline.json --format json > current.json
 The baseline must be a regular `v1alpha1`, `v1alpha2`, `v1alpha3`, `v1alpha4`, `v1alpha5`, `v1alpha6`, `v1alpha7` or `v1alpha8` JSON file no larger than 4 MiB.
 CloudForge validates the complete document against the embedded public schema
 and rejects incompatible versions, missing required fields, unknown fields,
-duplicate experiment IDs, and duplicate measurement names before building or
+duplicate JSON object keys, duplicate experiment IDs, and duplicate measurement names before building or
 executing the application. The embedded and public schema copies are checked
 for exact equality in tests. This keeps artifact selection and authentication
 outside the core engine, so a local command or CI workflow can download the
@@ -71,7 +89,9 @@ regressions, improvements, and unavailable comparisons. The current run's
 `status` and `findings` remain absolute observations and are never rewritten by
 the relative comparison. A current run can therefore have `status: pass` and a
 `comparison.status: fail`. The command exits `1` when either verification fails
-or the comparison contains a regression.
+or the comparison contains an evidence-status regression. Numerical-only changes
+are advisory and can produce comparison WARN without changing a successful run
+to exit 1. Historical saved comparisons are not regraded while loading.
 
 Status changes use `pass`, `warn`, `fail`, and `error` severity order. A skipped or blocked
 experiment is unavailable for status comparison. Numeric measurements are
@@ -83,18 +103,23 @@ nonnumeric, and unit-incompatible measurements appear under `unavailable`.
 Reports for different named applications are not compared and produce one
 explicit unavailable comparison.
 
-Any change in failure counts, error rate, restarts, vulnerabilities, or downtime
-is significant. Latency, other lifecycle durations, request count, and
-throughput use a fixed 10 percent relative tolerance; pilot measurements show this can still
-flag natural noise and does not establish statistical significance. A nonzero change from a
-zero baseline remains significant.
+Numerical grading is experimental and advisory. The existing heuristic flags
+changes in failure counts, error rate, restarts, reported vulnerabilities and
+maximum sampled failure window. Latency, other lifecycle durations, request count
+and throughput retain a fixed 10 percent relative tolerance. A nonzero change
+from a zero baseline is also reported. These thresholds can flag natural noise;
+they do not establish statistical significance or a causal performance regression.
 
 ## Terminal
 
 The default `--format text` output shows the overall status, one line per
 experiment, baseline changes when requested, actionable findings, and
-diagnostics. Detailed measurements remain available in JSON and Markdown so
-interactive output stays concise.
+diagnostics. Failed lifecycle rows include bounded failed-request totals and safe
+failure categories or HTTP status counts. Container scan output summarizes
+normalized Trivy findings by severity and known fix availability, with a bounded
+high-value finding subset. It does not label scanner findings confirmed exploitable
+vulnerabilities. Full detail remains in JSON/Markdown; old reports are not given
+missing scan provenance or finding counts.
 
 ## Markdown
 
@@ -107,7 +132,10 @@ HTML into the rendered comment. Markdown shows at most 25 findings and directs
 readers to the canonical JSON when more exist; terminal output shows at most 10
 actionable findings.
 Baseline comparisons add separate regression, improvement, and unavailable
-sections. Display limits never truncate the canonical JSON data.
+sections. Display limits never truncate the canonical JSON data. The GitHub
+comment updater falls back to a compact summary and a trusted workflow artifact
+link if the rendered comment exceeds its size budget. Apostrophes, quotes and
+Unicode use one readable escaping path.
 
 ## Dependency and capability evidence
 

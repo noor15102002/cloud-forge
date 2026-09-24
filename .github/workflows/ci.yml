@@ -24,9 +24,26 @@ jobs:
       - name: Test
         run: go test -race ./...
       - name: Test pull request reporter
-        run: node --test .github/actions/report/comment.test.cjs
+        run: |
+          node --test .github/actions/report/comment.test.cjs
+          node --test .github/actions/qualify-report/live.test.cjs
       - name: Test Action input validation
         run: bash scripts/test-action-inputs.sh
+      - name: Test release identity and retained qualification output
+        run: |
+          python3 scripts/test-release.py
+          python3 scripts/test-release-harnesses.py
+          python3 scripts/test-qualification-command.py
+          python3 scripts/test-qualification-cleanup.py
+          python3 scripts/test-qualification-record.py
+          python3 scripts/test-qualification-workflows.py
+          python3 scripts/test-pilot-cleanup-faults.py
+          python3 scripts/test-pilot-restoration.py
+          python3 scripts/test-core-qualification.py
+          python3 scripts/test-attempt5-gates.py
+          python3 scripts/test-worker-heartbeat-observation.py
+          python3 scripts/test-pilot-cancellation.py
+          python3 scripts/test-pilot-reliability-import.py
       - name: Vet
         run: go vet ./...
       - name: Install analysis tools

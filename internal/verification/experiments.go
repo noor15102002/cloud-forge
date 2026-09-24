@@ -14,11 +14,13 @@ import (
 )
 
 type httpObservation struct {
-	Status     int
-	Attempts   int
-	Failures   int
-	DurationMS int64
-	Success    bool
+	HTTPStatuses   map[int]int
+	FailureClasses map[string]int
+	Status         int
+	Attempts       int
+	Failures       int
+	DurationMS     int64
+	Success        bool
 }
 
 type trafficObservation struct {
@@ -49,19 +51,25 @@ type recoveryOutcome struct {
 
 func (s *Service) waitForHTTP(ctx context.Context, url string) httpObservation {
 	started := time.Now()
-	result := httpObservation{}
+	result := httpObservation{HTTPStatuses: map[int]int{}, FailureClasses: map[string]int{}}
 	ticker := time.NewTicker(s.poll)
 	defer ticker.Stop()
 	for {
 		attempted := false
 		status, err := s.performProbe(ctx, url, func(time.Time) { attempted = true })
-		if !attempted {
+		if !attempted || ctx.Err() != nil {
 			result.DurationMS = elapsedMilliseconds(time.Since(started))
 			return result
 		}
 		result.Attempts++
-		// Retain the last HTTP response. A final canceled transport attempt has
-		// no HTTP status and must not erase an observed 200/degraded response.
+		if status >= 100 && status <= 599 {
+			result.HTTPStatuses[status]++
+		}
+		if err != nil || status < 200 || status >= 300 {
+			result.FailureClasses[probeFailureClass(status, err)]++
+		}
+		// Retain the last observed HTTP response. Verifier-canceled requests
+		// are excluded above and cannot erase earlier semantic evidence.
 		if status > 0 {
 			result.Status = status
 		}
@@ -172,9 +180,6 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_canceled", "Graceful shutdown was canceled before completion.", parent.Err().Error(), traffic)
 	}
 	finalStatus, finalErr := s.pacedProbe(observation.context(), current.healthURL)
-	if finalErr != nil {
-		finalStatus = 0
-	}
 	if parent.Err() != nil {
 		return lifecycleExecutionError("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_canceled", "Graceful shutdown was canceled before completion.", parent.Err().Error(), traffic)
 	}
@@ -193,6 +198,7 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 		{Name: "final_http_status", Value: strconv.Itoa(finalStatus)},
 	}
 	measurements = append(measurements, traffic.diagnostics()...)
+	measurements = append(measurements, safeProbeMeasurements("final_probe", finalStatus, finalErr, !errors.Is(finalErr, errProbePacingInterrupted))...)
 	measurements = append(measurements, lifecycleDeadlineMeasurements(deadlineReached)...)
 	if errors.Is(finalErr, errProbePacingInterrupted) {
 		measurements = append(measurements, model.Measurement{Name: "final_http_request_started", Value: "false"})
@@ -203,7 +209,7 @@ func (s *Service) runGracefulShutdown(ctx context.Context, client *kubernetes.Cl
 	if deadlineReached && ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) && traffic.Failures == 0 {
 		return lifecycleCompletionUnobserved("graceful-shutdown", "Graceful shutdown under traffic", "shutdown_completion_unobserved", "The replacement was ready only when observed after the deadline; completion within the required window was not established.", duration, traffic, measurements)
 	}
-	if !recovered || traffic.Failures > 0 || finalStatus < 200 || finalStatus >= 300 {
+	if !recovered || traffic.Failures > 0 || finalErr != nil || finalStatus < 200 || finalStatus >= 300 {
 		return lifecycleFailure("graceful-shutdown", "Graceful shutdown under traffic", "runtime.graceful-shutdown", "The application dropped traffic or did not recover cleanly after SIGTERM.", "Inspect SIGTERM handling, readiness removal, connection draining, replica count, and termination grace period.", duration, traffic, measurements)
 	}
 	return lifecycleSuccess("graceful-shutdown", "Graceful shutdown under traffic", "runtime.graceful-shutdown", "The application remained healthy while Kubernetes terminated and replaced a pod.", duration, fmt.Sprintf("%d requests overlapping deletion, %d dropped requests", inFlight, traffic.Failures), measurements)
@@ -217,7 +223,7 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 	defer cancelExperiment()
 	observation := lifecycleObservation{parent: parent, experiment: ctx}
 	defer observation.close()
-	title := "Rolling deployment under traffic"
+	title := "Same-source rollout under sampled traffic"
 	if failed(buildResult) {
 		if isApplicationBuildFailure(buildResult) {
 			return rolloutImageBuildFailure(title, buildResult, current)
@@ -330,9 +336,6 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 		return lifecycleExecutionError("rolling-deployment", title, "rollout_canceled", "Rolling deployment was canceled before completion.", parent.Err().Error(), traffic)
 	}
 	finalStatus, finalErr := s.pacedProbe(observation.context(), current.healthURL)
-	if finalErr != nil {
-		finalStatus = 0
-	}
 	if parent.Err() != nil {
 		return lifecycleExecutionError("rolling-deployment", title, "rollout_canceled", "Rolling deployment was canceled before completion.", parent.Err().Error(), traffic)
 	}
@@ -352,6 +355,7 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 		{Name: "final_http_status", Value: strconv.Itoa(finalStatus)},
 	}
 	measurements = append(measurements, traffic.diagnostics()...)
+	measurements = append(measurements, safeProbeMeasurements("final_probe", finalStatus, finalErr, !errors.Is(finalErr, errProbePacingInterrupted))...)
 	measurements = append(measurements, lifecycleDeadlineMeasurements(deadlineReached)...)
 	if errors.Is(finalErr, errProbePacingInterrupted) {
 		measurements = append(measurements, model.Measurement{Name: "final_http_request_started", Value: "false"})
@@ -362,10 +366,10 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 	if deadlineReached && ready == int(current.desiredReplicas) && total == int(current.desiredReplicas) && targetReady == int(current.desiredReplicas) && traffic.Failures == 0 {
 		return lifecycleCompletionUnobserved("rolling-deployment", title, "rollout_completion_unobserved", "Version B was ready only when observed after the deadline; completion within the required window was not established.", duration, traffic, measurements)
 	}
-	if !completed || traffic.Failures > 0 || finalStatus < 200 || finalStatus >= 300 {
-		return lifecycleFailure("rolling-deployment", title, "runtime.rolling-deployment", "Version B did not roll out without failed traffic.", "Inspect version B readiness, rolling update strategy, capacity, and application startup behavior.", duration, traffic, measurements)
+	if !completed || traffic.Failures > 0 || finalErr != nil || finalStatus < 200 || finalStatus >= 300 {
+		return lifecycleFailure("rolling-deployment", title, "runtime.rolling-deployment", "The same-source image B rollout did not meet the sampled traffic or final readiness requirement.", "Inspect version B readiness, rolling update strategy, capacity, and application startup behavior.", duration, traffic, measurements)
 	}
-	return lifecycleSuccess("rolling-deployment", title, "runtime.rolling-deployment", "Version B became ready without interrupting application traffic.", duration, fmt.Sprintf("%d/%d version B pods ready with %d failed requests", targetReady, total, traffic.Failures), measurements)
+	return lifecycleSuccess("rolling-deployment", title, "runtime.rolling-deployment", "The same-source image B became ready without observed failed requests.", duration, fmt.Sprintf("%d/%d version B pods ready with %d failed requests", targetReady, total, traffic.Failures), measurements)
 }
 
 func (s *Service) runPodRecovery(ctx context.Context, client *kubernetes.Client, current plan) (outcome recoveryOutcome) {
@@ -473,15 +477,12 @@ trafficContinued:
 		return recoveryExecutionError("pod_recovery_canceled", "Pod recovery was canceled before completion.", parent.Err().Error(), traffic)
 	}
 	finalStatus, finalErr := s.pacedProbe(observation.context(), current.healthURL)
-	if finalErr != nil {
-		finalStatus = 0
-	}
 	if parent.Err() != nil {
 		return recoveryExecutionError("pod_recovery_canceled", "Pod recovery was canceled before completion.", parent.Err().Error(), traffic)
 	}
 	status := model.StatusPass
 	summary := "The Deployment replaced a deleted pod while serving healthy traffic."
-	if !recovered || traffic.Failures > 0 || finalStatus < 200 || finalStatus >= 300 {
+	if !recovered || traffic.Failures > 0 || finalErr != nil || finalStatus < 200 || finalStatus >= 300 {
 		status = model.StatusFail
 		summary = "Pod recovery did not preserve healthy application traffic."
 	}
@@ -501,6 +502,7 @@ trafficContinued:
 		},
 	}
 	evidence.Measurements = append(evidence.Measurements, traffic.diagnostics()...)
+	evidence.Measurements = append(evidence.Measurements, safeProbeMeasurements("final_probe", finalStatus, finalErr, !errors.Is(finalErr, errProbePacingInterrupted))...)
 	evidence.Measurements = append(evidence.Measurements, lifecycleDeadlineMeasurements(deadlineReached)...)
 	if errors.Is(finalErr, errProbePacingInterrupted) {
 		evidence.Measurements = append(evidence.Measurements, model.Measurement{Name: "final_http_request_started", Value: "false"})
@@ -514,7 +516,7 @@ trafficContinued:
 	finding := model.Finding{
 		ID: "runtime.pod-recovery", Category: "reliability", Status: status, Severity: model.SeverityHigh,
 		Summary: summary, Observed: fmt.Sprintf("%d failed requests, %d ms downtime, HTTP %d", traffic.Failures, traffic.MaxDowntimeMS, finalStatus),
-		Expected: "zero failed requests, zero downtime, and a healthy replacement pod", DurationMS: replacementDuration,
+		Expected: "no failed sampled requests and a healthy replacement pod", DurationMS: replacementDuration,
 	}
 	outcome = recoveryOutcome{Evidence: evidence, Finding: &finding}
 	if status == model.StatusFail {

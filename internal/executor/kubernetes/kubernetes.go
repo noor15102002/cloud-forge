@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
+	"github.com/noor15102002/cloud-forge/internal/jsoninput"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -92,6 +93,15 @@ func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector s
 	if result.Truncated {
 		return nil, result, fmt.Errorf("pod observation exceeded its bound")
 	}
+	if err := jsoninput.Validate([]byte(result.Stdout)); err != nil {
+		return nil, result, fmt.Errorf("pod observation was not complete unambiguous JSON")
+	}
+	var shape struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if json.Unmarshal([]byte(result.Stdout), &shape) != nil || shape.Items == nil {
+		return nil, result, fmt.Errorf("pod observation did not contain an explicit items array")
+	}
 	var pods corev1.PodList
 	if err := json.Unmarshal([]byte(result.Stdout), &pods); err != nil {
 		return nil, result, fmt.Errorf("decode pod state: %w", err)
@@ -102,6 +112,9 @@ func (c *Client) ObservePods(ctx context.Context, cluster, namespace, selector s
 	}
 	states := make([]PodState, 0, len(pods.Items))
 	for index, pod := range pods.Items {
+		if pod.Name == "" {
+			return nil, result, fmt.Errorf("pod observation did not establish pod identity")
+		}
 		state := PodState{UID: string(pod.UID), Name: pod.Name, Ready: podReady(pod), Terminating: pod.DeletionTimestamp != nil, Reason: podReason(pod)}
 		state.ApplicationStatusObserved = terminations[index].observed
 		state.CurrentTermination = terminations[index].current

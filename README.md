@@ -1,53 +1,66 @@
 # CloudForge
 
-CloudForge is an open-source CLI for proving how containerized applications
-behave under production-like Kubernetes conditions. It combines deterministic
-repository understanding with measured runtime experiments and evidence-based
-regression reporting.
+CloudForge is an open-source, local-first pre-deployment verifier for supported
+cloud-native applications. It produces bounded, reproducible evidence about how
+one selected application behaves in a disposable Kubernetes environment.
 
-> **Current status:** CloudForge implements environment diagnostics, read-only
-> repository analysis, and Docker-to-k3d runtime verification.
-> Analysis includes normalized container and Kubernetes configuration findings;
-> verification adds normalized Trivy findings, bounded k6 load measurements,
-> HPA scaling evidence, stable terminal, JSON, and Markdown reports, explicit
-> baseline regression comparison, and a trust-separated GitHub Action with
-> artifact and pull-request reporting. Explicit isolated Redis dependencies,
-> semantic HTTP readiness assertions, read-only capability planning, single-workload monorepo build selection and [bounded explicit test topology](docs/controlled-topology.md) are implemented.
+CloudForge reports `PASS`, `WARN`, `FAIL`, `BLOCKED`, `SKIPPED` and `ERROR` explicitly.
+A successful configuration check is not a production-readiness certificate, and
+missing or unusable runtime observations must not become affirmative success.
 
-## Why CloudForge
+The v0.1.0-alpha.1 prerelease targets **Linux/amd64 and one containerized HTTP
+service** written in Node.js, TypeScript or Python, including selected monorepo
+workloads and explicit Redis. See the authoritative
+[current support and maturity table](docs/supported-applications.md).
+PostgreSQL/pgvector, preparation, ClamAV, workers, controlled tests, HPA and numerical
+regression grading remain experimental. See [release qualification](docs/releasing.md)
+for the candidate gate and retained evidence requirements.
 
-Builds and static checks cannot show whether readiness gates traffic, SIGTERM
-drops requests, a replacement pod recovers promptly, or a rollout introduces
-downtime. CloudForge runs these scenarios in disposable k3d clusters and
-reports the observed evidence.
+**First prerelease status: NO-GO pending qualification.** The latest completed
+development qualification passed 59 of 64 declared cases; it did not test an
+installed release archive. Remaining HTTP-core prerequisites and corrected
+fixtures are being checked separately from experimental HPA and worker results.
+No public binary has been released. See the [current project status](docs/project-status.md).
 
-```mermaid
-flowchart LR
-    Repo[Repository] --> Analyzer
-    Analyzer --> Model[Architecture model]
-    Model --> Planner[Risk and experiment planner]
-    Planner --> Executor[Local k3d executor]
-    Executor --> Evidence
-    Evidence --> Reporters[Terminal / JSON / Markdown]
+## Install the qualified prerelease
+
+Use the Linux/amd64 archive from the
+[v0.1.0-alpha.1 release](https://github.com/noor15102002/cloud-forge/releases/tag/v0.1.0-alpha.1)
+after its qualification record is available. The release contains the exact
+qualified archive, SHA-256 checksum, and `release.json` with version, full source
+commit, build date and binary checksum. An unpublished candidate is not yet a
+qualified public release.
+
+```sh
+version=v0.1.0-alpha.1
+archive="cloudforge_${version}_linux_amd64.tar.gz"
+base="https://github.com/noor15102002/cloud-forge/releases/download/$version"
+curl -fLO "$base/$archive"
+curl -fLO "$base/checksums.txt"
+curl -fLO "$base/release.json"
+sha256sum --check checksums.txt
+tar -xzf "$archive" cloudforge
+install -Dm755 cloudforge "$HOME/.local/bin/cloudforge"
+"$HOME/.local/bin/cloudforge" version
+"$HOME/.local/bin/cloudforge" doctor
 ```
 
-## Install from source
+Ensure `$HOME/.local/bin` is on your `PATH`. Compare the printed version and full
+commit with the release record. Runtime verification also needs Docker, k3d,
+kubectl, k6 and Trivy; the [Action](docs/github-action.md) installs the pinned
+qualified tool versions. Repository analysis alone does not require those tools.
 
-CloudForge currently requires Go 1.27:
-
-```console
-go install github.com/noor15102002/cloud-forge/cmd/cloudforge@latest
-```
-
-For development, clone the repository and run `make build`. Runtime verification
-will require Docker, k3d, kubectl, k6, and Trivy; repository analysis does not.
+For development, clone the repository and run `make build` with Go 1.27.1.
+That source build is a development binary, not the qualified distribution.
+`go install ...@latest` is not a supported release installation path because it
+can omit the source identity required by runtime verification. The identity guard
+remains enabled. `make release` builds a candidate from a clean committed checkout.
 
 ## Commands
 
 ```console
 cloudforge version
 cloudforge doctor
-cloudforge doctor --format json
 cloudforge analyze .
 cloudforge analyze ./services/api --format json
 cloudforge verify . --plan
@@ -58,15 +71,9 @@ cloudforge verify ./services/api --baseline ./baseline.json
 cloudforge report ./verification.json --format markdown
 ```
 
-`analyze` supports application roots containing Node.js, TypeScript, or Python
-metadata, root Dockerfiles, and plain Kubernetes Deployment, Service, and HPA
-manifests. It recognizes Helm and Compose but does not render or analyze them
-yet. It reports source-linked findings for container users and ports, probes,
-replicas, resources, Service ports, and HPA ranges. It does not execute
-repository code.
-
-For a monorepo, pass its repository root and select one app, Dockerfile and
-context with [build configuration](docs/build-selection.md). For example:
+`analyze` reads supported repository metadata without executing application code.
+For a monorepo, pass the repository boundary and select one workload, Dockerfile
+and build context in [build configuration](docs/build-selection.md):
 
 ```yaml
 schema_version: v1alpha3
@@ -76,96 +83,51 @@ build:
   context: .
 ```
 
-Both `analyze . --config pilot.yaml` and `verify . --plan --config pilot.yaml`
-inspect that selection without executing code. `verify . --config pilot.yaml`
-uses the same build inputs for both lifecycle images.
+`analyze . --config pilot.yaml` and `verify . --plan --config pilot.yaml` inspect
+that selection. `verify . --config pilot.yaml` uses the same selected build inputs
+for its lifecycle images.
 
-Verification JSON is the canonical report and uses the versioned `v1alpha8` schema
-defined in [`schemas/verification.v1alpha8.schema.json`](schemas/verification.v1alpha8.schema.json).
-Collections are sorted for repeatable output; consumers must not depend on JSON
-object key ordering. Verification also supports concise terminal output and a
-Markdown report suitable for a pull-request comment.
-See [the reporting guide](docs/reporting.md) for the format contracts.
+Verification builds image A, scans that image with Trivy, creates an isolated k3d
+cluster, provisions declared test dependencies and measures readiness, lifecycle
+behavior and configured GET load. It records safe HTTP failure categories,
+request counts, sampling intervals and final health. A run with no failed probes
+cannot exclude shorter interruptions between samples. `downtime_ms` retains its
+historical meaning: the maximum sampled failure window, not a continuously
+measured outage duration.
 
-Pass a previously saved verification JSON report with `--baseline`. CloudForge
-compares experiment statuses and normalized numeric measurements with an
-explicit quality direction, while keeping absolute findings separate from
-relative regressions. A detected regression exits with status `1`; missing,
-skipped, nonnumeric, or unit-incompatible evidence is reported as unavailable
-instead of being treated as a regression. Environment and effective workload
-fingerprints must also be complete and compatible. Baselines are read before repository
-code executes and must be strict, bounded `v1alpha1`, `v1alpha2`, `v1alpha3`, `v1alpha4`, `v1alpha5`, `v1alpha6`, `v1alpha7` or `v1alpha8` JSON files.
+A **same-source rollout** builds image B from the same frozen source under a new
+image reference/build. It exercises rollout mechanics, not compatibility between
+two independent application releases. Image A's scan does not establish image B's
+security state. A failed experiment remains visible after baseline restoration;
+restoration does not reset arbitrary business data. Owned cleanup is attempted
+after success, failure, timeout and cancellation. Use `--keep-environment` only
+for explicit manual inspection and follow the [retained-resource cleanup guidance](docs/security.md).
 
-`verify` builds the root Dockerfile (or the explicit selected Dockerfile/context), creates a uniquely named k3d cluster,
-imports the image, provisions and waits for explicitly enabled supported dependencies,
-then deploys a generated Namespace, Deployment, and HTTP Service, and
-records build and readiness evidence. When an HTTP readiness endpoint is
-declared, it measures startup and readiness status, then deletes one ready pod
-while sending continuous traffic and records replacement time, failed requests,
-downtime, restarts, and final health. It also measures traffic during graceful
-SIGTERM termination and rebuilds the working tree as synthetic versions `a`
-and `b` to observe a rolling Deployment update. It deletes the cluster and both
-temporary images after success, failure, timeout, or cancellation. Use
-`--keep-environment` only when you need to inspect the cluster manually.
-Verification executes Dockerfile instructions and application code, and scans
-the initial image with Trivy. Use it only with repositories you trust.
+## Evidence and trust
 
-This slice reports detected vulnerabilities as warnings while preserving
-Trivy's lowercase severity. Configurable vulnerability enforcement remains
-planned.
+JSON is the canonical `v1alpha8` report. The CLI and trusted GitHub reporter accept
+legitimate historical `v1alpha1` through `v1alpha8` reports without adding missing
+historical observations. Malformed documents and duplicate object keys are
+rejected. See [reporting](docs/reporting.md) for status, display and schema details.
 
-See [pilot runtime configuration](docs/runtime-configuration.md) for explicit
-endpoints, supported deployment settings, safety budgets and controlled
-experiment requirements. Readiness-removal and targeted in-flight shutdown
-proofs require the documented optional control protocol; they are explicitly
-skipped when the application does not implement it.
+Baseline status regressions remain separate from the current run's absolute
+findings. Numerical comparisons are experimental and advisory; a fixed 10%
+tolerance does not establish statistical significance. Historical reports and
+comparisons are never regraded during loading.
 
-When an analyzed HPA safely targets the selected Deployment, verification
-applies a generated autoscaler after the lifecycle experiments. It waits for
-CPU metrics, runs the explicitly configured bounded k6 profile, and records request
-count, throughput, error rate, P50/P95/P99 latency, starting and peak replicas,
-and scale-up duration. HPAs above five replicas are rejected before execution. Missing required metrics block the HPA assertion; insufficient scaling demand produces explicit skipped evidence.
+Verification executes Dockerfile instructions and application code. Use trusted
+repositories, disposable runners, test credentials and test data. Runtime egress
+policies have Kubernetes infrastructure/node/host exceptions and do not sandbox
+Docker builds or hostile code. Never supply production credentials or data.
+See [security](docs/security.md), [runtime configuration](docs/runtime-configuration.md)
+and the [GitHub Action trust model](docs/github-action.md).
 
-The packaged GitHub Action installs pinned runtime tools, uploads JSON and
-Markdown reports, supports explicitly selected baseline artifacts, and updates
-one stable pull-request comment through a separate trusted workflow. See the
-[GitHub Action guide](docs/github-action.md) for pinned usage and the fork
-security model.
+## Development and evidence
 
-Analysis compatibility is also checked against pinned revisions of public Node,
-TypeScript, and Python applications without executing their code. See the
-[external validation guide](docs/external-validation.md) for the reproducible
-matrix and its limits.
-
-## Security and limitations
-
-Analysis reads bounded metadata files, skips generated directories and
-symbolic links, and does not load environment files or return Secret values.
-Verification builds and runs repository code, which must be treated as
-untrusted outside an isolated environment. See [SECURITY.md](SECURITY.md)
-and [docs/security.md](docs/security.md).
-
-Linux and WSL2 are the primary targets. See [the roadmap](docs/roadmap.md),
-[architecture](docs/architecture.md), and [contribution guide](CONTRIBUTING.md).
-
-Apache-2.0 licensed.
-
-## Dependency-aware workloads
-
-See the [support matrix](docs/supported-applications.md) and
-[Redis/configuration contract](docs/dependency-runtime.md). Required unresolved
-or unsupported dependencies are BLOCKED before execution. Optional absent
-experiments are SKIPPED. Redis remains internal to the owned cluster, and its
-resources count against the workload budget. Semantic assertions distinguish
-HTTP 200 from configured readiness without copying response bodies into reports.
-
-Current verification includes [evidence reliability](docs/evidence-reliability.md):
-explicit runtime compatibility, topology-qualified availability results, bounded
-baseline restoration and continuation, and planned capabilities separated from
-completed evidence. Runtime builds require version and commit identity.
-
-Backend verification adds bounded PostgreSQL/pgvector, ClamAV, generated test
-configuration, one-time preparation and restricted runtime egress. See the
-[backend contract and qualification limits](docs/backend-runtime.md).
-
-Explicit [worker heartbeat verification](docs/worker-runtime.md) supports one background process with a run-owned Redis heartbeat. It proves bounded process liveness and sequential recovery, while HTTP, availability, load and job-completion claims remain excluded.
+Use `make check` for tests, race checking, vet, lint, vulnerability checks, reporter
+checks and builds. The [testing guide](docs/testing.md) describes generic fixtures,
+intentional failures, cancellation and preservation of every qualification attempt.
+[Architecture](docs/architecture.md) describes the existing execution boundaries.
+[Roadmap](docs/roadmap.md) records historical milestones; it is not the current
+support contract. Private application evidence is not part of the public release
+qualification matrix.

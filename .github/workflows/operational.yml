@@ -1,0 +1,139 @@
+name: Qualification fault harnesses
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guarded-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        case:
+          - operational-scanner-null
+          - operational-scanner-empty
+          - operational-scanner-unsupported
+          - operational-scanner-truncated
+          - operational-scanner-case-alias
+          - operational-scanner-zero
+          - operational-scanner-findings
+          - operational-scanner-subject
+          - operational-scanner-exit
+          - operational-docker-unavailable
+          - operational-disk-full
+          - operational-registry-503
+          - operational-node-observation
+          - operational-startup-failure
+          - restoration-failure
+          - operational-cleanup-inventory
+          - cleanup-owned-remnant
+          - cleanup-already-absent
+          - cleanup-inventory-malformed
+          - cleanup-inventory-truncated
+          - cleanup-remove-failure
+          - cleanup-same-name-unrelated
+          - cleanup-foreign-owner
+          - cleanup-replaced-identity
+          - cleanup-builder-fallback
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.1
+      - name: Install pinned runtime tools
+        run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
+      - name: Capture independent cleanup baseline
+        run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
+      - name: Qualify fault harness against the development binary
+        timeout-minutes: 40
+        env:
+          CASE: ${{ matrix.case }}
+        run: |
+          go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
+          extra=()
+          if [ "$CASE" = restoration-failure ]; then
+            script=scripts/pilot-restoration.py
+          elif [[ "$CASE" == cleanup-* ]]; then
+            script=scripts/pilot-cleanup-faults.py
+            extra=(--case "${CASE#cleanup-}")
+          else
+            script=scripts/pilot-operational.py
+            extra=(--case "${CASE#operational-}")
+          fi
+          python3 scripts/qualification-run.py --case "$CASE" --binary /tmp/cloudforge --evidence "$RUNNER_TEMP/fault-evidence" --records "$RUNNER_TEMP/qualification-records" --timeout 1500 -- python3 "$script" /tmp/cloudforge "$RUNNER_TEMP/fault-evidence" "${extra[@]}"
+      - name: Independently check cleanup before any upload
+        if: always()
+        timeout-minutes: 3
+        run: python3 scripts/pilot-cleanup-check.py --baseline "$RUNNER_TEMP/cleanup-baseline.json" --output "$RUNNER_TEMP/cleanup.json"
+      - name: Preserve independent qualification layers — compact result before uploads
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ runner.temp }}/fault-evidence
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q22_small
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: development-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ runner.temp }}/qualification-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q22_bulk
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: development-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fault-evidence
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q22_bulk.outcome }}
+          SMALL: ${{ steps.q22_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Preserve final upload outcome separately
+        id: q22_final
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: development-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ runner.temp }}/qualification-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q22_bulk.outcome }}
+          SMALL: ${{ steps.q22_small.outcome }}
+          FINAL: ${{ steps.q22_final.outcome }}
+        run: |
+          python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi

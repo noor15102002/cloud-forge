@@ -1,22 +1,17 @@
 # GitHub Action
 
-CloudForge provides a composite action for GitHub-hosted Ubuntu x64 runners.
-It installs checksum-verified versions of k3d, kubectl, Trivy, and k6, sets up
-Go 1.27.1, builds CloudForge from the selected action ref, runs verification,
-and uploads `verification.json` and `verification.md` in one artifact.
-
-Pin the action to a reviewed full commit SHA. Replace the placeholder below
-with the release commit selected by your repository:
+The released composite Action supports GitHub-hosted Linux/amd64 runners. Pin it
+to the full commit recorded in the prerelease's `release.json`. It installs the
+checksum-verified release archive, checks version/full commit/build date, installs
+pinned runtime tools, verifies one application and uploads JSON and Markdown.
+It does not rebuild CloudForge during a released invocation.
 
 ```yaml
 name: CloudForge
-
 on:
   pull_request:
-
 permissions:
   contents: read
-
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -24,119 +19,79 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: noor15102002/cloud-forge@FULL_40_CHARACTER_COMMIT_SHA
+      - uses: noor15102002/cloud-forge@FULL_40_CHARACTER_RELEASE_COMMIT
         with:
+          release-version: v0.1.0-alpha.1
           path: .
           artifact-name: cloudforge-verification
 ```
 
-The verification action needs only `contents: read`. It does not receive a
-GitHub token by default. A failed experiment still uploads any completed
-reports and then preserves CloudForge's exit code.
+Replace the placeholder with the exact released commit. A missing archive,
+checksum mismatch or mismatch between Action pin and binary producer stops
+execution. The Linux/amd64 runtime tool set is k3d 5.9.0, kubectl 1.35.5,
+Trivy 0.74.0 and k6 2.2.0; downloads are checked against upstream checksums.
+Docker is supplied by the disposable hosted runner.
 
-Inputs are validated before tools are installed. `path` must name an existing
-directory whose canonical location remains inside the GitHub workspace.
-`baseline-path` and `baseline-run-id` are mutually exclusive; a run ID must be
-a positive JavaScript-safe integer and requires an explicit token and valid
-artifact name. Report artifact names must be nonempty and use GitHub-supported
-characters, and retention must be an integer from 1 through 90 days. Token
-validation exposes only a presence flag to shell code, never the token value.
+Local `uses: ./` builds a development binary when no candidate is supplied.
+The release qualification workflow supplies `candidate-path`, `candidate-version`,
+`candidate-commit`, `candidate-date` and `candidate-sha256` together. These internal
+qualification inputs install the already-built candidate and verify it matches
+the checked-out Action source. They are not an invitation to trust artifacts
+chosen by pull-request code in a privileged workflow.
+
+## Inputs and evidence
+
+`path` is workspace-relative and must resolve within the GitHub workspace.
+`config-path` selects an existing workspace-contained configuration file; build
+paths inside the file are relative to `path`. With no override, the Action reads
+`path/cloudforge.yaml`. Current runtime configuration versions are v1alpha1
+through v1alpha7; feature availability depends on the selected version.
+Current verification reports use v1alpha8 and legitimate v1alpha1–v1alpha8 saved
+reports remain readable. See [runtime configuration](runtime-configuration.md).
+
+Artifact names must be nonempty and valid for GitHub. Retention is 1–90 days,
+defaulting to 14. Completed reports are uploaded even when verification fails,
+and the Action preserves the CLI exit code. Artifacts also retain native stderr,
+the original CLI exit record, binary version identity and candidate manifest.
+Outputs are `report-json`,
+`report-markdown`, `binary` and `exit-code`. Keep the default
+`cloudforge-verification` artifact name when using the bundled PR reporter.
+
+Planner `SUPPORTED` is a scheduling disposition, not product maturity. The
+[authoritative support table](supported-applications.md) separates the qualified
+HTTP core from experimental backend, worker, controlled and numerical features.
 
 ## Baseline artifacts
 
-The action accepts either `baseline-path` or `baseline-run-id`. A local path is
-appropriate when the workflow has already obtained or checked out a trusted
-baseline. `baseline-run-id` downloads `verification.json` from the configured
-`baseline-artifact-name` through the commit-pinned official download action.
-It also requires an explicit token with `actions: read`. This complete manual
-workflow keeps selection of the baseline run in a trusted workflow input:
+Use either `baseline-path` or `baseline-run-id`, not both. A local path names a
+previously obtained trusted JSON report. A workflow run ID must be a positive
+JavaScript-safe integer and requires an explicit read-only `github-token` with
+`actions: read`; `baseline-artifact-name` defaults to `cloudforge-verification`.
+Only a trusted workflow should select the run ID or provide a token. Choose a
+successful trusted default-branch run, never an artifact source selected by
+untrusted pull-request code. The download receives the token; verification does
+not. The complete bounded saved report is validated before repository execution,
+including rejection of duplicate JSON object keys.
 
-```yaml
-name: CloudForge with baseline
+## Pull request reporting and trust
 
-on:
-  workflow_dispatch:
-    inputs:
-      trusted_baseline_run_id:
-        description: Successful default-branch Runtime integration run ID
-        required: true
-        type: string
+Dockerfiles and application code execute in the verification job. Give that job
+no write token, production credentials or secrets, and use a disposable runner.
+Runtime network policy does not make Docker build execution a hostile-code sandbox.
 
-permissions:
-  actions: read
-  contents: read
+The separate [`cloudforge-report.yml`](../.github/workflows/cloudforge-report.yml)
+workflow is loaded from the trusted default branch. It downloads the JSON artifact
+as untrusted data, builds its trusted renderer, rejects malformed/oversized reports,
+and regenerates Markdown. It never executes the pull request's code or trusts its
+uploaded Markdown. The reporter has only `actions: read`, `contents: read` and
+`pull-requests: write`. It updates one authenticated bot-owned comment and removes
+bot-owned duplicates; concurrency is grouped by pull request.
 
-jobs:
-  verify:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: noor15102002/cloud-forge@FULL_40_CHARACTER_COMMIT_SHA
-        with:
-          path: .
-          baseline-run-id: ${{ inputs.trusted_baseline_run_id }}
-          baseline-artifact-name: cloudforge-verification
-          github-token: ${{ github.token }}
-```
+Normal reports include summary evidence and bounded findings. An oversized comment
+falls back to a compact summary, important evidence and a trusted workflow link
+for full artifacts. Full JSON remains complete. Escaping follows one safe path,
+so ordinary apostrophes, quotes and Unicode remain readable.
 
-Only trusted workflows should select a baseline run ID or pass a token. Select
-a successful run from the repository's default branch; never allow pull-request
-code to choose a privileged artifact source. The download step receives the
-token, but the later verification step does not. CloudForge validates the
-downloaded report against its complete bounded `v1alpha1` schema before any
-repository code executes.
-
-## Pull request reporting
-
-Running a Dockerfile means running untrusted code. A pull-request job therefore
-must not have write permission or secrets. Comment publication happens in a
-separate `workflow_run` workflow loaded from the trusted default branch. The
-checked-in [`cloudforge-report.yml`](../.github/workflows/cloudforge-report.yml)
-shows the complete pattern:
-
-1. The read-only verification workflow checks out code without persisted
-   credentials, executes CloudForge, and uploads reports.
-2. The reporting workflow downloads the JSON artifact as untrusted data.
-3. It checks out the trusted default-branch renderer and validates the complete
-   JSON schema with a 4 MiB input limit.
-4. It regenerates escaped, bounded Markdown and uses only
-   `actions: read`, `contents: read`, and `pull-requests: write` permissions.
-5. It updates the authenticated bot's existing
-   `cloudforge-verification-report:v1alpha1` comment and removes bot-owned
-   duplicates.
-
-The reporter never executes code from the pull request and never trusts the
-uploaded Markdown artifact. Concurrency is grouped by pull request to prevent
-two completed runs from racing to create duplicate comments.
-
-The checked-in reporter consumes the default `cloudforge-verification`
-artifact name. Keep that default when using the bundled workflow. Repositories
-that set `artifact-name` must use the same name in their own trusted reporting
-workflow.
-
-## Outputs
-
-The verification action exports `report-json`, `report-markdown`, `binary`, and
-`exit-code`. The reports are also uploaded under `artifact-name` for the
-configured retention period, which defaults to 14 days.
-
-Dependency-aware runs use the application-root `cloudforge.yaml` v1alpha2 configuration. Reports retain BLOCKED dependency plans and separate dependency outcomes; the trusted reporter accepts all four schema-version markers.
-
-Runtime reports now use v1alpha4; runtime configuration accepts v1alpha1/v1alpha2/v1alpha3.
-Tool compatibility and verifier build identity are checked before application
-execution. See [evidence reliability](evidence-reliability.md).
-
-External Action use requires a full 40-character commit SHA pin. Downloaded
-Actions may lack Git metadata, so this immutable ref is injected as the verifier
-commit; a moving tag or branch is not resolved later and claimed as build
-identity. Local `uses: ./` builds retain Go VCS metadata.
-
-## Selected workload
-
-Set `path` to the repository boundary. The optional `config-path` input selects
-an existing regular configuration file inside the GitHub workspace. It is
-workspace-relative; `build` paths inside that file are relative to `path`, not
-the configuration file. With no input, CloudForge reads `path/cloudforge.yaml`.
-See [build selection](build-selection.md) for the v1alpha3 configuration.
+Repository owners choose the trusted reporter revision independently from the
+application verification revision. Historical report rendering does not assign
+new scan metadata, application identities or numerical verdicts to old evidence.

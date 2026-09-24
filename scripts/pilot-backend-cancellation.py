@@ -6,9 +6,11 @@ effects. A bounded public-fixture hold makes a running phase observable; SIGINT
 is sent only after Kubernetes proves run ownership and container execution.
 Neither Secret objects, application logs nor environment values are queried.
 """
+from qualification_record import observation_started, observation_finished
 import argparse
 from contextlib import contextmanager
 import copy
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -110,8 +112,13 @@ def validate_public_import(arguments, fixture, stage):
             raise QualificationError("import_observer_public_fixture_changed")
 
 
+def observer_timestamp():
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
 def tee_command(arguments, directory, stage, stdout, stderr, *,
-                scope="bundled_public_backend_fixture_only", tool="k3d", name="k3d-import", native_timeout_seconds=180):
+                scope="bundled_public_backend_fixture_only", tool="k3d", name="k3d-import", native_timeout_seconds=180,
+                observer_stages=None):
     """Forward every byte while retaining bounded original stream tails.
 
     CloudForge owns the unchanged native command timeout and process group.
@@ -125,6 +132,8 @@ def tee_command(arguments, directory, stage, stdout, stderr, *,
               "retention": "last_bytes_of_each_original_stream", "stream_limit_bytes": IMPORT_STREAM_LIMIT,
               "deadline_owner": "cloudforge_command_runner", "native_timeout_seconds": native_timeout_seconds,
               "retry_performed": False, "received_signal": None, "streams": {}}
+    if observer_stages is not None:
+        record["observer_stages"] = dict(observer_stages)
     prefix = name + "-" + str(time.time_ns())
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     totals = {"stdout": 0, "stderr": 0}
@@ -155,12 +164,16 @@ def tee_command(arguments, directory, stage, stdout, stderr, *,
     persist()
     process = subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     record["actual_command_executed"] = True
+    if observer_stages is not None:
+        record["observer_stages"]["child_started_at"] = observer_timestamp()
     persist()
     destinations = {process.stdout: ("stdout", stdout), process.stderr: ("stderr", stderr)}
     original_handlers = {}
 
     def relay(received, _frame):
         record["received_signal"] = received
+        if observer_stages is not None:
+            record["observer_stages"]["signal_received_at"] = observer_timestamp()
         try:
             process.send_signal(received)
         except ProcessLookupError:
@@ -188,6 +201,8 @@ def tee_command(arguments, directory, stage, stdout, stderr, *,
                     persist()
         record["exit_code"] = process.wait()
         record["completion_observed"] = True
+        if observer_stages is not None:
+            record["observer_stages"]["child_wait_completed_at"] = observer_timestamp()
         persist()
         return process.returncode
     finally:
@@ -599,6 +614,7 @@ def runtime(binary, fixture, output, repository, private, stage, qualification):
         interrupted_at = None
         try:
             with (output / "stdout.json").open("wb") as stdout, (output / "stderr.txt").open("wb") as stderr:
+                observation_started(output / "stdout.json")
                 process = subprocess.Popen(command, stdout=stdout, stderr=stderr, env=environment)
                 qualification["runtime_executed"] = True
                 deadline = time.monotonic() + VERIFY_SECONDS
@@ -619,6 +635,7 @@ def runtime(binary, fixture, output, repository, private, stage, qualification):
                 process.send_signal(signal.SIGINT)
                 qualification["signal_sent"] = "SIGINT"
                 process.wait(timeout=CLEANUP_SECONDS)
+            observation_finished(output / "stdout.json", process.returncode if process else None)
             write_json(output / "exit.json", {"exit_code": process.returncode})
             checks = report_checks(json.loads((output / "stdout.json").read_text()), stage)
             qualification["report_checks"] = checks
@@ -645,6 +662,7 @@ def runtime(binary, fixture, output, repository, private, stage, qualification):
                     process.kill()
                     process.wait(timeout=10)
             if process is not None:
+                observation_finished(output / "stdout.json", process.returncode if process else None)
                 write_json(output / "exit.json", {"exit_code": process.returncode})
             qualification["cleanup"] = preserve_cleanup(repository, output, private, state)
     if not qualification["cleanup"]["passed"]:

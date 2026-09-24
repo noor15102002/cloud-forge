@@ -36,7 +36,7 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 		result := successfulCommand(request)
 		result.DurationMS = 12
 		if request.Name == "trivy" && containsArgument(request.Args, "image") {
-			result.Stdout = `{"Results":[]}`
+			result.Stdout = validTrivyReport(request)
 		}
 		if request.Name == "docker" && containsArgument(request.Args, "port") {
 			result.Stdout = "127.0.0.1:18080\n"
@@ -59,7 +59,7 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	if outcome.ExitCode != 0 || outcome.Run.Status != model.StatusPass {
 		t.Fatalf("unexpected outcome: %#v", outcome)
 	}
-	if len(outcome.Run.Evidence) != 12 || evidenceByID(outcome.Run.Evidence, "deployment-readiness").Measurements[0].Value != "2" {
+	if len(outcome.Run.Evidence) != 13 || evidenceByID(outcome.Run.Evidence, "deployment-readiness").Measurements[0].Value != "2" {
 		t.Fatalf("missing readiness evidence: %#v", outcome.Run.Evidence)
 	}
 	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
@@ -78,8 +78,13 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	if autoscaling == nil || autoscaling.Status != model.StatusPass || measurementValue(autoscaling.Measurements, "starting_replicas") != "2" || measurementValue(autoscaling.Measurements, "peak_replicas") != "3" {
 		t.Fatalf("missing autoscaling evidence: %#v", autoscaling)
 	}
-	if !hasCommand(calls, "k3d", "delete") || !containsArgument(calls[len(calls)-2].Args, "rm") || !containsArgument(calls[len(calls)-1].Args, "rm") {
-		t.Fatalf("unexpected command lifecycle: %#v", calls)
+	if !hasCommand(calls, "k3d", "delete") || len(calls) < 2 {
+		t.Fatal("cluster deletion or final image absence checks were missing")
+	}
+	for _, call := range calls[len(calls)-2:] {
+		if call.Name != "docker" || len(call.Args) < 2 || call.Args[0] != "image" || call.Args[1] != "ls" || !strings.Contains(strings.Join(call.Args, " "), "cloudforge.dev/ownership") {
+			t.Fatalf("image cleanup did not verify final owned inventory absence: %+v", call)
+		}
 	}
 	for _, expected := range []string{"kind: Namespace", "kind: Deployment", "kind: Service", "imagePullPolicy: Never", "path: /ready", "cpu: 100m", "replicas: 2"} {
 		if !strings.Contains(manifest, expected) {
@@ -107,7 +112,7 @@ func TestBuildFailureDoesNotCreateCluster(t *testing.T) {
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		calls = append(calls, request)
 		if request.Name == "docker" && containsArgument(request.Args, "build") {
-			return model.CommandResult{ExitCode: 1, FailureType: model.FailureExit}
+			return model.CommandResult{ExitCode: 1, FailureType: model.FailureExit, Stderr: "dockerfile parse error: unknown instruction"}
 		}
 		return successfulCommand(request)
 	})
@@ -151,7 +156,7 @@ func TestBuildFailureClassificationDistinguishesDaemonErrors(t *testing.T) {
 		application bool
 	}{
 		{name: "dockerfile command", result: model.CommandResult{ExitCode: 1, FailureType: model.FailureExit, Stderr: "/bin/sh: ./start.sh: Permission denied"}, application: true},
-		{name: "dependency endpoint", result: model.CommandResult{ExitCode: 1, FailureType: model.FailureExit, Stderr: "dial tcp 127.0.0.1:8080: connect: connection refused"}, application: true},
+		{name: "dependency endpoint", result: model.CommandResult{ExitCode: 1, FailureType: model.FailureExit, Stderr: "dial tcp 127.0.0.1:8080: connect: connection refused"}, application: false},
 		{name: "daemon denied", result: model.CommandResult{ExitCode: 1, FailureType: model.FailureExit, Stderr: "permission denied while trying to connect to the Docker daemon socket"}, application: false},
 		{name: "daemon unavailable", result: model.CommandResult{ExitCode: 1, FailureType: model.FailureExit, Stderr: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"}, application: false},
 		{name: "canceled", result: model.CommandResult{ExitCode: -1, FailureType: model.FailureCanceled}, application: false},
@@ -203,7 +208,7 @@ func TestVulnerabilityFindingProducesWarningWithoutExecutionFailure(t *testing.T
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := successfulCommand(request)
 		if request.Name == "trivy" && containsArgument(request.Args, "image") {
-			result.Stdout = `{"Results":[{"Target":"image (alpine 3.23)","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libc","InstalledVersion":"1","Severity":"HIGH"}]}]}`
+			result.Stdout = trivyReportWithFindings(request, `[{"Target":"image (alpine 3.23)","Class":"os-pkgs","Type":"alpine","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libc","InstalledVersion":"1","Severity":"HIGH"}]}]`)
 		}
 		if request.Name == "docker" && containsArgument(request.Args, "port") {
 			result.Stdout = "127.0.0.1:18080\n"
@@ -228,7 +233,7 @@ func TestReadinessFailureStillCleansUp(t *testing.T) {
 		calls = append(calls, request)
 		result := successfulCommand(request)
 		if request.Name == "trivy" && containsArgument(request.Args, "image") {
-			result.Stdout = `{"Results":[]}`
+			result.Stdout = validTrivyReport(request)
 		}
 		if request.Name == "docker" && containsArgument(request.Args, "port") {
 			result.Stdout = "127.0.0.1:18080\n"
@@ -411,7 +416,7 @@ func TestRollingImageBuildFailureIsApplicationFailure(t *testing.T) {
 		if request.Name == "docker" && containsArgument(request.Args, "CLOUDFORGE_VERSION=b") {
 			result.ExitCode = 1
 			result.FailureType = model.FailureExit
-			result.Stderr = "fixture build failed"
+			result.Stderr = "process /bin/sh -c npm run build did not complete successfully: exit code: 1"
 		}
 		return result
 	})
@@ -493,7 +498,7 @@ func TestClusterCreateFailureUsesFreshCleanupContext(t *testing.T) {
 		calls = append(calls, request)
 		result := successfulCommand(request)
 		if request.Name == "trivy" && containsArgument(request.Args, "image") {
-			result.Stdout = `{"Results":[]}`
+			result.Stdout = validTrivyReport(request)
 		}
 		if request.Name == "docker" && containsArgument(request.Args, "port") {
 			result.Stdout = "127.0.0.1:18080\n"
@@ -512,31 +517,42 @@ func TestClusterCreateFailureUsesFreshCleanupContext(t *testing.T) {
 	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError {
 		t.Fatalf("unexpected cluster failure outcome: %#v", outcome)
 	}
-	if cleanupContextError != nil || outcome.Run.Environment.Kept || !hasCommand(calls, "k3d", "delete") {
-		t.Fatalf("partial cluster cleanup was not guaranteed: outcome=%#v context=%v", outcome, cleanupContextError)
+	if cleanupContextError != nil || outcome.Run.Environment.Kept || hasCommand(calls, "k3d", "delete") || !hasCommand(calls, "docker", "ls") {
+		t.Fatalf("partial cluster cleanup violated the ownership/context boundary: outcome=%#v context=%v", outcome, cleanupContextError)
 	}
 }
 
 func TestCleanupFailuresUseIndependentContextsAndContinue(t *testing.T) {
 	imageRemovals := 0
+	removedImages := map[string]bool{}
 	var imageContextErrors []error
 	runner := runnerFunc(func(callCtx context.Context, request command.Request) model.CommandResult {
 		result := successfulCommand(request)
+		if request.Name == "docker" && len(request.Args) > 1 && request.Args[0] == "image" && request.Args[1] == "inspect" && strings.Contains(strings.Join(request.Args, " "), "cloudforge.dev/ownership") {
+			letter := "a"
+			if strings.HasSuffix(request.Args[len(request.Args)-1], "-b") {
+				letter = "b"
+			}
+			id := "sha256:" + strings.Repeat(letter, 64)
+			if !removedImages[id] {
+				result.ExitCode, result.FailureType, result.Stderr = 0, model.FailureNone, ""
+				result.Stdout = fmt.Sprintf("%q true", id)
+			}
+		}
 		if request.Name == "k3d" && containsArgument(request.Args, "delete") {
 			<-callCtx.Done()
 			result.ExitCode = -1
 			result.FailureType = model.FailureTimeout
 		}
-		if request.Name == "docker" && containsArgument(request.Args, "rm") {
-			if containsArgument(request.Args, "buildx") {
-				return result
-			}
+		if request.Name == "docker" && len(request.Args) > 1 && request.Args[0] == "image" && request.Args[1] == "rm" {
 			imageRemovals++
 			imageContextErrors = append(imageContextErrors, callCtx.Err())
 			if imageRemovals == 1 {
 				result.ExitCode = -1
 				result.FailureType = model.FailureExecution
 				result.Stderr = "daemon cleanup failed"
+			} else {
+				removedImages[request.Args[len(request.Args)-1]] = true
 			}
 		}
 		return result
@@ -545,7 +561,10 @@ func TestCleanupFailuresUseIndependentContextsAndContinue(t *testing.T) {
 	service.cleanupTimeout = 5 * time.Millisecond
 	outcome := service.Run(context.Background(), fixturePath(t), testOptions())
 	if outcome.ExitCode != 2 || outcome.Run.Status != model.StatusError || !hasDiagnosticCode(outcome.Run.Diagnostics, "cluster_cleanup_failed") || !hasDiagnosticCode(outcome.Run.Diagnostics, "image_cleanup_failed") {
-		t.Fatalf("cleanup failures were not reported as execution errors: %#v", outcome)
+		t.Fatalf("cleanup failures were not reported as execution errors: status=%s exit=%d diagnostics=%+v", outcome.Run.Status, outcome.ExitCode, outcome.Run.Diagnostics)
+	}
+	if cleanup := evidenceByID(outcome.Run.Evidence, "environment-cleanup"); cleanup == nil || cleanup.Status != model.StatusError {
+		t.Fatalf("cleanup failure did not preserve aggregate ERROR evidence: %+v", cleanup)
 	}
 	if imageRemovals != 2 {
 		t.Fatalf("cleanup stopped after a failure; image removals=%d", imageRemovals)
@@ -565,7 +584,7 @@ func TestKeepEnvironmentSkipsDelete(t *testing.T) {
 		}
 		result := successfulCommand(request)
 		if request.Name == "trivy" && containsArgument(request.Args, "image") {
-			result.Stdout = `{"Results":[]}`
+			result.Stdout = validTrivyReport(request)
 		}
 		if request.Name == "docker" && containsArgument(request.Args, "port") {
 			result.Stdout = "127.0.0.1:18080\n"
@@ -728,6 +747,7 @@ func verificationAnalysis(endpoints []model.Endpoint) model.AnalysisResult {
 func testOptions() Options { return Options{Version: "test", Commit: strings.Repeat("a", 40)} }
 
 func fixedService(runner command.Runner) *Service {
+	runner = clusterProvisionFixture(runner)
 	currentImage := "cloudforge/healthy-node-api:0123abcd-a"
 	replicas := int32(2)
 	loadRan := false
@@ -884,9 +904,12 @@ func successRunner() command.Runner {
 
 func successfulCommand(request command.Request) model.CommandResult {
 	result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+	if request.Name == "docker" && strings.Contains(strings.Join(request.Args, " "), ".RepoDigests") {
+		result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" []`
+	}
 	if request.Name == "docker" && len(request.Args) > 2 && request.Args[1] == "inspect" &&
-		(request.Args[0] == "container" || request.Args[0] == "volume") &&
-		strings.HasPrefix(request.Args[len(request.Args)-1], "buildx_buildkit_cloudforge-") {
+		((request.Args[0] == "container" || request.Args[0] == "volume") && strings.HasPrefix(request.Args[len(request.Args)-1], "buildx_buildkit_cloudforge-") ||
+			request.Args[0] == "image" && strings.Contains(strings.Join(request.Args, " "), "cloudforge.dev/ownership")) {
 		result.ExitCode, result.FailureType = 1, model.FailureExit
 		result.Stderr = "Error: No such object: " + request.Args[len(request.Args)-1]
 	}
@@ -897,7 +920,7 @@ func successfulCommand(request command.Request) model.CommandResult {
 		result.Stdout = `{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
 	}
 	if request.Name == "trivy" && containsArgument(request.Args, "image") {
-		result.Stdout = `{"Results":[]}`
+		result.Stdout = validTrivyReport(request)
 	}
 	if request.Name == "docker" && containsArgument(request.Args, "port") {
 		result.Stdout = "127.0.0.1:18080\n"
@@ -990,4 +1013,11 @@ func TestMissingImportedImageIsExecutionErrorAndCleansUp(t *testing.T) {
 	if !hasCommand(calls, "k3d", "delete") || !hasCommand(calls, "docker", "rm") {
 		t.Fatal("cleanup missing")
 	}
+}
+
+func validTrivyReport(request command.Request) string { return trivyReportWithFindings(request, "[]") }
+func trivyReportWithFindings(request command.Request, results string) string {
+	subject := request.Args[len(request.Args)-1]
+	name, _ := json.Marshal(subject)
+	return `{"SchemaVersion":2,"ArtifactType":"container_image","ArtifactName":` + string(name) + `,"Metadata":{"ImageID":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"Results":` + results + `}`
 }

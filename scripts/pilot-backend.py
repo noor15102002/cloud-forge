@@ -5,6 +5,7 @@ Without --run, only static fixture checks and deterministic analyze/plan run.
 Runtime execution requires a disposable GitHub-hosted runner. The kubectl wrapper
 adds public-fixture qualification probes, not application behavior or verdicts.
 """
+from qualification_record import observation_started, observation_finished
 import argparse
 import base64
 import copy
@@ -235,6 +236,7 @@ def run_case(binary, fixture, base_config, name, output, repository):
                            CF_BACKEND_SECRET_CANARIES=str(secret_path), CF_BACKEND_CASE_OUTPUT=str(output),
                            CF_BACKEND_NETWORK_PROBES="true" if name == "healthy" else "false")
         with (output / "stdout.json").open("wb") as stdout, (output / "stderr.txt").open("wb") as stderr:
+            observation_started(output / "stdout.json")
             process = subprocess.Popen(command, stdout=stdout, stderr=stderr, env=environment)
             try:
                 code = process.wait(timeout=2400)
@@ -247,6 +249,7 @@ def run_case(binary, fixture, base_config, name, output, repository):
                     process.wait()
                 raise
             finally:
+                observation_finished(output / "stdout.json", process.returncode if process else None)
                 write_json(output / "exit.json", {"exit_code": process.returncode})
                 cleanup = subprocess.run(["bash", str(repository / "scripts/pilot-cleanup-check.sh")], capture_output=True, timeout=60)
                 (output / "cleanup.stdout.txt").write_bytes(cleanup.stdout)

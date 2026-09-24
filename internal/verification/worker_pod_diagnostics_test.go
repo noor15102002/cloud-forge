@@ -54,7 +54,7 @@ func TestWorkerEvidenceRetainsTerminationInStartupRecoveryAndImageFailure(t *tes
 				return result
 			})
 			service := workerTestService(base)
-			service.runner = runner
+			service.runner = clusterProvisionFixture(runner)
 			out := service.Run(context.Background(), root, testOptions())
 			evidence := evidenceByID(out.Run.Evidence, tc.id)
 			if out.Run.Status != model.StatusFail || evidence == nil || evidence.Status != model.StatusFail || !evidence.Execution.Executed {

@@ -3,6 +3,29 @@
 All notable changes will be documented here. CloudForge follows Semantic
 Versioning once releases begin.
 
+## Unreleased — narrow prerelease hardening
+
+- Separate bounded HTTP-core qualification from experimental HPA/worker results;
+  retain explicit fixture profiles and original failures without regrading them.
+- Retain allowlisted public-fixture Docker prerequisite and k3d import diagnostics
+  without retries, deadline changes or application log capture.
+- Reject unusable, ambiguous or mismatched Trivy observations as ERROR; retain
+  collision-safe normalized package findings and concise image-A scan summaries.
+- Establish invocation ownership before cleanup and verify complete removal,
+  including private workspaces; preserve original application failures.
+- Separate environment and observation errors from failed application requirements;
+  retain safe startup/final HTTP reasons and precise sampled availability wording.
+- Correct bounded controlled-readiness, targeted-recovery and HPA headroom verdicts;
+  retain these capabilities as experimental for the prerelease.
+- Preserve all eight historical report schemas, reject duplicate keys, improve
+  Markdown/comments and treat numerical performance comparisons as advisory.
+- Prepare reproducible, stamped Linux/amd64 archives and an exact-artifact
+  qualification workflow. Publication remains conditional on candidate evidence.
+
+Earlier entries below describe historical implementation milestones. The current
+release promise is defined by [the support and maturity table](docs/supported-applications.md),
+not by historical milestone wording.
+
 ## Unreleased — bounded HTTP observation
 
 - Add explicit 20ms–5s HTTP probe pacing shared across readiness and lifecycle
