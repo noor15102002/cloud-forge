@@ -1,6 +1,5 @@
 const http = require("node:http");
 
-let ready = true;
 let stopping = false;
 
 const server = http.createServer((request, response) => {
@@ -13,8 +12,7 @@ const server = http.createServer((request, response) => {
   } else if (path === "/health") {
     body = { ok: true };
   } else if (path === "/ready") {
-    status = ready ? 200 : 503;
-    body = { ready };
+    body = { ready: true };
   } else if (path === "/work") {
     body = { message: "Hello from the CloudForge HTTP example." };
   } else {
@@ -30,8 +28,8 @@ server.listen(8080, "0.0.0.0");
 function shutdown() {
   if (stopping) return;
   stopping = true;
-  ready = false;
-  // Give readiness and Service routing time to observe termination before closing.
+  // Kubernetes withdraws a terminating pod from Service routing asynchronously.
+  // Keep serving truthfully during propagation, then close and drain the listener.
   setTimeout(() => server.close(() => process.exit(0)), 2000);
   setTimeout(() => process.exit(1), 10000).unref();
 }
