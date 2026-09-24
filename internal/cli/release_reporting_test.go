@@ -87,7 +87,7 @@ func TestNumericalBaselineAdvisoryKeepsSuccessfulVerificationExitZero(t *testing
 	if err := json.Unmarshal(stdout.Bytes(), &current); err != nil {
 		t.Fatal(err)
 	}
-	if current.Status != model.StatusPass || current.Comparison == nil || current.Comparison.Status != model.StatusWarn {
+	if current.Status != model.StatusWarn || current.Comparison == nil || current.Comparison.Status != model.StatusWarn {
 		t.Fatalf("absolute and advisory statuses incorrect: %#v", current)
 	}
 	var advisory, clean bool

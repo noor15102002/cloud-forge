@@ -230,7 +230,7 @@ func TestWorkerRuntimeRestoresContinuesAndRetainsFailure(t *testing.T) {
 			}
 			switch mode {
 			case "healthy":
-				if out.Run.Status != model.StatusPass || recovery.Status != model.StatusPass || replacement.Status != model.StatusPass || runner.boot != 5 {
+				if out.Run.Status != model.StatusWarn || recovery.Status != model.StatusPass || replacement.Status != model.StatusPass || runner.boot != 5 {
 					t.Fatalf("healthy worker failed: %+v", out.Run.Evidence)
 				}
 			case "fail-second":

@@ -62,7 +62,14 @@ disposable machines.
 
 Kubeconfig and Docker builder configuration live in a private run directory.
 The user's current Kubernetes context/default builder is not selected or
-modified. Resources have unique run names and ownership metadata. Cleanup
+modified. All Docker-backed operations explicitly use the accepted local default
+Unix socket; unsupported contexts, remote endpoints, rootless/custom sockets and
+TLS selection are rejected before building. The doctor and runtime use the same
+compatibility policy. See [first run](first-run.md) for Docker/Buildx setup and the
+pinned runtime-tool bundle. Read-only analysis and planning need none of those
+tools.
+
+Resources have unique run names and ownership metadata. Cleanup
 attempts use independent deadlines after cancellation. No global Docker prune
 or unrelated-resource deletion is performed. SIGKILL, daemon failure or host
 failure may require manual removal of the report's named cluster and
@@ -70,6 +77,9 @@ failure may require manual removal of the report's named cluster and
 remain; only run-owned images/build caches are deleted.
 
 ## Optional controlled experiment protocol
+
+This protocol enables **experimental** capabilities outside the qualified HTTP
+core. The [first-run example](../examples/http-core) intentionally omits it.
 
 To opt into stronger behavioral proofs, an application in the disposable test
 environment can implement this protocol and explicitly configure:

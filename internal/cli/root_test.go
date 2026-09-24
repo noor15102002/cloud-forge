@@ -43,7 +43,13 @@ func TestVerifyJSONContractAndExitCode(t *testing.T) {
 	base := successfulCLIRunner()
 	runner := cliRunnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {
 		result := base(ctx, request)
-		if request.Name == "trivy" && len(request.Args) > 1 {
+		if request.Name == "docker" && slices.Contains(request.Args, "context") {
+			result.Stdout = `"unix:///var/run/docker.sock"`
+		}
+		if request.Name == "docker" && slices.Contains(request.Args, "buildx") && slices.Contains(request.Args, "version") {
+			result.Stdout = "github.com/docker/buildx v0.21.2"
+		}
+		if request.Name == "trivy" && slices.Contains(request.Args, "image") {
 			result.Stdout = validTrivyReport(request)
 		}
 		for _, argument := range request.Args {
@@ -64,7 +70,7 @@ func TestVerifyJSONContractAndExitCode(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != model.VerificationSchemaVersion || result.Status != model.StatusPass || len(result.Evidence) != 13 {
+	if result.SchemaVersion != model.VerificationSchemaVersion || result.Status != model.StatusWarn || len(result.Evidence) != 13 {
 		t.Fatalf("unexpected verification contract: %#v", result)
 	}
 }
@@ -80,7 +86,13 @@ func TestVerifyMarkdownReport(t *testing.T) {
 	base := successfulCLIRunner()
 	runner := cliRunnerFunc(func(ctx context.Context, request command.Request) model.CommandResult {
 		result := base(ctx, request)
-		if request.Name == "trivy" && len(request.Args) > 1 {
+		if request.Name == "docker" && slices.Contains(request.Args, "context") {
+			result.Stdout = `"unix:///var/run/docker.sock"`
+		}
+		if request.Name == "docker" && slices.Contains(request.Args, "buildx") && slices.Contains(request.Args, "version") {
+			result.Stdout = "github.com/docker/buildx v0.21.2"
+		}
+		if request.Name == "trivy" && slices.Contains(request.Args, "image") {
 			result.Stdout = validTrivyReport(request)
 		}
 		if containsCLIArgument(request.Args, "pods") {
@@ -189,7 +201,7 @@ func cliTestRunner(vulnerable bool) cliRunnerFunc {
 		if request.Name == "kubectl" && slices.Contains(request.Args, "nodes") {
 			result.Stdout = `{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`
 		}
-		if request.Name == "k3d" || request.Name == "k6" || (request.Name == "trivy" && len(request.Args) == 1) || (request.Name == "docker" && len(request.Args) > 0 && request.Args[0] == "info") {
+		if request.Name == "k3d" || request.Name == "k6" || (request.Name == "trivy" && slices.Contains(request.Args, "--version")) || (request.Name == "docker" && len(request.Args) > 0 && request.Args[0] == "info") {
 			result.Stdout = map[string]string{"k3d": "5.9.0", "k6": "2.2.0", "trivy": "0.74.0", "docker": "28.0.4"}[request.Name]
 		}
 		if request.Name == "kubectl" && slices.Contains(request.Args, "--output=json") {
@@ -205,7 +217,13 @@ func cliTestRunner(vulnerable bool) cliRunnerFunc {
 			}
 		}
 
-		if request.Name == "trivy" && len(request.Args) > 1 {
+		if request.Name == "docker" && slices.Contains(request.Args, "context") {
+			result.Stdout = `"unix:///var/run/docker.sock"`
+		}
+		if request.Name == "docker" && slices.Contains(request.Args, "buildx") && slices.Contains(request.Args, "version") {
+			result.Stdout = "github.com/docker/buildx v0.21.2"
+		}
+		if request.Name == "trivy" && slices.Contains(request.Args, "image") {
 			if vulnerable {
 				result.Stdout = trivyReportWithFindings(request, `[{"Target":"image","Class":"os-pkgs","Type":"alpine","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libc","InstalledVersion":"1","Severity":"HIGH"}]}]`)
 			} else {

@@ -30,6 +30,10 @@ actions:
 	bash scripts/test-action-inputs.sh
 	python3 scripts/test-release.py
 	python3 scripts/test-release-harnesses.py
+	python3 scripts/test-install-tools.py
+	python3 scripts/test-operational-scanner-wrapper.py
+	python3 scripts/test-scanner-policy-pilot.py
+	python3 scripts/test-pilot-endpoint-policy.py
 	python3 scripts/test-qualification-command.py
 	python3 scripts/test-qualification-cleanup.py
 	python3 scripts/test-qualification-record.py

@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
-	"github.com/noor15102002/cloud-forge/internal/doctor"
 	"github.com/noor15102002/cloud-forge/internal/executor/k3d"
+	"github.com/noor15102002/cloud-forge/internal/executor/trivy"
+	"github.com/noor15102002/cloud-forge/internal/runtimepolicy"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -28,42 +28,37 @@ func validIdentity(identity model.BuildIdentity) bool {
 func checkRuntimeTools(ctx context.Context, runner command.Runner, out *Outcome) bool {
 	compatibility := &model.RuntimeCompatibility{Status: "supported", ExpectedKubernetes: k3d.KubernetesVersion, Checks: []model.CompatibilityCheck{}}
 	out.Run.Compatibility = compatibility
-	specs := []struct {
-		name   string
-		args   []string
-		tested string
-	}{
-		{"docker", []string{"info", "--format", "{{.ServerVersion}}"}, "28.0.4"},
-		{"k3d", []string{"version"}, "5.9.0"},
-		{"kubectl", []string{"version", "--client=true", "--output=json"}, "1.35.5"},
-		{"k6", []string{"version"}, "2.2.0"},
-		{"trivy", []string{"--version"}, "0.74.0"},
-	}
+	specs := runtimepolicy.Tools()
 	for _, spec := range specs {
-		if spec.name == "k6" && out.Run.Plan != nil && plannedCapability(out.Run.Plan, "load-profile").Disposition != "supported" {
+		if spec.Name == "k6" && out.Run.Plan != nil && plannedCapability(out.Run.Plan, "load-profile").Disposition != "supported" {
 			continue
 		}
-		result := runner.Run(ctx, command.Request{Name: spec.name, Args: spec.args, Timeout: 10 * time.Second, OutputLimit: 16 * 1024})
+		var result model.CommandResult
+		switch spec.Name {
+		case "buildx":
+			result = runtimepolicy.BuildxVersion(ctx, runner)
+		case "trivy":
+			result = trivy.Version(ctx, runner)
+		default:
+			result = runner.Run(ctx, command.Request{Name: spec.Command, Args: spec.Args, Timeout: 10 * time.Second, OutputLimit: 16 * 1024})
+		}
 		version := ""
 		if !failed(result) && !result.Truncated {
-			if spec.name == "kubectl" {
+			if spec.Name == "kubectl" {
 				version, _ = kubernetesVersions(result.Stdout)
 			} else {
-				version = doctor.ParsedVersion(result.Stdout)
+				version = runtimepolicy.ParsedVersion(result.Stdout)
 			}
 		}
 		if version == "" {
-			out.Run.Fingerprint.Tools = append(out.Run.Fingerprint.Tools, model.ToolVersion{Name: spec.name, Version: "unknown"})
-			addCompatibility(compatibility, spec.name, "not_validated", "Tool version could not be observed reliably.")
-			out.addError("runtime_version_unavailable", "CloudForge could not establish the runtime tool versions.", "Check "+spec.name+" installation and access; no application build was started. "+versionObservationGuidance(result))
+			out.Run.Fingerprint.Tools = append(out.Run.Fingerprint.Tools, model.ToolVersion{Name: spec.Name, Version: "unknown"})
+			addCompatibility(compatibility, spec.Name, "not_validated", "Tool version could not be observed reliably.")
+			out.addError("runtime_version_unavailable", "CloudForge could not establish the runtime tool versions.", "Check "+spec.Name+" installation and access; no application build was started. "+versionObservationGuidance(result))
 			return false
 		}
-		out.Run.Fingerprint.Tools = append(out.Run.Fingerprint.Tools, model.ToolVersion{Name: spec.name, Version: version})
-		disposition, reason := "supported", "Version matches the tested tool bundle."
-		if version != spec.tested {
-			disposition, reason = "not_validated", "Version differs from the tested bundle ("+spec.tested+"); measurements are permitted with this limitation."
-		}
-		addCompatibility(compatibility, spec.name, disposition, reason)
+		out.Run.Fingerprint.Tools = append(out.Run.Fingerprint.Tools, model.ToolVersion{Name: spec.Name, Version: version})
+		disposition, reason := runtimepolicy.VersionDisposition(spec, version)
+		addCompatibility(compatibility, spec.Name, disposition, reason)
 	}
 	client := toolVersion(out.Run.Fingerprint, "kubectl")
 	disposition, reason := kubectlCompatibility(client, k3d.KubernetesVersion)
@@ -72,39 +67,11 @@ func checkRuntimeTools(ctx context.Context, runner command.Runner, out *Outcome)
 }
 
 func kubernetesVersions(data string) (string, string) {
-	var value struct {
-		Client struct {
-			GitVersion string `json:"gitVersion"`
-		} `json:"clientVersion"`
-		Server struct {
-			GitVersion string `json:"gitVersion"`
-		} `json:"serverVersion"`
-	}
-	if json.Unmarshal([]byte(data), &value) != nil {
-		return "", ""
-	}
-	return doctor.ParsedVersion(value.Client.GitVersion), doctor.ParsedVersion(value.Server.GitVersion)
+	return runtimepolicy.KubernetesVersions(data)
 }
 
 func kubectlCompatibility(client, server string) (string, string) {
-	parse := func(version string) (int, int, bool) {
-		parts := strings.Split(version, ".")
-		if len(parts) < 3 {
-			return 0, 0, false
-		}
-		major, e1 := strconv.Atoi(parts[0])
-		minor, e2 := strconv.Atoi(parts[1])
-		return major, minor, e1 == nil && e2 == nil
-	}
-	cm, cn, cok := parse(client)
-	sm, sn, sok := parse(server)
-	if !cok || !sok {
-		return "not_validated", "Client/server versions could not be compared."
-	}
-	if cm != sm || cn-sn > 1 || sn-cn > 1 {
-		return "unsupported", "kubectl must use the same major and be within one minor of the Kubernetes API server."
-	}
-	return "supported", "kubectl is within Kubernetes' supported one-minor client/server skew."
+	return runtimepolicy.KubectlCompatibility(client, server)
 }
 
 func checkRuntimeServer(ctx context.Context, runner command.Runner, current plan, out *Outcome) bool {
@@ -188,7 +155,7 @@ func completeFingerprint(fp *model.RunFingerprint) {
 	if !commitPattern.MatchString(fp.CloudForgeCommit) || !imagePattern.MatchString(fp.ImageID) || fp.WorkloadHash == "" {
 		return
 	}
-	for _, name := range []string{"docker", "k3d", "kubectl", "kubernetes", "k6", "trivy"} {
+	for _, name := range []string{"docker", "buildx", "k3d", "kubectl", "kubernetes", "k6", "trivy"} {
 		if name == "k6" && fp.Configuration.Endpoints.Load == "" {
 			continue
 		}

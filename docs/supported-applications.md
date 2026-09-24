@@ -19,7 +19,7 @@ older milestone evidence does not qualify a newer binary.
 | STABLE / QUALIFIED CORE | Docker image build; Trivy scan of image A | A usable supported scan bound to the expected image can PASS or WARN; unusable observation is ERROR. Scanner findings do not establish exploitability. |
 | STABLE / QUALIFIED CORE | Disposable k3d; plain supported single-container Deployment and Service | Supported fields are adapted to isolated run-owned resources; arbitrary manifests are not applied. |
 | STABLE / QUALIFIED CORE | Explicit Redis; startup/readiness and semantic HTTP readiness | A disposable pinned provider and bounded flat JSON assertions; readiness does not establish business transactions. |
-| STABLE / QUALIFIED CORE | Sampled pod replacement availability, pod recovery and same-source rollout | Failed requests, safe failure categories, sample count/interval and final health; shorter interruptions between samples cannot be excluded. Image B is another build/reference from the same frozen source. |
+| STABLE / QUALIFIED CORE | Sampled pod replacement availability, pod recovery and same-source rollout | Failed requests, safe failure categories, sample count/interval and final health; shorter interruptions between samples cannot be excluded. Image B reads the same selected live checkout again; keep it unchanged for the entire run. |
 | STABLE / QUALIFIED CORE | Bounded configured GET load; restore-and-continue; cancellation and owned cleanup | Original experiment results survive restoration. Restoration checks the intended runtime baseline; it does not reset arbitrary business state. |
 | STABLE / QUALIFIED CORE | Terminal, JSON, Markdown and GitHub Action | The released Action installs the qualified archive. Historical report schemas remain readable without synthesizing missing evidence. |
 | EXPERIMENTAL | PostgreSQL/pgvector, application preparation/migrations and ClamAV | Existing isolated backend contracts and generic evidence remain available; no persistent database recovery, HA or migration rollback certification. |
@@ -36,5 +36,8 @@ older milestone evidence does not qualify a newer binary.
 Recognition of a language or client library does not establish boot requirements.
 Explicit configuration selects supported test requirements; unresolved required
 dependencies produce BLOCKED. Use `cloudforge verify --plan` before executing code.
+Start with [the HTTP-core first run](first-run.md) to avoid opting into experimental
+fixtures. Local runtime execution supports the default Unix Docker Engine socket;
+custom/rootless sockets, remote engines and Docker Desktop contexts are rejected.
 See [runtime configuration](runtime-configuration.md), [release qualification](releasing.md),
 [backend limits](backend-runtime.md) and [worker limits](worker-runtime.md).

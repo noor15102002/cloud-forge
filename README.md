@@ -16,43 +16,31 @@ PostgreSQL/pgvector, preparation, ClamAV, workers, controlled tests, HPA and num
 regression grading remain experimental. See [release qualification](docs/releasing.md)
 for the candidate gate and retained evidence requirements.
 
-**Archive qualification: GO for the bounded HTTP/Redis core; publication: NOT DONE.**
-The exact Linux/amd64 `v0.1.0-alpha.1` archive from merged commit
+**Publication is on hold for focused environment and first-run hardening.**
+The earlier Linux/amd64 `v0.1.0-alpha.1` archive from merged commit
 `977d863e94722bc236201d2deb16a856def7dee2` passed
 [installed-archive qualification](https://github.com/noor15102002/cloud-forge/actions/runs/36044464022):
 44 declared contracts covering 63 native invocations, with their original verdicts
-preserved. No public binary has been released. See the
+preserved. Its results remain valid for those bytes; they do not qualify the
+changed candidate. No public binary has been released. See the
 [current project status](docs/project-status.md) for immutable checksums, retained
 earlier attempts and experimental exclusions. Qualification applies to that
 archive and commit, not later documentation revisions.
 
-## Install the qualified prerelease
+## First run
 
-Use the Linux/amd64 archive from the
-[v0.1.0-alpha.1 release](https://github.com/noor15102002/cloud-forge/releases/tag/v0.1.0-alpha.1)
-after its qualification record is available. The release contains the exact
-qualified archive, SHA-256 checksum, and `release.json` with version, full source
-commit, build date and binary checksum. An unpublished candidate is not yet a
-qualified public release.
+Follow the [first-run guide](docs/first-run.md) for the complete Linux/amd64
+archive installation, checksums, Docker Engine and system Buildx prerequisite,
+pinned tool installer and one small [HTTP-core example](examples/http-core).
+The release must be published before its download commands work. The example has
+two replicas, readiness and bounded GET load; it does not enable experimental
+HPA, control protocols, workers or backend preparation.
 
-```sh
-version=v0.1.0-alpha.1
-archive="cloudforge_${version}_linux_amd64.tar.gz"
-base="https://github.com/noor15102002/cloud-forge/releases/download/$version"
-curl -fLO "$base/$archive"
-curl -fLO "$base/checksums.txt"
-curl -fLO "$base/release.json"
-sha256sum --check checksums.txt
-tar -xzf "$archive" cloudforge
-install -Dm755 cloudforge "$HOME/.local/bin/cloudforge"
-"$HOME/.local/bin/cloudforge" version
-"$HOME/.local/bin/cloudforge" doctor
-```
-
-Ensure `$HOME/.local/bin` is on your `PATH`. Compare the printed version and full
-commit with the release record. Runtime verification also needs Docker, k3d,
-kubectl, k6 and Trivy; the [Action](docs/github-action.md) installs the pinned
-qualified tool versions. Repository analysis alone does not require those tools.
+Runtime verification requires the supported local Docker socket plus Buildx,
+k3d, kubectl, k6 and Trivy. `doctor` checks availability and compatibility;
+`analyze` and `verify --plan` remain independent of installed runtime tools.
+The [GitHub Action guide](docs/github-action.md) provides complete verification
+and separate trusted pull-request reporting workflows for another repository.
 
 For development, clone the repository and run `make build` with Go 1.27.1.
 That source build is a development binary, not the qualified distribution.
@@ -99,8 +87,10 @@ cannot exclude shorter interruptions between samples. `downtime_ms` retains its
 historical meaning: the maximum sampled failure window, not a continuously
 measured outage duration.
 
-A **same-source rollout** builds image B from the same frozen source under a new
-image reference/build. It exercises rollout mechanics, not compatibility between
+A **same-source rollout** builds image B from the same selected checkout under a
+new image reference/build. Keep that checkout unchanged until the run finishes:
+CloudForge reads it again for each build and does not freeze a source snapshot.
+It exercises rollout mechanics, not compatibility between
 two independent application releases. Image A's scan does not establish image B's
 security state. A failed experiment remains visible after baseline restoration;
 restoration does not reset arbitrary business data. Owned cleanup is attempted

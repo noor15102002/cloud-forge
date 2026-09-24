@@ -188,7 +188,7 @@ func TestRedisStartupOutcomesCleanupAndApplicationOrdering(t *testing.T) {
 				return result
 			})
 			out := fixedService(runner).Run(ctx, root, testOptions())
-			expected := model.StatusPass
+			expected := model.StatusWarn
 			if mode == "unavailable" || mode == "timeout" {
 				expected = model.StatusBlocked
 			}

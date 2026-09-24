@@ -1,12 +1,21 @@
 # Project status — September 24, 2026
 
-**Archive qualification: GO for the bounded HTTP/Redis core. Publication: NOT DONE.**
+**Publication: ON HOLD pending qualification of the environment-hardening candidate.**
 CloudForge analyzes supported Node.js, TypeScript and Python HTTP workloads,
 builds and scans images, provisions disposable Kubernetes, tests readiness and
 lifecycle behavior, restores state, cleans owned resources and produces evidence.
-Selected monorepos and explicit Redis are included in this qualified scope.
+Selected monorepos and explicit Redis are included in the bounded core scope.
 
-## Exact qualified candidate
+The earlier archive passed its declared qualification contracts in the prepared
+runner environment. Subsequent review found ambient Trivy policy and Docker
+endpoint-selection gaps at the developer-machine boundary. The current change
+isolates and records the scanner policy, pins the selected supported Docker
+endpoint, aligns doctor/Buildx prerequisites and labels experimental capabilities.
+It also supplies a core-only first-run example and consumer reporter instructions.
+A new archive must pass qualification before publication; the historical results
+below remain unchanged and do not qualify new bytes.
+
+## Historical qualified candidate (unpublished)
 
 [PR #56](https://github.com/noor15102002/cloud-forge/pull/56) merged through
 protected main as `977d863e94722bc236201d2deb16a856def7dee2`.
@@ -43,9 +52,8 @@ the original application FAIL and cleanup ERROR; it was not another native run.
 
 Qualification applies only to the archive and commit above. A subsequent
 documentation commit does not become the qualified binary source. No public
-binary release or release tag has been published. Publication must use these
-already-qualified bytes without rebuilding, retain the qualification record,
-and verify downloaded release checksums.
+binary release or release tag has been published. These bytes are retained as
+historical evidence and will not be published as the environment-hardened alpha.
 
 ## Earlier attempts remain evidence
 
@@ -80,7 +88,10 @@ numerical regression grading remain experimental; this archive gate does not
 qualify them. Shared execution, observation, identity, artifact and cleanup
 defects remain release blockers regardless of which experiment exposes them.
 
-The next step is publication of the qualified prerelease, with its bounded
-support statement and durable evidence. No private Peaxis application was
+The next step is exact-archive qualification of the environment-hardening change,
+including hostile ambient scanner settings, rejected Docker endpoint selection
+and the first-run example. Publication follows only after that gate, with a bounded
+support statement, durable evidence and independently checked public downloads.
+No private Peaxis application was
 changed or executed during this qualification. See
 [release qualification](releasing.md) and [support boundaries](supported-applications.md).

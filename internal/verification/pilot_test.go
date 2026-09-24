@@ -164,7 +164,7 @@ func TestWorkloadFingerprintIgnoresRunIDYAMLQuoting(t *testing.T) {
 
 func TestCompatibilityRequiresKnownCleanCloudForgeAndImageIdentity(t *testing.T) {
 	tools := []model.ToolVersion{}
-	for _, name := range []string{"docker", "k3d", "kubectl", "kubernetes", "k6", "trivy"} {
+	for _, name := range []string{"docker", "buildx", "k3d", "kubectl", "kubernetes", "k6", "trivy"} {
 		tools = append(tools, model.ToolVersion{Name: name, Version: "1.2.3"})
 	}
 	for _, commit := range []string{"unknown", strings.Repeat("a", 40) + "+dirty", strings.Repeat("a", 40)} {

@@ -72,10 +72,11 @@ runs:
         CANDIDATE_COMMIT: ${{ inputs.candidate-commit }}
         CANDIDATE_DATE: ${{ inputs.candidate-date }}
         CANDIDATE_SHA256: ${{ inputs.candidate-sha256 }}
+        CLOUDFORGE_REPORTER_ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
         binary="$RUNNER_TEMP/cloudforge-report-renderer"
-        cd "$GITHUB_ACTION_PATH/../../.."
+        cd "$CLOUDFORGE_REPORTER_ACTION_PATH/../../.."
         if [ -n "$CANDIDATE_PATH" ]; then
           test "$(git rev-parse HEAD)" = "$CANDIDATE_COMMIT" || {
             echo 'Candidate and report Action source revisions differ.' >&2
@@ -109,11 +110,12 @@ runs:
         CLOUDFORGE_PR_NUMBER: ${{ inputs.pull-request-number }}
         CLOUDFORGE_QUALIFICATION_SCOPE: ${{ inputs.qualification-scope }}
         CLOUDFORGE_ARTIFACT_URL: ${{ inputs.artifact-url }}
+        CLOUDFORGE_REPORTER_ACTION_PATH: ${{ github.action_path }}
       with:
         github-token: ${{ inputs.github-token }}
         result-encoding: string
         script: |
-          const reporter = require(`${process.env.GITHUB_ACTION_PATH}/comment.cjs`)
+          const reporter = require(`${process.env.CLOUDFORGE_REPORTER_ACTION_PATH}/comment.cjs`)
           const body = require('node:fs').readFileSync(process.env.CLOUDFORGE_MARKDOWN_PATH, 'utf8')
           return await reporter.updateComment({
             github,

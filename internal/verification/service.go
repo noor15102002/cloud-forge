@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ import (
 	k6executor "github.com/noor15102002/cloud-forge/internal/executor/k6"
 	"github.com/noor15102002/cloud-forge/internal/executor/kubernetes"
 	"github.com/noor15102002/cloud-forge/internal/executor/trivy"
+	"github.com/noor15102002/cloud-forge/internal/runtimepolicy"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -190,11 +192,28 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addError("build_identity_missing", "Runtime verification requires CloudForge version and commit identity.", "Use a VCS-stamped build or inject the version and full commit with Go linker flags.")
 		return out
 	}
-	out.Run.Fingerprint = newFingerprint(ctx, s.runner, root, plan, options)
-	if !checkRuntimeTools(ctx, scopedRunner{runner: s.runner, kubeconfig: os.DevNull, backendDocker: backendProfile(config)}, &out) {
+	if !runtimepolicy.PlatformSupported(runtime.GOOS, runtime.GOARCH) {
+		out.Run.Status, out.ExitCode = model.StatusBlocked, 1
+		out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{Code: "runtime_platform_unsupported", Status: model.StatusBlocked, Message: "Runtime verification is supported only on Linux/amd64.", Guidance: "Use a Linux/amd64 host with the supported local Docker daemon. Analysis and planning remain available without runtime tools."})
 		return out
 	}
-	if backendProfile(config) && !s.backendCapacity(ctx, s.runner, &out) {
+	selection := runtimepolicy.ResolveDocker(ctx, s.runner, os.Getenv)
+	if selection.Status != "supported" {
+		if selection.Status == "unsupported" {
+			out.Run.Status, out.ExitCode = model.StatusBlocked, 1
+			out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{Code: "docker_endpoint_unsupported", Status: model.StatusBlocked, Message: "The selected Docker endpoint is outside the supported local runtime contract; no application execution was started.", Guidance: "Select the default local Linux Docker daemon. Remote endpoints, Docker VMs, TLS selectors and nondefault/rootless sockets are not qualified."})
+		} else {
+			out.addError("docker_endpoint_unobservable", "CloudForge could not resolve the effective Docker endpoint; no application execution was started.", "Check Docker installation and context metadata. The selected endpoint must resolve to the default local Unix socket.")
+		}
+		return out
+	}
+	out.Run.Diagnostics = append(out.Run.Diagnostics, model.Diagnostic{Code: "docker_endpoint_pinned", Status: model.StatusPass, Message: "The supported default local Docker socket was selected and pinned for preflight, build, scan, cluster operations and cleanup.", Guidance: "Selection origin: " + selection.Origin + ". Context names and connection details are omitted; endpoint pinning does not attest the host behind a socket."})
+	out.Run.Fingerprint = newFingerprint(ctx, s.runner, root, plan, options)
+	preflight := scopedRunner{runner: s.runner, kubeconfig: os.DevNull, dockerPinned: true}
+	if !checkRuntimeTools(ctx, preflight, &out) {
+		return out
+	}
+	if backendProfile(config) && !s.backendCapacity(ctx, preflight, &out) {
 		return out
 	}
 	out.Run.Environment.ClusterName = plan.clusterName
@@ -260,7 +279,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addError("workspace_failed", "CloudForge could not create its private Docker configuration.", err.Error())
 		return out
 	}
-	scoped := scopedRunner{runner: s.runner, kubeconfig: kubeconfigPath, dockerConfig: dockerConfig, backendDocker: backendProfile(config)}
+	scoped := scopedRunner{runner: s.runner, kubeconfig: kubeconfigPath, dockerConfig: dockerConfig, dockerPinned: true}
 	dockerClient := docker.New(scoped)
 	dockerClient.IsolateBuild(plan.clusterName)
 	builderAttempted := false
@@ -387,9 +406,10 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	if scanErr != nil || failed(scan.Command) {
 		out.Run.Evidence = append(out.Run.Evidence, model.Evidence{
 			ExperimentID: "container-scan", Title: "Container vulnerability scan (image A)", Status: model.StatusError,
-			Summary:    "The image A vulnerability observation was unusable; no finding count is established.",
-			DurationMS: scan.Command.DurationMS,
-			Execution:  &model.ExperimentExecution{Executed: scan.Started},
+			Summary:      "The image A vulnerability observation was unusable; no finding count is established.",
+			DurationMS:   scan.Command.DurationMS,
+			Measurements: scan.Measurements,
+			Execution:    &model.ExperimentExecution{Executed: scan.Started},
 		})
 		if scanErr != nil {
 			out.addError("trivy_output_invalid", "CloudForge could not establish a valid image A vulnerability observation.", scanErr.Error())

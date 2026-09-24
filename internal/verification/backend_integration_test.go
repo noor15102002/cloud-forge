@@ -411,7 +411,7 @@ func TestBackendFingerprintRequiresActualSignatureIdentity(t *testing.T) {
 	_, current := backendIntegrationFixture(t)
 	fingerprint := newFingerprint(context.Background(), successRunner(), ".", current, testOptions())
 	fingerprint.ImageID = "sha256:" + strings.Repeat("b", 64)
-	for _, name := range []string{"docker", "k3d", "kubectl", "kubernetes", "k6", "trivy"} {
+	for _, name := range []string{"docker", "buildx", "k3d", "kubectl", "kubernetes", "k6", "trivy"} {
 		fingerprint.Tools = append(fingerprint.Tools, model.ToolVersion{Name: name, Version: "1.0.0"})
 	}
 	completeFingerprint(fingerprint)

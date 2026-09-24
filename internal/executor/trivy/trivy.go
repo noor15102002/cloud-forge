@@ -37,15 +37,32 @@ var metadataToken = regexp.MustCompile(`^[a-zA-Z0-9_.+-]{1,64}$`)
 
 // ScanImage binds a reliable Trivy v2 observation to the independently inspected image ID.
 // The tag is run-owned; matching Metadata.ImageID prevents a report for another image being accepted.
-func (c *Client) ScanImage(ctx context.Context, image, expectedImageID string) (Scan, error) {
+func (c *Client) ScanImage(ctx context.Context, image, expectedImageID string) (scan Scan, err error) {
 	if !imageIDPattern.MatchString(expectedImageID) {
 		return Scan{}, fmt.Errorf("the expected scan image identity was not established")
 	}
+	policy, err := newExecutionPolicy()
+	if err != nil {
+		return Scan{}, err
+	}
+	defer func() {
+		if cleanupErr := policy.remove(); cleanupErr != nil {
+			// A cleanup failure cannot be represented as a successful observation.
+			scan.Findings = nil
+			scan.Measurements = policyMeasurements()
+			err = cleanupErr
+		}
+	}()
 	result := c.runner.Run(ctx, command.Request{
-		Name: "trivy", Args: []string{"image", "--format", "json", "--quiet", "--scanners", "vuln", "--timeout", "5m", image},
+		Name: "trivy", Args: []string{
+			"image", "--format", "json", "--quiet", "--scanners", "vuln", "--timeout", "5m",
+			"--config", policy.config, "--ignorefile", policy.ignore, "--cache-dir", policy.cache,
+			"--severity", scanSeverities, "--ignore-unfixed=false", "--image-src", "docker", image,
+		},
+		Dir: policy.directory, Env: policy.env, ClearEnv: true,
 		Timeout: 6 * time.Minute, OutputLimit: 8 * 1024 * 1024,
 	})
-	scan := Scan{Command: result, Started: true}
+	scan = Scan{Command: result, Started: true, Measurements: policyMeasurements()}
 	if result.FailureType != model.FailureNone || result.ExitCode != 0 {
 		return scan, nil
 	}
@@ -63,7 +80,9 @@ func (c *Client) ScanImage(ctx context.Context, image, expectedImageID string) (
 	if value.ArtifactName != image {
 		return scan, fmt.Errorf("trivy scan reference did not match the requested image")
 	}
-	scan.Findings, scan.Measurements = normalize(value)
+	findings, measurements := normalize(value)
+	scan.Findings = findings
+	scan.Measurements = append(scan.Measurements, measurements...)
 	scan.Measurements = append(scan.Measurements,
 		model.Measurement{Name: "scan_schema_version", Value: strconv.Itoa(value.SchemaVersion)},
 		model.Measurement{Name: "scanned_image_id", Value: expectedImageID},

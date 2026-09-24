@@ -1,16 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
-  echo "usage: install-tools.sh <installation-root>" >&2
+local_mode=false
+if [ "${1:-}" = --local ]; then
+  local_mode=true
+  shift
+fi
+if [ "$#" -ne 1 ] || [ -z "$1" ] || [[ "$1" = -* ]]; then
+  echo "usage: install-tools.sh [--local] <installation-root>" >&2
   exit 2
 fi
-if [ "${RUNNER_OS:-Linux}" != "Linux" ] || [ "${RUNNER_ARCH:-X64}" != "X64" ]; then
+if [ "$local_mode" = true ]; then
+  if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
+    echo "CloudForge's local runtime-tool installer supports Linux amd64 only." >&2
+    exit 2
+  fi
+elif [ -z "${GITHUB_PATH:-}" ]; then
+  echo "GITHUB_PATH is required in CI mode; use --local for a local installation." >&2
+  exit 2
+elif [ "${RUNNER_OS:-Linux}" != "Linux" ] || [ "${RUNNER_ARCH:-X64}" != "X64" ]; then
   echo "CloudForge's GitHub Action currently supports Ubuntu x64 runners." >&2
   exit 2
 fi
 
 install_root="$1"
+mkdir -p "$install_root"
+install_root="$(cd "$install_root" && pwd)"
 bin_dir="$install_root/bin"
 download_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/cloudforge-tools.XXXXXX")"
 trap 'rm -rf "$download_dir"' EXIT
@@ -52,4 +67,8 @@ echo "$k6_checksum  $k6_archive" | sha256sum --check
 tar --extract --gzip --file "$k6_archive"
 install -m 0755 k6-v2.2.0-linux-amd64/k6 "$bin_dir/k6"
 
-echo "$bin_dir" >> "${GITHUB_PATH:?GITHUB_PATH is required}"
+if [ "$local_mode" = true ]; then
+  printf '%s\n' "$bin_dir"
+else
+  echo "$bin_dir" >> "$GITHUB_PATH"
+fi

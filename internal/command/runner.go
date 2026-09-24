@@ -21,6 +21,9 @@ type Request struct {
 	Timeout     time.Duration
 	OutputLimit int
 	Env         []string
+	// ClearEnv opts into an environment consisting only of Env. The default
+	// inherits the caller environment for backwards-compatible tool execution.
+	ClearEnv bool
 }
 
 // Runner executes commands and returns normalized results.
@@ -48,7 +51,12 @@ func (ExecRunner) Run(ctx context.Context, req Request) model.CommandResult {
 	// #nosec G204 -- callers provide executable and argument arrays; no shell is involved.
 	cmd := exec.CommandContext(commandCtx, req.Name, req.Args...)
 	cmd.Dir = req.Dir
-	cmd.Env = append(cmd.Environ(), req.Env...)
+	if req.ClearEnv {
+		// A non-nil empty environment is intentional: nil means inherit to exec.
+		cmd.Env = append([]string{}, req.Env...)
+	} else {
+		cmd.Env = append(cmd.Environ(), req.Env...)
+	}
 	configureCancellation(cmd)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

@@ -154,6 +154,8 @@ jobs:
           - reliability
           - topology
           - probe-pacing
+          - scanner-policy
+          - docker-endpoint-policy
           - operational-scanner-null
           - operational-scanner-empty
           - operational-scanner-unsupported
@@ -283,7 +285,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fixture: [healthy-node, monorepo]
+        fixture: [healthy-node, monorepo, http-core]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -294,7 +296,7 @@ jobs:
           path: ${{ runner.temp }}/candidate-release
       - name: Capture independent cleanup baseline
         run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
-      - name: Select the explicit core profile or original monorepo
+      - name: Select the public fixture or first-run example
         id: profile
         env:
           FIXTURE: ${{ matrix.fixture }}
@@ -302,8 +304,10 @@ jobs:
           if [ "$FIXTURE" = healthy-node ]; then
             python3 scripts/core_fixture.py healthy-node .qualification-core/healthy-node "$RUNNER_TEMP/core-profile.json"
             echo 'application=.qualification-core/healthy-node' >> "$GITHUB_OUTPUT"
-          else
+          elif [ "$FIXTURE" = monorepo ]; then
             echo 'application=testdata/monorepo' >> "$GITHUB_OUTPUT"
+          else
+            echo 'application=examples/http-core' >> "$GITHUB_OUTPUT"
           fi
       - name: Run the packaged Action with the distributed candidate
         uses: ./
@@ -326,7 +330,7 @@ jobs:
           mkdir -p "$REPORT_DIRECTORY"
           if [ -f "$RUNNER_TEMP/core-profile.json" ]; then cp "$RUNNER_TEMP/core-profile.json" "$REPORT_DIRECTORY/core-profile.json"; fi
       - name: Check the core profile did not execute experimental tests
-        if: ${{ matrix.fixture == 'healthy-node' }}
+        if: ${{ matrix.fixture == 'healthy-node' || matrix.fixture == 'http-core' }}
         env:
           CF_REPORT: ${{ steps.verify.outputs.report-json }}
         run: |

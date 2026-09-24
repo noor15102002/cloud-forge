@@ -94,11 +94,11 @@ func TestCleanupObservationServiceContract(t *testing.T) {
 				out := fixedService(runner).Run(context.Background(), fixturePath(t), testOptions())
 				cleanup := evidenceByID(out.Run.Evidence, "environment-cleanup")
 				build := evidenceByID(out.Run.Evidence, "container-build")
-				wantStatus, wantExit := model.StatusError, 2
+				wantStatus, wantCleanup, wantExit := model.StatusError, model.StatusError, 2
 				if mode == "complete" {
-					wantStatus, wantExit = model.StatusPass, 0
+					wantStatus, wantCleanup, wantExit = model.StatusWarn, model.StatusPass, 0
 				}
-				if out.Run.Status != wantStatus || out.ExitCode != wantExit || cleanup == nil || cleanup.Status != wantStatus || !cleanup.Execution.Executed || cleanupDiagnostic(out) != (mode != "complete") || build == nil || build.Status != model.StatusPass {
+				if out.Run.Status != wantStatus || out.ExitCode != wantExit || cleanup == nil || cleanup.Status != wantCleanup || !cleanup.Execution.Executed || cleanupDiagnostic(out) != (mode != "complete") || build == nil || build.Status != model.StatusPass {
 					t.Fatalf("mode=%s status=%s exit=%d cleanup=%+v diagnostics=%+v", mode, out.Run.Status, out.ExitCode, cleanup, out.Run.Diagnostics)
 				}
 				if mode == "retained" && removals != 1 {
@@ -228,7 +228,7 @@ func TestPrivateWorkspaceCleanupAndKubeconfigContract(t *testing.T) {
 				}
 			}()
 			failed := mode == "remove_error" || mode == "retained_without_error"
-			want, wantOverall, wantExit := model.StatusPass, model.StatusPass, 0
+			want, wantOverall, wantExit := model.StatusPass, model.StatusWarn, 0
 			if failed {
 				want, wantOverall, wantExit = model.StatusError, model.StatusError, 2
 			}

@@ -86,7 +86,17 @@ cleanup command deadlines. A failing or unreachable Docker daemon can still
 prevent cleanup; such errors and independently observed leftovers are retained.
 
 Each run uses private kubeconfig and Docker builder configuration. The default
-kubectl context and builder remain unchanged. The workload resource estimate includes
+kubectl context and builder remain unchanged. Runtime execution accepts only the
+default local Docker Engine endpoint, `unix:///var/run/docker.sock`. The same
+endpoint is selected explicitly for compatibility checks, builds, image inspection,
+Trivy, k3d and cleanup. Remote/context/custom-socket/TLS selections are rejected
+before runtime mutations; CloudForge does not silently fall back to a different
+engine. Reports retain the fixed endpoint policy and safe selection classification,
+not private context names or credential-bearing connection details. A system
+Buildx plugin is required with the private Docker configuration. Endpoint
+provenance proves the selected socket policy; it is not cryptographic attestation
+of the daemon or host behind that socket.
+The workload resource estimate includes
 rollout surge and HPA maxima; it does not reserve a strict whole-host maximum.
 A private BuildKit builder bounds build CPU and memory.
 See [runtime configuration](runtime-configuration.md) for exact budgets and
@@ -114,7 +124,19 @@ nor source environment values enter the load report.
 Trivy runs against locally built image A only. Its supported scan envelope must
 match the independently observed image identity; unusable output produces ERROR.
 The scan does not establish image B security state or confirmed exploitability.
-Trivy runs against the locally built image. CloudForge parses bounded JSON and
+CloudForge applies a recorded `cloudforge-default-v1` scanner policy: vulnerability
+scanning, all severities including unknown, unfixed findings included, and no ignore
+rules. Version and scan commands use a private working directory, home,
+configuration and ignore file; scans use a fresh private cache. Ambient `TRIVY_*`
+settings, repository configuration, ignore files and scanner credentials do not
+select the policy. Custom scan policy is outside this alpha contract. Safe
+transport settings for proxies and system certificate authorities can still apply;
+their values are not reported.
+
+Fresh cache means each scan needs outbound access for its vulnerability database
+within the existing bounded deadline. Database/download or observation failures
+produce ERROR, not zero findings. The private files are removed when scanning
+finishes, including failure/cancellation. CloudForge parses bounded JSON and
 retains vulnerability identifier, package, installed version, fixed version,
 severity, and image target metadata. Raw scanner output is not included in the
 public report.

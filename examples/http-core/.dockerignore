@@ -1,0 +1,6 @@
+.git
+node_modules
+*.json
+*.md
+cloudforge.yaml
+k8s

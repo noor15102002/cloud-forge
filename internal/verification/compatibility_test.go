@@ -87,7 +87,7 @@ func TestVersionObservationFailuresPreserveSafeDiagnosticsAndStopExecution(t *te
 					if toolVersion(out.Run.Fingerprint, "kubernetes") != "unknown" || !hasCommand(calls, "k3d", "delete") || !strings.Contains(diagnostic.Guidance, "No application deployment was attempted") {
 						t.Fatalf("server failure did not retain its unknown version and cleanup boundary: %+v", out)
 					}
-				} else if hasCommand(calls, "docker", "buildx") || hasCommand(calls, "k3d", "create") || !strings.Contains(diagnostic.Guidance, "no application build was started") {
+				} else if hasDockerBuildxMutation(calls) || hasCommand(calls, "k3d", "create") || !strings.Contains(diagnostic.Guidance, "no application build was started") {
 					t.Fatal("unobservable local tool version reached build or cluster creation")
 				}
 				if hasCommand(calls, "kubectl", "apply") {
@@ -116,4 +116,13 @@ func TestVersionObservationFailuresPreserveSafeDiagnosticsAndStopExecution(t *te
 			})
 		}
 	}
+}
+
+func hasDockerBuildxMutation(calls []command.Request) bool {
+	for _, call := range calls {
+		if call.Name == "docker" && len(call.Args) > 1 && call.Args[0] == "buildx" && call.Args[1] != "version" {
+			return true
+		}
+	}
+	return false
 }

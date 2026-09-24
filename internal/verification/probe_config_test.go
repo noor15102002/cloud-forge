@@ -131,7 +131,7 @@ func TestProbeFingerprintCanonicalizationAndBaselineIsolation(t *testing.T) {
 			config.Probes = &model.ProbeSettings{Interval: interval}
 		}
 		fp := &model.RunFingerprint{CloudForgeCommit: strings.Repeat("a", 40), ImageID: "sha256:" + strings.Repeat("b", 64), WorkloadHash: "same-workload", Configuration: safeConfiguration(config)}
-		for _, name := range []string{"docker", "k3d", "kubectl", "kubernetes", "trivy"} {
+		for _, name := range []string{"docker", "buildx", "k3d", "kubectl", "kubernetes", "trivy"} {
 			fp.Tools = append(fp.Tools, model.ToolVersion{Name: name, Version: "test"})
 		}
 		completeFingerprint(fp)

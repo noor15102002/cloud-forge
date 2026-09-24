@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Exact-binary startup and operational outcomes in a copied public fixture."""
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 from qualification_command import run_observed
+from reliability_import_observer import helpers as source_guards, public_files
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = importlib.util.spec_from_file_location("public_guards", ROOT / "scripts/pilot-backend-cancellation.py")
@@ -18,6 +21,97 @@ guards = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(guards)
 CASES = ("scanner-null", "scanner-empty", "scanner-unsupported", "scanner-truncated", "scanner-zero", "scanner-findings", "scanner-case-alias",
          "scanner-subject", "scanner-exit", "docker-unavailable", "disk-full", "registry-503", "node-observation", "startup-failure", "cleanup-inventory")
+SCANNER_METADATA = "scanner-wrapper.json"
+SCANNER_METADATA_LIMIT = 32 * 1024
+RUNNER_FIELDS = ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "RUNNER_OS")
+
+
+def scanner_source_hashes(fixture):
+    try:
+        return {name: hashlib.sha256(data).hexdigest() for name, data in public_files(fixture).items()}
+    except source_guards.QualificationError as error:
+        raise ValueError("public operational fixture could not be read safely") from error
+
+
+def scanner_root(root):
+    information = root.lstat()
+    if (not root.is_absolute() or root.resolve() != root or not root.name.startswith("cloudforge-operational-")
+            or not stat.S_ISDIR(information.st_mode) or information.st_uid != os.getuid()
+            or stat.S_IMODE(information.st_mode) != 0o700):
+        raise ValueError("scanner wrapper requires its private operational root")
+
+
+def create_scanner_metadata(root, case, real_tools, environment):
+    """Capture only confirmed guards and public-fixture inputs before ClearEnv."""
+    guards.require_runner(environment)
+    scanner_root(root)
+    if case not in CASES:
+        raise ValueError("unknown operational scanner case")
+    value = {"schema": "public-operational-scanner-v1", "root": str(root), "case": case,
+             "tools": {tool: str(Path(real_tools[tool]).resolve(strict=True)) for tool in ("trivy", "docker")},
+             "runner": {name: environment[name] for name in RUNNER_FIELDS},
+             "source_hashes": scanner_source_hashes(root / "app")}
+    payload = (json.dumps(value, sort_keys=True) + "\n").encode()
+    if len(payload) > SCANNER_METADATA_LIMIT:
+        raise ValueError("scanner wrapper metadata exceeds its bound")
+    path = root / SCANNER_METADATA
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(payload)
+    return path
+
+
+def scanner_metadata(path):
+    """Read an owned regular file without consulting or restoring caller env."""
+    path = Path(path)
+    if path.name != SCANNER_METADATA or not path.is_absolute():
+        raise ValueError("scanner wrapper requires its metadata path")
+    scanner_root(path.parent)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        information = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(information.st_mode) or information.st_uid != os.getuid()
+                or stat.S_IMODE(information.st_mode) != 0o600 or information.st_size > SCANNER_METADATA_LIMIT):
+            raise ValueError("scanner wrapper metadata ownership or bound is invalid")
+        payload = stream.read(SCANNER_METADATA_LIMIT + 1)
+    if len(payload) > SCANNER_METADATA_LIMIT:
+        raise ValueError("scanner wrapper metadata exceeds its bound")
+
+    def unique_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("scanner wrapper metadata has duplicate fields")
+            result[key] = value
+        return result
+
+    value = json.loads(payload, object_pairs_hook=unique_fields)
+    if (not isinstance(value, dict)
+            or set(value) != {"schema", "root", "case", "tools", "runner", "source_hashes"}
+            or value["schema"] != "public-operational-scanner-v1"
+            or value["root"] != str(path.parent) or value["case"] not in CASES
+            or not isinstance(value["runner"], dict) or set(value["runner"]) != set(RUNNER_FIELDS)
+            or not isinstance(value["tools"], dict) or set(value["tools"]) != {"trivy", "docker"}):
+        raise ValueError("scanner wrapper metadata does not match its contract")
+    guards.require_runner(value["runner"])
+    for location in value["tools"].values():
+        if not isinstance(location, str) or len(location) > 4096:
+            raise ValueError("scanner wrapper tool path is invalid")
+        executable = Path(location)
+        if (not executable.is_absolute() or executable.resolve(strict=True) != executable
+                or not stat.S_ISREG(executable.lstat().st_mode) or not os.access(executable, os.X_OK)
+                or executable.is_relative_to(path.parent / "bin")):
+            raise ValueError("scanner wrapper requires the real executable")
+    if scanner_source_hashes(path.parent / "app") != value["source_hashes"]:
+        raise ValueError("public operational fixture changed")
+    return value
+
+
+def write_tool_wrapper(path, tool, metadata):
+    mode = ["__trivy", str(metadata)] if tool == "trivy" else ["__tool", tool]
+    path.write_text("#!/usr/bin/env python3\nimport os,sys\nos.execv(sys.executable,[sys.executable," +
+                    repr(str(Path(__file__).resolve())) + ", *" + repr(mode) + ", *sys.argv[1:]])\n")
+    path.chmod(0o700)
 
 
 def trivy_observation(case, image, image_id):
@@ -96,17 +190,26 @@ def node_health_observation(payload):
     return {"available": True, "observed_after_failed_startup": True, "healthy": healthy, "conditions": retained}
 
 
-def tool_wrapper(tool, arguments):
-    guards.require_runner()
-    case = os.environ["CF_OPERATIONAL_CASE"]
-    root = Path(os.environ["CF_OPERATIONAL_ROOT"])
-    if case not in CASES or root.is_symlink() or not root.name.startswith("cloudforge-operational-"):
-        raise ValueError("operational fault requires its owned public fixture")
-    fixture = root / "app"
-    expected = json.loads((root / "source.json").read_text())
-    if guards.hashes(fixture) != expected:
-        raise ValueError("public operational fixture changed")
-    real = os.environ["CF_OPERATIONAL_REAL_" + tool.upper()]
+def tool_wrapper(tool, arguments, metadata_path=None):
+    if metadata_path is not None:
+        if tool != "trivy":
+            raise ValueError("private scanner metadata is limited to Trivy")
+        metadata = scanner_metadata(metadata_path)
+        case, root = metadata["case"], Path(metadata["root"])
+        real = metadata["tools"]["trivy"]
+        real_docker = metadata["tools"]["docker"]
+    else:
+        guards.require_runner()
+        case = os.environ["CF_OPERATIONAL_CASE"]
+        root = Path(os.environ["CF_OPERATIONAL_ROOT"])
+        if case not in CASES or root.is_symlink() or not root.name.startswith("cloudforge-operational-"):
+            raise ValueError("operational fault requires its owned public fixture")
+        fixture = root / "app"
+        expected = json.loads((root / "source.json").read_text())
+        if guards.hashes(fixture) != expected:
+            raise ValueError("public operational fixture changed")
+        real = os.environ["CF_OPERATIONAL_REAL_" + tool.upper()]
+        real_docker = os.environ["CF_OPERATIONAL_REAL_DOCKER"]
     inject = None
     if case == "cleanup-inventory" and tool == "k3d" and arguments[:2] == ["cluster", "delete"]:
         if len(arguments) != 3 or not re.fullmatch(r"cloudforge-[a-f0-9]{8,32}", arguments[2]):
@@ -133,7 +236,7 @@ def tool_wrapper(tool, arguments):
         if case == "scanner-exit":
             print("intentional public scanner execution failure", file=sys.stderr)
             return 70
-        observed = subprocess.check_output([os.environ["CF_OPERATIONAL_REAL_DOCKER"], "image", "inspect", "--format", "{{.Id}}", image], text=True, timeout=15).strip()
+        observed = subprocess.check_output([real_docker, "image", "inspect", "--format", "{{.Id}}", image], text=True, timeout=15).strip()
         if not re.fullmatch(r"sha256:[a-f0-9]{64}", observed):
             raise ValueError("public image identity unavailable")
         print(trivy_observation(case, image, observed))
@@ -179,6 +282,14 @@ def plant_rollout_failure(app):
 
 
 def main():
+    if sys.argv[1:2] == ["__trivy"]:
+        try:
+            if len(sys.argv) < 3:
+                raise ValueError("scanner metadata path is missing")
+            return tool_wrapper("trivy", sys.argv[3:], sys.argv[2])
+        except (guards.QualificationError, OSError, ValueError, KeyError, TypeError):
+            print("Public operational scanner metadata could not be validated.", file=sys.stderr)
+            return 2
     if sys.argv[1:2] == ["__tool"]:
         return tool_wrapper(sys.argv[2], sys.argv[3:])
     parser = argparse.ArgumentParser(description=__doc__)
@@ -218,9 +329,11 @@ def main():
             environment["CF_OPERATIONAL_REAL_" + tool.upper()] = shutil.which(tool) or ""
             if not environment["CF_OPERATIONAL_REAL_" + tool.upper()]:
                 raise ValueError("required runtime tool unavailable before injection")
+        metadata = create_scanner_metadata(root, args.case,
+            {tool: environment["CF_OPERATIONAL_REAL_" + tool.upper()] for tool in ("trivy", "docker")}, os.environ)
+        for tool in ("docker", "trivy", "kubectl", "k3d"):
             wrapper = bin_dir / tool
-            wrapper.write_text("#!/usr/bin/env python3\nimport os,sys\nos.execv(sys.executable,[sys.executable," + repr(str(Path(__file__).resolve())) + ", '__tool', " + repr(tool) + ", *sys.argv[1:]])\n")
-            wrapper.chmod(0o700)
+            write_tool_wrapper(wrapper, tool, metadata)
         try:
             result = run_observed([str(args.binary.resolve()), "verify", str(app), "--format", "json"], args.output / "verification.json", timeout=1100, env=environment)
         finally:

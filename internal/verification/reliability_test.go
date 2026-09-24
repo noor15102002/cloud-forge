@@ -84,7 +84,7 @@ func TestUntestedVersionsAreExplicitAndRetainMeasurements(t *testing.T) {
 	if out.ExitCode != 0 || out.Run.Status != model.StatusWarn || out.Run.Compatibility.Status != "not_validated" {
 		t.Fatalf("untested tuple conflated with incompatibility: %+v", out)
 	}
-	for _, name := range []string{"docker", "k3d", "kubectl", "kubernetes", "k6", "trivy"} {
+	for _, name := range []string{"docker", "buildx", "k3d", "kubectl", "kubernetes", "k6", "trivy"} {
 		if toolVersion(out.Run.Fingerprint, name) == "" {
 			t.Fatal("missing version", name)
 		}
