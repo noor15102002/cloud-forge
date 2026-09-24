@@ -7,7 +7,12 @@ runtime prerequisites, then run from the CloudForge repository root:
 ```sh
 cloudforge analyze examples/http-core
 cloudforge verify examples/http-core --plan
-cloudforge verify examples/http-core --format json > verification.json
+if cloudforge verify examples/http-core --format json > verification.json; then
+  verify_exit=0
+else
+  verify_exit=$?
+fi
+printf 'CloudForge exit code: %s\n' "$verify_exit"
 cloudforge report verification.json --format text
 ```
 
@@ -15,8 +20,10 @@ The source Deployment declares two replicas, readiness/liveness probes, bounded
 CPU/memory, a 15-second termination grace period and a RollingUpdate strategy
 with zero unavailable replicas and one surge replica. These are **example source
 settings**, not inferred production settings for another application. The server
-marks itself unready on SIGTERM, permits a short routing propagation interval,
-then closes and drains its HTTP server.
+continues serving during a short routing propagation interval after SIGTERM,
+then closes and drains its HTTP server. For this dependency-free service,
+readiness remains successful while it can still serve accepted requests;
+Kubernetes withdraws the terminating pod from Service routing independently.
 
 `/health` proves that the process answers HTTP; `/ready` reports its readiness;
 `/work` serves a small JSON response under five virtual users for twenty seconds.
