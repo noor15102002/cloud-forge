@@ -5,6 +5,10 @@ Versioning once releases begin.
 
 ## Unreleased — narrow prerelease hardening
 
+- Stage image imports through the owned k3d image volume, preserve importer
+  failures and require an exact Docker-to-CRI image identity match before use.
+- Continue independent Redis qualification cases only after confirmed cleanup;
+  retain early execution errors and fail the complete qualification contract.
 - Isolate Trivy configuration, ignore rules, environment and cache; record the
   explicit vulnerability policy without allowing ambient settings to hide findings.
 - Resolve Docker selection once, reject unsupported endpoints before execution,

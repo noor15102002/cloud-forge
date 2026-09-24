@@ -90,7 +90,7 @@ def capture(arguments, timeout, limit=MAX_OUTPUT, environment=None):
 def validate_public_import(arguments, fixture, stage):
     """Allow recording only the exact bundled public fixture and import tuple."""
     require_runner()
-    if stage not in STAGES or len(arguments) != 7 or arguments[:2] != ["image", "import"] or arguments[3] != "--cluster" or arguments[5:] != ["--mode", "direct"]:
+    if stage not in STAGES or len(arguments) != 7 or arguments[:2] != ["image", "import"] or arguments[3] != "--cluster" or arguments[5:] != ["--mode", "tools-node"]:
         raise QualificationError("import_observer_requires_known_public_import")
     cluster, image = arguments[4], arguments[2]
     match = re.fullmatch(r"cloudforge-([a-z0-9][a-z0-9-]{0,80})", cluster)
@@ -703,7 +703,7 @@ sys.exit(int(os.environ['FAKE_IMPORT_EXIT']))
                                    FAKE_IMPORT_MODE=mode, FAKE_IMPORT_EXIT=str(code), FAKE_IMPORT_CALLED=str(root / "called"))
                 environment.update({ENV_PREFIX + "STAGE": "postgresql", ENV_PREFIX + "REAL_K3D": str(fake),
                                     ENV_PREFIX + "FIXTURE": str(fixture), ENV_PREFIX + "IMPORT_OUTPUT": str(output)})
-                arguments = ["image", "import", "cloudforge/backend-http:test-run-a", "--cluster", "cloudforge-test-run", "--mode", "direct"]
+                arguments = ["image", "import", "cloudforge/backend-http:test-run-a", "--cluster", "cloudforge-test-run", "--mode", "tools-node"]
                 command = [sys.executable, __file__, "__k3d", *arguments]
                 yield root, output, environment, arguments, command
 

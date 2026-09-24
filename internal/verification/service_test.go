@@ -375,6 +375,7 @@ func TestGracefulShutdownRecordsDroppedTraffic(t *testing.T) {
 
 func TestRollingDeploymentTimeoutIsApplicationFailure(t *testing.T) {
 	rolloutStarted := false
+	oldPodsObserved := false
 	runner := runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 		result := successfulCommand(request)
 		if request.Name == "kubectl" && containsArgument(request.Args, "set") {
@@ -382,14 +383,18 @@ func TestRollingDeploymentTimeoutIsApplicationFailure(t *testing.T) {
 		}
 		if rolloutStarted && request.Name == "kubectl" && containsArgument(request.Args, "pods") {
 			result.Stdout = oldVersionPodList
+			oldPodsObserved = true
 		}
 		return result
 	})
 	service := fixedService(runner)
-	service.rolloutTimeout = 5 * time.Millisecond
+	// Leave time for image identity and baseline observations under -race.
+	// The requirement being tested is an observed rollout that never converges,
+	// not a scheduling deadline that may expire before its mutation begins.
+	service.rolloutTimeout = 500 * time.Millisecond
 	outcome := service.Run(context.Background(), fixtureNamedPath(t, "broken-rollout"), testOptions())
 	rollout := evidenceByID(outcome.Run.Evidence, "rolling-deployment")
-	if outcome.ExitCode != 1 || rollout == nil || rollout.Status != model.StatusFail || measurementValue(rollout.Measurements, "target_ready_pods") != "0" {
+	if !rolloutStarted || !oldPodsObserved || outcome.ExitCode != 1 || rollout == nil || rollout.Status != model.StatusFail || measurementValue(rollout.Measurements, "target_ready_pods") != "0" {
 		t.Fatalf("rollout timeout should be an observed application failure: %#v", outcome)
 	}
 }
@@ -906,6 +911,12 @@ func successfulCommand(request command.Request) model.CommandResult {
 	result := model.CommandResult{Command: request.Name, Arguments: request.Args}
 	if request.Name == "docker" && strings.Contains(strings.Join(request.Args, " "), ".RepoDigests") {
 		result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" []`
+	}
+	if request.Name == "docker" && containsArgument(request.Args, "{{json .Id}}") {
+		result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`
+	}
+	if request.Name == "docker" && containsArgument(request.Args, "inspecti") {
+		result.Stdout = `{"id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
 	}
 	if request.Name == "docker" && len(request.Args) > 2 && request.Args[1] == "inspect" &&
 		((request.Args[0] == "container" || request.Args[0] == "volume") && strings.HasPrefix(request.Args[len(request.Args)-1], "buildx_buildkit_cloudforge-") ||

@@ -15,6 +15,30 @@ It also supplies a core-only first-run example and consumer reporter instruction
 A new archive must pass qualification before publication; the historical results
 below remain unchanged and do not qualify new bytes.
 
+## Replacement archives remain unpublished
+
+[PR #58](https://github.com/noor15102002/cloud-forge/pull/58) merged the environment
+hardening as `b0b5eb02a32637a0a1043b92472ca2cca8954327`. Its
+[archive run](https://github.com/noor15102002/cloud-forge/actions/runs/36055293213)
+completed with 46 of 47 contracts passing. The first-run example returned HTTP
+503 from its readiness route during draining: recovery had 1/168 failed probes
+and rollout 21/285. Those failures remain unchanged. [PR #59](https://github.com/noor15102002/cloud-forge/pull/59)
+corrected the example and passed the unchanged zero-failure Action check.
+
+The next [archive run](https://github.com/noor15102002/cloud-forge/actions/runs/36057389830)
+uses merged source `3e2e00212a5c82e9c26777ed6127aa271a8a71f3`. The corrected
+example passed, but the Redis Node case encountered a k3d direct-import
+closed-connection error before application startup. Native ERROR and cleanup PASS
+were retained. A harness assumption about missing dependency results then stopped
+its final independent case, leaving that qualification contract INCOMPLETE.
+This archive has **NO GO** and will not be published.
+
+The follow-up stages imports through the owned image volume, independently checks
+the exact imported identity and preserves logged errors. The Redis harness now
+records all independent cases after proven cleanup, while cancellation or cleanup
+uncertainty stops scheduling. These changes need protected checks and a new exact
+archive qualification; neither earlier archive is a substitute.
+
 ## Historical qualified candidate (unpublished)
 
 [PR #56](https://github.com/noor15102002/cloud-forge/pull/56) merged through

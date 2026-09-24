@@ -87,8 +87,8 @@ def created_run(arguments):
 def validate_import(arguments, owner):
     if (not isinstance(owner, str) or not RUN_NAME.fullmatch(owner) or len(arguments) != 7
             or arguments[:2] != ["image", "import"] or arguments[3:5] != ["--cluster", owner]
-            or arguments[5:] != ["--mode", "direct"]):
-        raise helpers.QualificationError("import_observer_requires_registered_direct_import")
+            or arguments[5:] != ["--mode", "tools-node"]):
+        raise helpers.QualificationError("import_observer_requires_registered_tools_node_import")
     image = "cloudforge/healthy-node-api:" + owner.removeprefix("cloudforge-")
     if arguments[2] not in (image + "-a", image + "-b"):
         raise helpers.QualificationError("import_observer_refused_unrelated_image")

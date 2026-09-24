@@ -230,6 +230,12 @@ func cliTestRunner(vulnerable bool) cliRunnerFunc {
 				result.Stdout = validTrivyReport(request)
 			}
 		}
+		if request.Name == "docker" && slices.Contains(request.Args, "{{json .Id}}") {
+			result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`
+		}
+		if request.Name == "docker" && slices.Contains(request.Args, "inspecti") {
+			result.Stdout = `{"id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
+		}
 		if request.Name == "k6" && slices.Contains(request.Args, "run") {
 			result.Stdout = `{"metrics":{"http_reqs":{"values":{"count":200,"rate":10}},"http_req_failed":{"values":{"rate":0}},"http_req_duration":{"values":{"med":10,"p(95)":20,"p(99)":30}}}}`
 		}

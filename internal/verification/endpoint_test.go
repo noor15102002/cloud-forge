@@ -16,6 +16,9 @@ func TestRuntimePinsResolvedEndpointThroughCleanupDespiteEnvironmentChange(t *te
 	t.Setenv("DOCKER_CONTEXT", "PRIVATE_SELECTED_CONTEXT")
 	t.Setenv("DOCKER_HOST", "ssh://PRIVATE_IGNORED_HOST")
 	t.Setenv("DOCKER_TLS_VERIFY", "")
+	t.Setenv("K3D_IMAGE_TOOLS", "PRIVATE_HELPER_IMAGE")
+	t.Setenv("K3D_IMAGE_LOADBALANCER", "PRIVATE_LOADBALANCER_IMAGE")
+	t.Setenv("K3D_HELPER_IMAGE_TAG", "PRIVATE_HELPER_TAG")
 	resolved := 0
 	phases := map[string]bool{}
 	runner := runnerFunc(func(_ context.Context, req command.Request) model.CommandResult {
@@ -37,6 +40,13 @@ func TestRuntimePinsResolvedEndpointThroughCleanupDespiteEnvironmentChange(t *te
 			}
 			if env["DOCKER_HOST"] != runtimepolicy.DockerEndpoint || env["DOCKER_CONTEXT"] != "" || env["DOCKER_TLS_VERIFY"] != "" {
 				t.Fatalf("operation selected a different Docker endpoint: %+v", req)
+			}
+			if req.Name == "k3d" {
+				for _, key := range []string{"K3D_IMAGE_TOOLS", "K3D_IMAGE_LOADBALANCER", "K3D_HELPER_IMAGE_TAG"} {
+					if value, present := env[key]; !present || value != "" {
+						t.Fatalf("ambient helper image override reached k3d: %s", key)
+					}
+				}
 			}
 			if req.Name == "docker" && slices.Contains(req.Args, "info") {
 				phases["preflight"] = true

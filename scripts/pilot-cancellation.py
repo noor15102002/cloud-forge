@@ -100,10 +100,10 @@ def cleanup_operation(tool, arguments, owner):
 
 
 def validate_public_import(arguments, owner, stage, monorepo):
-    """Allow only the registered run's exact bundled image A/B direct import."""
+    """Allow only the registered run's exact bundled image A/B tools-node import."""
     if (stage not in STAGES or (monorepo and stage != "build")
             or len(arguments) != 7 or arguments[:2] != ["image", "import"]
-            or arguments[3] != "--cluster" or arguments[5:] != ["--mode", "direct"]):
+            or arguments[3] != "--cluster" or arguments[5:] != ["--mode", "tools-node"]):
         raise helpers.QualificationError("import_capture_requires_known_public_import")
     if not isinstance(owner, str) or not RUN_NAME.fullmatch(owner) or arguments[4] != owner:
         raise helpers.QualificationError("import_capture_requires_registered_owner")

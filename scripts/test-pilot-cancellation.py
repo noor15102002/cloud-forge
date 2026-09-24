@@ -19,7 +19,7 @@ SPEC = importlib.util.spec_from_file_location("pilot_cancellation", Path(__file_
 pilot = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(pilot)
 NAME = "cloudforge-0123abcd"
-IMPORT_ARGS = ["image", "import", "cloudforge/healthy-node-redis:0123abcd-a", "--cluster", NAME, "--mode", "direct"]
+IMPORT_ARGS = ["image", "import", "cloudforge/healthy-node-redis:0123abcd-a", "--cluster", NAME, "--mode", "tools-node"]
 PREFLIGHT_ARGS = ["info", "--format", "{{.ServerVersion}}"]
 
 
@@ -122,7 +122,7 @@ class CleanupCaptureTests(unittest.TestCase):
                 self.assertEqual(pilot.cleanup_operation("docker", ["buildx", "rm", "--force", name], name), ("builder-remove", 60))
                 self.assertEqual(pilot.cleanup_operation("k3d", ["cluster", "delete", name], name), ("cluster-delete", 120))
                 image = "cloudforge/healthy-node-redis:" + "a" * public_length + "-a"
-                pilot.validate_public_import(["image", "import", image, "--cluster", name, "--mode", "direct"], name, "redis", False)
+                pilot.validate_public_import(["image", "import", image, "--cluster", name, "--mode", "tools-node"], name, "redis", False)
             for private_length in (8, 20, 31, 33):
                 with self.subTest(public_length=public_length, private_length=private_length):
                     self.assertIsNone(pilot.created_run("docker", [*arguments[:-1], options + "b" * private_length]))
@@ -413,7 +413,7 @@ sys.exit(int(os.environ['FAKE_EXIT']))
                                       for stage in pilot.STAGES] + [("build", True, "monorepo-http")]:
             for suffix in ("a", "b"):
                 arguments = ["image", "import", "cloudforge/" + name + ":0123abcd-" + suffix,
-                             "--cluster", NAME, "--mode", "direct"]
+                             "--cluster", NAME, "--mode", "tools-node"]
                 with self.subTest(stage=stage,monorepo=monorepo,suffix=suffix):
                     pilot.validate_public_import(arguments, NAME, stage, monorepo)
         for stage, monorepo in (("private", False), ("redis", True)):

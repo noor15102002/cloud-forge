@@ -1387,7 +1387,7 @@ func commandGuidance(result model.CommandResult, err error) string {
 	case model.FailureExit:
 		return fmt.Sprintf("%s exited with code %d; run cloudforge doctor and inspect the tool's local logs.", result.Command, result.ExitCode)
 	default:
-		return fmt.Sprintf("%s could not be executed; run cloudforge doctor.", result.Command)
+		return fmt.Sprintf("%s could not be executed or observed reliably; run cloudforge doctor and inspect the tool's local logs.", result.Command)
 	}
 }
 

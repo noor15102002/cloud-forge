@@ -15,7 +15,7 @@ from unittest.mock import patch
 import reliability_import_observer as observer
 
 OWNER = "cloudforge-" + "a" * 20
-IMPORT = ["image", "import", "cloudforge/healthy-node-api:" + "a" * 20 + "-a", "--cluster", OWNER, "--mode", "direct"]
+IMPORT = ["image", "import", "cloudforge/healthy-node-api:" + "a" * 20 + "-a", "--cluster", OWNER, "--mode", "tools-node"]
 CREATE = ["cluster", "create", OWNER, "--runtime-label", "cloudforge.dev/owned=true@all", "--runtime-label",
           "cloudforge.dev/run-id=" + OWNER + "@all", "--runtime-label", "cloudforge.dev/ownership=" + "b" * 32 + "@all"]
 HOSTED = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux"}
