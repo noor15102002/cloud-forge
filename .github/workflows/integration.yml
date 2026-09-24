@@ -22,24 +22,13 @@ jobs:
       - name: Capture independent cleanup baseline
         run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
 
-      - name: Prepare the declared HTTP-core fixture profile
-        run: python3 scripts/core_fixture.py healthy-node .qualification-core/healthy-node "$RUNNER_TEMP/core-profile.json"
-
-      - name: Verify healthy Node fixture with the packaged action
+      - name: Verify the documented HTTP first-run example with the packaged action
         id: cloudforge
         uses: ./
         with:
           upload-artifact: 'false'
-          path: .qualification-core/healthy-node
+          path: examples/http-core
           artifact-name: cloudforge-verification
-
-      - name: Preserve the explicit test profile
-        if: always()
-        env:
-          REPORT_DIRECTORY: ${{ steps.cloudforge.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}
-        run: |
-          mkdir -p "$REPORT_DIRECTORY"
-          if [ -f "$RUNNER_TEMP/core-profile.json" ]; then cp "$RUNNER_TEMP/core-profile.json" "$REPORT_DIRECTORY/core-profile.json"; fi
 
       - name: Show safe verification result
         if: ${{ always() }}
