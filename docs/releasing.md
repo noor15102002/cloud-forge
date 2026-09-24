@@ -44,6 +44,28 @@ identity. No qualification job substitutes a newly built development binary.
 The installation receipt records its actual UTC `installed_at` separately from
 the reproducible embedded date and the build execution timestamps.
 
+Development qualification and archive qualification are separate decisions.
+Passing source-level checks or a synthetic PR merge binary permits consideration
+of a protected merge; only the installed canonical archive can receive release GO.
+The dispatch requires the replacement PR number explicitly for scoped reporting;
+the historical closed PR is not a hardcoded destination.
+
+The required archive matrix covers the declared HTTP/Redis core. Public reference
+copies use an explicit `stable-http-core` profile: HPA manifests and optional
+control endpoints are omitted before analysis, while application/build bytes,
+replica settings, resources and load bounds are unchanged. Source/effective file
+hashes and exclusions are retained with each attempt. Experimental experiments
+must be SKIPPED and unexecuted in this profile. This is a declared test scope,
+not a reinterpretation of older HPA, worker or controlled-test results.
+
+The original full reference, backend and worker suites remain available through
+explicit development workflow dispatches. Their outcomes remain experimental;
+they are not installed-archive qualification claims. An experimental failure
+alone does not block HTTP-core release, but a shared execution, dependency,
+identity, observation, artifact or cleanup defect does. Automatic PR checks keep
+the protected `test` and `readiness` names; broad runtime suites do not restart
+on every PR edit.
+
 Qualification keeps three outcomes separate: each native CloudForge invocation,
 the harness assertion about its expected behavior, and cleanup observations.
 A deliberately broken fixture can produce native FAIL/exit 1 while its
@@ -69,7 +91,8 @@ The gate includes:
   cleanup ERROR while retaining the original application failure.
 - Build, cluster, Redis, readiness, lifecycle mutation and load cancellation;
   unrelated resource and kubeconfig sentinels; independent cleanup checks.
-- Existing generic backend and worker cases, retained as experimental evidence.
+- Separately retained experimental backend, worker, HPA and controlled-test
+  evidence, outside the archive's qualified HTTP-core contract.
 - The packaged root Action using the same archive for Node and monorepo runs.
 
 Focused Go regressions additionally cover malformed/truncated cleanup inventories,

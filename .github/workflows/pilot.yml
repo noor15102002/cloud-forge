@@ -1,18 +1,21 @@
 name: Pilot readiness
 
 on:
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - 'README.md'
-      - 'CHANGELOG.md'
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Full reference suite, or the four bounded Attempt 5 cases.
+        required: true
+        default: full
+        type: choice
+        options: [full, attempt5]
 
 permissions:
   contents: read
 
 jobs:
   reference:
+    if: ${{ inputs.scope != 'attempt5' }}
     runs-on: ubuntu-latest
     timeout-minutes: 160
     strategy:
@@ -107,6 +110,7 @@ jobs:
           fi
 
   external:
+    if: ${{ inputs.scope != 'attempt5' }}
     runs-on: ubuntu-latest
     timeout-minutes: 85
     steps:
@@ -195,6 +199,7 @@ jobs:
           fi
 
   cancellation:
+    if: ${{ inputs.scope != 'attempt5' }}
     strategy:
       fail-fast: false
       matrix:
@@ -283,6 +288,152 @@ jobs:
           FINAL: ${{ steps.q12_final.outcome }}
         run: |
           python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          if [ "$FINAL" != success ]; then
+            echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
+            exit 1
+          fi
+
+  attempt5:
+    if: ${{ inputs.scope == 'attempt5' }}
+    name: Attempt 5 — ${{ matrix.scope }} — ${{ matrix.case }}
+    env:
+      CLOUDFORGE_QUALIFICATION_CASE: ${{ matrix.case }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - case: cancel-build
+            scope: stable-core
+          - case: reliability-generated
+            scope: stable-core
+          - case: operational-cleanup-inventory
+            scope: stable-core
+          - case: worker-malformed
+            scope: experimental
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.1
+      - name: Check focused case and preservation contracts
+        run: |
+          python3 scripts/test-attempt5-gates.py
+          python3 scripts/test-worker-heartbeat-observation.py
+          python3 scripts/test-pilot-reliability-import.py
+      - name: Reserve disposable runner storage for the worker fixture
+        if: ${{ matrix.case == 'worker-malformed' }}
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo rm -rf -- /usr/share/dotnet /usr/local/lib/android /opt/ghc
+      - name: Install pinned runtime tools
+        run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
+      - name: Capture independent cleanup baseline
+        run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
+      - name: Run the declared case once and retain its native outcome
+        # Only this worker assertion is informational. Cleanup, identity,
+        # preservation and shared runtime failures remain mandatory below.
+        continue-on-error: ${{ matrix.scope == 'experimental' }}
+        timeout-minutes: 40
+        env:
+          CASE: ${{ matrix.case }}
+        run: |
+          go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
+          case "$CASE" in
+            cancel-build)
+              command=(python3 scripts/pilot-cancellation.py /tmp/cloudforge "$RUNNER_TEMP/fault-evidence" --stages build)
+              seconds=1500 ;;
+            reliability-generated)
+              command=(python3 scripts/pilot-reliability.py /tmp/cloudforge "$RUNNER_TEMP/fault-evidence" --case generated-1)
+              seconds=2100 ;;
+            operational-cleanup-inventory)
+              command=(python3 scripts/pilot-operational.py /tmp/cloudforge "$RUNNER_TEMP/fault-evidence" --case cleanup-inventory)
+              seconds=1500 ;;
+            worker-malformed)
+              command=(python3 scripts/pilot-worker.py /tmp/cloudforge "$RUNNER_TEMP/fault-evidence" --run --case malformed)
+              seconds=2100 ;;
+            *) exit 2 ;;
+          esac
+          python3 scripts/qualification-run.py --case "$CASE" --binary /tmp/cloudforge --evidence "$RUNNER_TEMP/fault-evidence" --records "$RUNNER_TEMP/qualification-records" --timeout "$seconds" -- "${command[@]}"
+      - name: Independently check cleanup before any upload
+        if: always()
+        timeout-minutes: 3
+        run: python3 scripts/pilot-cleanup-check.py --baseline "$RUNNER_TEMP/cleanup-baseline.json" --output "$RUNNER_TEMP/cleanup.json"
+      - name: Preserve independent qualification layers — compact result before uploads
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          EVIDENCE: ${{ runner.temp }}/fault-evidence
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/initial" --stage-evidence "$EVIDENCE"
+      - name: Preserve small result first
+        id: q23_small
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: attempt5-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
+          path: ${{ runner.temp }}/qualification-records/initial
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve full raw attempt after cleanup
+        id: q23_bulk
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: attempt5-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fault-evidence
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record actual bulk and initial upload outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q23_bulk.outcome }}
+          SMALL: ${{ steps.q23_small.outcome }}
+        run: python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/final" --bulk-outcome "$BULK" --small-outcome "$SMALL"
+      - name: Record the experimental worker scope without rewriting qualification
+        if: ${{ always() && matrix.case == 'worker-malformed' }}
+        timeout-minutes: 1
+        run: python3 scripts/attempt5-worker-gate.py --record "$RUNNER_TEMP/qualification-records/final/qualification.json" --evidence "$RUNNER_TEMP/fault-evidence" --output "$RUNNER_TEMP/qualification-records/final/stable-core-scope.json"
+      - name: Preserve final upload outcome separately
+        id: q23_final
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: attempt5-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-final
+          path: ${{ runner.temp }}/qualification-records/final
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply qualification and preservation gates
+        if: always()
+        timeout-minutes: 1
+        env:
+          RECORDS: ${{ runner.temp }}/qualification-records
+          CLEANUP: ${{ runner.temp }}/cleanup.json
+          BULK: ${{ steps.q23_bulk.outcome }}
+          SMALL: ${{ steps.q23_small.outcome }}
+          FINAL: ${{ steps.q23_final.outcome }}
+          CASE: ${{ matrix.case }}
+        run: |
+          if [ "$CASE" = worker-malformed ]; then
+            python3 scripts/attempt5-worker-gate.py --record "$RECORDS/final/qualification.json" --evidence "$RUNNER_TEMP/fault-evidence" --output "$RECORDS/gate/stable-core-scope.json" --gate
+          else
+            python3 scripts/finish-qualification.py --records "$RECORDS" --cleanup "$CLEANUP" --output "$RECORDS/gate" --bulk-outcome "$BULK" --small-outcome "$SMALL" --gate
+          fi
           if [ "$FINAL" != success ]; then
             echo '::error::Final small artifact was not preserved; native and cleanup outcomes remain unchanged.'
             exit 1

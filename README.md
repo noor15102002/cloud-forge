@@ -16,6 +16,12 @@ PostgreSQL/pgvector, preparation, ClamAV, workers, controlled tests, HPA and num
 regression grading remain experimental. See [release qualification](docs/releasing.md)
 for the candidate gate and retained evidence requirements.
 
+**First prerelease status: NO-GO pending qualification.** The latest completed
+development qualification passed 59 of 64 declared cases; it did not test an
+installed release archive. Remaining HTTP-core prerequisites and corrected
+fixtures are being checked separately from experimental HPA and worker results.
+No public binary has been released. See the [current project status](docs/project-status.md).
+
 ## Install the qualified prerelease
 
 Use the Linux/amd64 archive from the

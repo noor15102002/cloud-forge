@@ -2,6 +2,7 @@
 """Pure fake-command checks for public command capture; no Docker or app runs."""
 from contextlib import contextmanager
 import copy
+from datetime import datetime
 import importlib.util
 import json
 import os
@@ -19,6 +20,7 @@ pilot = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(pilot)
 NAME = "cloudforge-0123abcd"
 IMPORT_ARGS = ["image", "import", "cloudforge/healthy-node-redis:0123abcd-a", "--cluster", NAME, "--mode", "direct"]
+PREFLIGHT_ARGS = ["info", "--format", "{{.ServerVersion}}"]
 
 
 class CleanupCaptureTests(unittest.TestCase):
@@ -212,11 +214,14 @@ sys.exit(int(os.environ['FAKE_EXIT']))
             env.update({pilot.PREFIX+"STAGE":stage, pilot.PREFIX+"FIXTURE":str(fixture), pilot.PREFIX+"MONOREPO":"false",
                         pilot.PREFIX+"OWNER":str(owner), pilot.PREFIX+"CLEANUP_OUTPUT":str(output),
                         pilot.PREFIX+"IMPORT_OUTPUT":str(output),
+                        pilot.PREFIX+"PREFLIGHT_OUTPUT":str(output),
                         pilot.PREFIX+"FORCE_BUILDER_FAILURE":str(force).lower(), pilot.PREFIX+"INJECTION":str(root / "injected.json"),
                         pilot.PREFIX+"MARKER":str(root / "marker.json"), "CLOUDFORGE_REAL_DOCKER":str(fake), "CLOUDFORGE_REAL_K3D":str(fake)})
             command = [sys.executable, str(Path(pilot.__file__)), "__tool", "docker", "buildx", "rm", "--force", NAME]
             if operation == "import":
                 command = command[:3] + ["k3d", *IMPORT_ARGS]
+            if operation == "preflight":
+                command = command[:3] + ["docker", *PREFLIGHT_ARGS]
             yield root, output, env, command
 
     def record(self, output):
@@ -249,7 +254,7 @@ sys.exit(int(os.environ['FAKE_EXIT']))
         import_b = [*IMPORT_ARGS]
         import_b[2] = import_b[2][:-1] + "b"
         for tool, args, timeout in (("docker", ["buildx", "rm", "--force", NAME], 60), ("k3d", ["cluster", "delete", NAME], 120),
-                                    ("k3d", IMPORT_ARGS, 180), ("k3d", import_b, 180)):
+                                    ("k3d", IMPORT_ARGS, 180), ("k3d", import_b, 180), ("docker", PREFLIGHT_ARGS, 10)):
             for code in (0, 17):
                 with self.subTest(tool=tool, code=code), self.setup_case(code=code) as (_, output, env, command):
                     result = subprocess.run(command[:3]+[tool]+args, env=env, capture_output=True, timeout=5)
@@ -271,7 +276,7 @@ sys.exit(int(os.environ['FAKE_EXIT']))
                         self.assertFalse(record["streams"][name]["truncated"])
 
     def test_bounded_tail_preserves_all_forwarded_bytes(self):
-        for operation in ("cleanup", "import"):
+        for operation in ("cleanup", "import", "preflight"):
             with self.subTest(operation=operation), self.setup_case(mode="large", operation=operation) as (_,output,env,command):
                 result=subprocess.run(command,env=env,capture_output=True,timeout=5)
                 record=self.record(output)
@@ -282,8 +287,40 @@ sys.exit(int(os.environ['FAKE_EXIT']))
                     self.assertEqual(stream["observed_bytes"],len(raw))
                     self.assertEqual((output/stream["file"]).read_bytes(),raw[-65536:])
 
+    def test_preflight_records_stages_before_ownership_without_starting_cancellation(self):
+        with self.setup_case(operation="preflight", stage="build", code=0) as (root, output, env, command):
+            Path(env[pilot.PREFIX + "OWNER"]).unlink()
+            env["UNRELATED_PRIVATE_CONFIGURATION"] = "PRIVATE-CANARY"
+            result = subprocess.run(command, env=env, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0)
+            record = self.record(output)
+            phases = ("wrapper_entered_at", "public_fixture_validated_at", "child_started_at", "child_wait_completed_at")
+            self.assertEqual(set(record["observer_stages"]), set(phases))
+            timestamps = [datetime.fromisoformat(record["observer_stages"][key]) for key in phases]
+            self.assertEqual(timestamps, sorted(timestamps))
+            self.assertTrue(all(timestamp.tzinfo is not None for timestamp in timestamps))
+            self.assertEqual((root / "calls").read_text(), "called\n")
+            self.assertFalse((root / "marker.json").exists())
+            self.assertFalse(Path(env[pilot.PREFIX + "OWNER"]).exists())
+            self.assertNotIn("PRIVATE-CANARY", json.dumps(record))
+
+    def test_preflight_spawn_unknown_preserves_stages_without_claiming_child_start(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            stages = {"wrapper_entered_at": "2026-09-24T00:00:00.000001Z",
+                      "public_fixture_validated_at": "2026-09-24T00:00:00.000002Z"}
+            with patch.object(pilot.helpers.subprocess, "Popen", side_effect=OSError("fake spawn error")):
+                with self.assertRaises(OSError):
+                    pilot.helpers.tee_command(["/fake-tool", *PREFLIGHT_ARGS], output, "build", None, None,
+                                              native_timeout_seconds=10, observer_stages=stages)
+            record = self.record(output)
+            self.assertEqual(record["observer_stages"], stages)
+            self.assertIsNone(record["actual_command_executed"])
+            self.assertIsNone(record["exit_code"])
+            self.assertFalse(record["completion_observed"])
+
     def test_child_signal_and_wrapper_signal_are_preserved(self):
-        for operation in ("cleanup", "import"):
+        for operation in ("cleanup", "import", "preflight"):
             with self.subTest(operation=operation), self.setup_case(mode="signal", operation=operation) as (_,output,env,command):
                 result=subprocess.run(command,env=env,capture_output=True,timeout=5)
                 self.assertEqual(result.returncode,-signal.SIGTERM)
@@ -307,20 +344,25 @@ sys.exit(int(os.environ['FAKE_EXIT']))
                         record=self.record(output)
                         self.assertEqual(record["completion_observed"],received!=signal.SIGKILL)
                         self.assertEqual(record["exit_code"],None if received==signal.SIGKILL else -received)
+                        if operation == "preflight":
+                            self.assertIn("child_started_at", record["observer_stages"])
+                            self.assertEqual("child_wait_completed_at" in record["observer_stages"], received != signal.SIGKILL)
                     finally:
                         if process.poll() is None:os.killpg(process.pid,signal.SIGKILL)
                         process.communicate(timeout=5)
 
     def test_unrelated_and_sensitive_commands_are_not_captured(self):
         for tool,args in (("k3d",["kubeconfig","get",NAME]),("docker",["inspect",NAME]),("docker",["buildx","rm","--force","unrelated"]),
-                          ("docker",["buildx","rm","--force",NAME,"--unrecognized"]),("k3d",["cluster","delete",NAME,"other"])):
+                          ("docker",["buildx","rm","--force",NAME,"--unrecognized"]),("k3d",["cluster","delete",NAME,"other"]),
+                          ("docker",["info"]),("docker",["info","--format","{{json .}}"]),
+                          ("docker",[*PREFLIGHT_ARGS,"--context","private"]),("k3d",PREFLIGHT_ARGS)):
             with self.subTest(args=args),self.setup_case() as (_,output,env,command):
                 result=subprocess.run(command[:3]+[tool]+args,env=env,capture_output=True,timeout=5)
                 self.assertEqual(result.returncode,17)
                 self.assertFalse(output.exists())
 
     def test_fixture_and_runner_guards_precede_command_or_artifacts(self):
-        for operation in ("cleanup", "import"):
+        for operation in ("cleanup", "import", "preflight"):
             for fault in ("runner","source","symlink","fifo","parent","wrong-force-stage"):
                 with self.subTest(operation=operation,fault=fault),self.setup_case(operation=operation) as (root,output,env,command):
                     if fault=="runner":env["RUNNER_ENVIRONMENT"]="self-hosted"
@@ -379,7 +421,7 @@ sys.exit(int(os.environ['FAKE_EXIT']))
                 pilot.validate_public_import(IMPORT_ARGS, NAME, stage, monorepo)
 
     def test_artifact_failure_does_not_change_actual_cleanup(self):
-        for operation in ("cleanup", "import"):
+        for operation in ("cleanup", "import", "preflight"):
             with self.subTest(operation=operation), self.setup_case(operation=operation) as (_,output,env,command):
                 output.write_text("not directory")
                 result=subprocess.run(command,env=env,capture_output=True,timeout=5)

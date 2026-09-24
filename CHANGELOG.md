@@ -5,6 +5,10 @@ Versioning once releases begin.
 
 ## Unreleased — narrow prerelease hardening
 
+- Separate bounded HTTP-core qualification from experimental HPA/worker results;
+  retain explicit fixture profiles and original failures without regrading them.
+- Retain allowlisted public-fixture Docker prerequisite and k3d import diagnostics
+  without retries, deadline changes or application log capture.
 - Reject unusable, ambiguous or mismatched Trivy observations as ERROR; retain
   collision-safe normalized package findings and concise image-A scan summaries.
 - Establish invocation ownership before cleanup and verify complete removal,

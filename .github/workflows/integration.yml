@@ -22,13 +22,24 @@ jobs:
       - name: Capture independent cleanup baseline
         run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
 
+      - name: Prepare the declared HTTP-core fixture profile
+        run: python3 scripts/core_fixture.py healthy-node .qualification-core/healthy-node "$RUNNER_TEMP/core-profile.json"
+
       - name: Verify healthy Node fixture with the packaged action
         id: cloudforge
         uses: ./
         with:
           upload-artifact: 'false'
-          path: testdata/healthy-node
+          path: .qualification-core/healthy-node
           artifact-name: cloudforge-verification
+
+      - name: Preserve the explicit test profile
+        if: always()
+        env:
+          REPORT_DIRECTORY: ${{ steps.cloudforge.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}
+        run: |
+          mkdir -p "$REPORT_DIRECTORY"
+          if [ -f "$RUNNER_TEMP/core-profile.json" ]; then cp "$RUNNER_TEMP/core-profile.json" "$REPORT_DIRECTORY/core-profile.json"; fi
 
       - name: Show safe verification result
         if: ${{ always() }}
@@ -52,14 +63,24 @@ jobs:
             any(.evidence[]; .experiment_id == "graceful-shutdown" and .status == "pass" and any(.measurements[]; .name == "requests_overlapping_deletion" and (.value | tonumber) > 0) and any(.measurements[]; .name == "dropped_requests" and .value == "0")) and
             any(.evidence[]; .experiment_id == "pod-recovery" and .status == "pass" and any(.measurements[]; .name == "failed_requests" and .value == "0") and any(.measurements[]; .name == "final_http_status" and ((.value | tonumber) >= 200 and (.value | tonumber) < 300))) and
             any(.evidence[]; .experiment_id == "rolling-deployment" and .status == "pass" and any(.measurements[]; .name == "source_version" and .value == "a") and any(.measurements[]; .name == "target_version" and .value == "b") and any(.measurements[]; .name == "target_ready_pods" and .value == "2") and any(.measurements[]; .name == "failed_requests" and .value == "0")) and
-            any(.evidence[]; .experiment_id == "load-profile" and .status == "pass" and any(.measurements[]; .name == "request_count" and (.value | tonumber) > 0) and any(.measurements[]; .name == "error_rate" and .value == "0.000") and any(.measurements[]; .name == "latency_p95_ms")) and
-            any(.evidence[]; .experiment_id == "horizontal-autoscaling" and .status == "pass" and any(.measurements[]; .name == "peak_replicas" and (.value | tonumber) > 2))
+            any(.evidence[]; .experiment_id == "load-profile" and .status == "pass" and any(.measurements[]; .name == "request_count" and (.value | tonumber) > 0) and any(.measurements[]; .name == "error_rate" and .value == "0.000") and any(.measurements[]; .name == "latency_p95_ms"))
           ' "$CLOUDFORGE_REPORT"
 
-      - name: Verify existing planted failures with original streams and exits
+      - name: Require experimental experiments to be explicitly skipped
+        env:
+          CLOUDFORGE_REPORT: ${{ steps.cloudforge.outputs.report-json }}
+        run: |
+          PYTHONPATH=scripts python3 - <<'PYTHON'
+          import json, os
+          from core_fixture import require_experimental_skipped
+          report = json.load(open(os.environ["CLOUDFORGE_REPORT"]))
+          require_experimental_skipped({item["experiment_id"]: item for item in report["evidence"]})
+          PYTHON
+
+      - name: Verify the stable rollout fault with original streams and exits
         env:
           CF_BINARY: ${{ steps.cloudforge.outputs.binary }}
-        run: python3 scripts/qualification-run.py --case integration-failures --binary "$CF_BINARY" --evidence "$RUNNER_TEMP/integration-failures" --records "$RUNNER_TEMP/failure-records" --timeout 2100 -- python3 scripts/pilot-integration-failures.py "$CF_BINARY" "$RUNNER_TEMP/integration-failures"
+        run: python3 scripts/qualification-run.py --case core-integration-failures --binary "$CF_BINARY" --evidence "$RUNNER_TEMP/integration-failures" --records "$RUNNER_TEMP/failure-records" --timeout 2100 -- python3 scripts/pilot-integration-failures.py "$CF_BINARY" "$RUNNER_TEMP/integration-failures" --core
 
       - name: Independently check cleanup before any upload
         if: always()

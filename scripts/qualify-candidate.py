@@ -39,6 +39,10 @@ def main():
         "topology": base + ["scripts/pilot-topology.py", str(args.binary), str(case_output)],
         "probe-pacing": base + ["scripts/pilot-probe-pacing.py", str(args.binary), str(case_output)],
     }
+    for fixture in ("healthy-node", "healthy-python"):
+        commands["core-" + fixture] = commands[fixture] + ["--core"]
+    for fixture in ("redis-node", "redis-python"):
+        commands["core-" + fixture] = commands[fixture] + ["--core"]
     if args.case == "restoration-failure":
         command = base + ["scripts/pilot-restoration.py", str(args.binary), str(case_output)]
     elif args.case.startswith("cleanup-"):

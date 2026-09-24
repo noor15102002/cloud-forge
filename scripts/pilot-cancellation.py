@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interrupt bundled public fixtures and retain bounded import/cleanup evidence.
+"""Interrupt bundled public fixtures and retain bounded preflight/import/cleanup evidence.
 
 Public fixture validation and stream teeing add small wrapper overhead inside
 CloudForge's original command deadlines; no retry, new runtime API call, traffic
@@ -178,6 +178,7 @@ def qualify_cancellation(report, stage):
 
 
 def tool_wrapper(tool, arguments):
+    wrapper_entered_at = helpers.observer_timestamp()
     helpers.require_runner()
     if tool not in ("docker", "k3d", "kubectl", "k6"):
         raise helpers.QualificationError("cleanup_capture_unknown_tool")
@@ -191,6 +192,16 @@ def tool_wrapper(tool, arguments):
     validate_public_fixture(fixture, stage, monorepo, pacing_value == "true")
     if os.environ.get(PREFIX + "FORCE_BUILDER_FAILURE") == "true" and (stage != "redis" or monorepo):
         raise helpers.QualificationError("builder_fault_requires_public_redis_case")
+    if tool == "docker" and arguments == ["info", "--format", "{{.ServerVersion}}"]:
+        # Observe only the existing public-fixture prerequisite invocation. The
+        # runner still owns its ten-second deadline; no extra probe or retry.
+        # Entry is after Python imports; absent artifacts do not prove which
+        # earlier startup/validation phase was reached.
+        return finish_signal(helpers.tee_command([real, *arguments], Path(os.environ[PREFIX + "PREFLIGHT_OUTPUT"]),
+                stage, sys.stdout.buffer, sys.stderr.buffer, scope="bundled_public_cancellation_fixture_only",
+                tool=tool, name="docker-server-version", native_timeout_seconds=10,
+                observer_stages={"wrapper_entered_at": wrapper_entered_at,
+                                 "public_fixture_validated_at": helpers.observer_timestamp()}))
     owner_path = Path(os.environ[PREFIX + "OWNER"])
     owner = json.loads(owner_path.read_text())["run_name"] if owner_path.exists() else None
     created = created_run(tool, arguments)
@@ -301,6 +312,7 @@ def run_stage(args, stage, sentinel_name, baseline_kubeconfig, sentinel_ids):
             PREFIX + "FIXTURE": str(app), PREFIX + "MONOREPO": str(args.monorepo).lower(),
             PREFIX + "PROBE_PACING": str(probe_pacing).lower(),
             PREFIX + "MARKER": str(marker), PREFIX + "OWNER": str(root / "owner.json"),
+            PREFIX + "PREFLIGHT_OUTPUT": str(args.output / ("preflight-commands-" + stage)),
             PREFIX + "IMPORT_OUTPUT": str(args.output / ("import-commands-" + stage)),
             PREFIX + "CLEANUP_OUTPUT": str(args.output / ("cleanup-commands-" + stage)),
             PREFIX + "FORCE_BUILDER_FAILURE": str(args.force_builder_cleanup_failure).lower(),

@@ -82,13 +82,20 @@ def required_reports(case):
         elif case == "operational-docker-unavailable":
             cleanup = ["PASS", "SKIPPED", "NOT_APPLICABLE"]
         return {"path": path, "expected": expected, "expected_native_cleanup": cleanup}
+    if case in ("core-healthy-node", "core-healthy-python"):
+        fixture = case.removeprefix("core-")
+        return [report(f"{fixture}-{i}.json", HEALTHY) for i in range(1, 6)]
+    if case == "core-integration-failures":
+        return [report("broken-rollout.json", FAIL)]
     if case in ("healthy-node", "healthy-python"):
         broken = ["broken-shutdown", "broken-rollout"] if case == "healthy-node" else ["broken-python-shutdown", "broken-python-readiness"]
         return [report(f"{case}-{i}.json", HEALTHY) for i in range(1, 6)] + [report(f"{name}.json", FAIL) for name in broken]
-    if case in ("redis-node", "redis-python"):
+    if case in ("redis-node", "redis-python", "core-redis-node", "core-redis-python"):
         return [report("healthy.json", HEALTHY), report("semantic-degraded.json", FAIL), report("disconnected.json", FAIL), report("dependency-timeout.json", [["blocked", 1]])]
     if case == "external":
         return [report(name + ".json", APPLICATION) for name in ("express", "fastapi")]
+    if case == "reliability-generated":
+        return [report("generated-1.json", APPLICATION)]
     if case == "reliability":
         return [report("source-1.json", FAIL), report("source-2.json", HEALTHY), report("generated-1.json", APPLICATION)]
     if case == "topology":

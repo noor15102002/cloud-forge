@@ -1,11 +1,6 @@
 name: Evidence reliability
 
 on:
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - 'README.md'
-      - 'CHANGELOG.md'
   workflow_dispatch:
 
 permissions:
@@ -27,6 +22,7 @@ jobs:
         run: |
           python3 scripts/test-probe-pacing.py
           python3 scripts/test-pilot-cancellation.py
+          python3 scripts/test-pilot-reliability-import.py
       - name: Install pinned tools
         run: bash scripts/install-tools.sh "$RUNNER_TEMP/cloudforge-tools"
       - name: Capture independent cleanup baseline

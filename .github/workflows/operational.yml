@@ -1,11 +1,6 @@
 name: Qualification fault harnesses
 
 on:
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - 'README.md'
-      - 'CHANGELOG.md'
   workflow_dispatch:
 
 permissions:

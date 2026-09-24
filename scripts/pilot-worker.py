@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import shutil
 import signal
 import subprocess
@@ -32,6 +33,7 @@ HTTP_IDS = ("deployment-readiness", "semantic-readiness", "graceful-shutdown", "
 ENV_PREFIX = "CF_WORKER_QUALIFY_"
 VERIFY_SECONDS = 2400
 CLEANUP_SECONDS = 720
+HEARTBEAT_SCRIPT = "local t=redis.call('TIME'); local ttl=redis.call('PTTL',KEYS[1]); local r={seconds=t[1],microseconds=t[2],ttl_ms=ttl,present=ttl~=-2}; if ttl~=-2 then if redis.call('STRLEN',KEYS[1])>4096 then r.oversized=true else r.value=redis.call('GET',KEYS[1]) end end; return cjson.encode(r)"
 
 
 def save(path, value):
@@ -137,9 +139,101 @@ def maybe_mark_cancellation(state, case, marker):
                           proof_scope="cancellation_after_owned_running_worker_observed"))
 
 
+def malformed_heartbeat_scope(arguments):
+    """Validate only the public malformed fixture's already-issued Redis read."""
+    if os.environ.get(ENV_PREFIX + "CASE") != "malformed":
+        raise helpers.QualificationError("malformed_observer_wrong_case")
+    source = REPOSITORY / "testdata/healthy-worker"
+    config = Path(os.environ[ENV_PREFIX + "CONFIG"])
+    if (source.is_symlink() or helpers.hashes(source) != json.loads(os.environ[ENV_PREFIX + "SOURCE_HASHES"])
+            or json.loads(config.read_text()) != case_config("malformed")):
+        raise helpers.QualificationError("malformed_observer_public_fixture_changed")
+    match = re.fullmatch(r"k3d-cloudforge-([a-f0-9]{20})", arguments[1] if len(arguments) > 1 else "")
+    expected = ["--context", arguments[1] if match else "", "--namespace", "cloudforge", "exec",
+                "deployment/cf-dependency-redis", "--container", "redis", "--", "redis-cli", "-e", "--raw",
+                "EVAL", HEARTBEAT_SCRIPT, "1", "cloudforge:worker:heartbeat"]
+    if not match or arguments != expected:
+        raise helpers.QualificationError("malformed_observer_unrelated_command")
+    return match.group(1)
+
+
+def malformed_snapshot(stdout):
+    """Return a boolean without retaining the fixture value or heartbeat key."""
+    try:
+        from qualification_record import unique_object, reject_constant
+        snapshot = json.loads(stdout, object_pairs_hook=unique_object, parse_constant=reject_constant)
+        return (isinstance(snapshot, dict)
+                and set(snapshot) == {"seconds", "microseconds", "ttl_ms", "present", "value"}
+                and isinstance(snapshot["seconds"], str) and snapshot["seconds"].isdigit() and 0 < int(snapshot["seconds"]) < 2**63
+                and isinstance(snapshot["microseconds"], str) and snapshot["microseconds"].isdigit() and 0 <= int(snapshot["microseconds"]) < 1000000
+                and type(snapshot["ttl_ms"]) is int and 0 < snapshot["ttl_ms"] <= 3000
+                and snapshot["present"] is True and snapshot["value"] == "{not-valid-json")
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        return False
+
+
+def observe_malformed_heartbeat(real, arguments):
+    """Forward the existing command; retain only its last bounded classification.
+
+    CloudForge keeps its five-second deadline and process-group cancellation.
+    No auxiliary query, retry, observer deadline or raw stream artifact is added.
+    """
+    run_id = malformed_heartbeat_scope(arguments)
+    marker = Path(os.environ[ENV_PREFIX + "HEARTBEAT_OBSERVATION"])
+    previous = json.loads(marker.read_text()) if marker.exists() else {}
+    record = {"schema_version": "worker-heartbeat-observation-v1", "case": "malformed", "run_id": run_id,
+              "sequence": previous.get("sequence", 0) + 1, "command_completed": False, "exit_code": None,
+              "outcome": "observation_incomplete", "fixture_validated": True, "sensitive_output_retained": False,
+              "started_at": helpers.observer_timestamp(), "finished_at": None}
+    # Invalidate the previous completed observation before any following command.
+    save(marker, record)
+    retained, truncated = bytearray(), False
+    process = subprocess.Popen([real, *arguments], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    streams = {process.stdout: sys.stdout.buffer, process.stderr: sys.stderr.buffer}
+    try:
+        with selectors.DefaultSelector() as selected:
+            for stream in streams:
+                selected.register(stream, selectors.EVENT_READ)
+            while selected.get_map():
+                for key, _ in selected.select(0.1):
+                    chunk = os.read(key.fileobj.fileno(), 8192)
+                    if not chunk:
+                        selected.unregister(key.fileobj)
+                        continue
+                    streams[key.fileobj].write(chunk)
+                    streams[key.fileobj].flush()
+                    if key.fileobj is process.stdout:
+                        remaining = 32 * 1024 - len(retained)
+                        retained.extend(chunk[:remaining])
+                        truncated |= len(chunk) > remaining
+        code = process.wait()
+        record.update(command_completed=True, exit_code=code, finished_at=helpers.observer_timestamp(),
+                      outcome="malformed_fixture_value" if code == 0 and not truncated and malformed_snapshot(retained)
+                      else "command_failed" if code != 0 else "different_or_unusable_snapshot")
+        try:
+            save(marker, record)
+        except OSError:
+            pass  # The pending marker fails qualification; the native exit stays unchanged.
+    finally:
+        for stream in streams:
+            stream.close()
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+    if code < 0:
+        received = -code
+        if received not in (signal.SIGKILL, signal.SIGSTOP):
+            signal.signal(received, signal.SIG_DFL)
+        os.kill(os.getpid(), received)
+    return code
+
+
 def kubectl_wrapper(arguments):
     helpers.require_runner()
     real = os.environ[ENV_PREFIX + "REAL_KUBECTL"]
+    if (os.environ.get(ENV_PREFIX + "CASE") == "malformed" and "redis-cli" in arguments
+            and "EVAL" in arguments):
+        return observe_malformed_heartbeat(real, arguments)
     selected = "get" in arguments and any(kind in arguments for kind in ("pods", "deployment", "replicasets")) and "--context" in arguments
     if not selected:
         os.execv(real, [real, *arguments])
@@ -447,6 +541,12 @@ def run(binary, source, config, output, case, qualification):
         environment.update({ENV_PREFIX + "HARNESS": str(Path(__file__).resolve()), ENV_PREFIX + "REAL_KUBECTL": real,
                             ENV_PREFIX + "STATE": str(state_path), ENV_PREFIX + "MARKER": str(marker),
                             ENV_PREFIX + "CONTEXT": str(context_path), ENV_PREFIX + "CASE": case})
+        if case == "malformed":
+            if source.resolve() != (REPOSITORY / "testdata/healthy-worker").resolve():
+                raise helpers.QualificationError("malformed_observer_requires_public_fixture")
+            environment.update({ENV_PREFIX + "CONFIG": str(config.resolve()),
+                                ENV_PREFIX + "SOURCE_HASHES": json.dumps(helpers.hashes(source)),
+                                ENV_PREFIX + "HEARTBEAT_OBSERVATION": str((output / "worker-heartbeat-observation.json").resolve())})
         command = [binary, "verify", str(source), "--config", str(config), "--format", "json"]
         helpers.write_json(output / "command.json", {"argv": command})
         process, interrupted = None, None

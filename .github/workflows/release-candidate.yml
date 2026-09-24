@@ -9,6 +9,11 @@ on:
         default: v0.1.0-alpha.1
         type: string
 
+      pull_request_number:
+        description: Replacement PR authorized to retain scoped qualification comments
+        required: true
+        type: string
+
 permissions:
   contents: read
 
@@ -141,10 +146,10 @@ jobs:
       max-parallel: 6
       matrix:
         case:
-          - healthy-node
-          - healthy-python
-          - redis-node
-          - redis-python
+          - core-healthy-node
+          - core-healthy-python
+          - core-redis-node
+          - core-redis-python
           - external
           - reliability
           - topology
@@ -181,34 +186,10 @@ jobs:
           - cancel-lifecycle
           - cancel-load
           - cancel-redis-fallback
-          - backend-healthy
-          - backend-preparation-failure
-          - backend-missing-key
-          - backend-missing-schema
-          - backend-cancel-clamav
-          - backend-cancel-postgresql
-          - backend-cancel-preparation
-          - worker-healthy
-          - worker-never
-          - worker-stale
-          - worker-frozen
-          - worker-future
-          - worker-malformed
-          - worker-exit
-          - worker-first-pod-only
-          - worker-fail-second-start
-          - worker-cancel-startup
-          - worker-cancel-recovery
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Reserve disposable runner storage for existing backend cases
-        if: ${{ startsWith(matrix.case, 'backend-') || startsWith(matrix.case, 'worker-') }}
-        run: |
-          test "$GITHUB_ACTIONS" = true
-          test "$RUNNER_ENVIRONMENT" = github-hosted
-          sudo rm -rf -- /usr/share/dotnet /usr/local/lib/android /opt/ghc
       - uses: ./.github/actions/install-candidate
         id: candidate
         with:
@@ -313,12 +294,23 @@ jobs:
           path: ${{ runner.temp }}/candidate-release
       - name: Capture independent cleanup baseline
         run: python3 scripts/pilot-cleanup-check.py --capture-baseline "$RUNNER_TEMP/cleanup-baseline.json"
+      - name: Select the explicit core profile or original monorepo
+        id: profile
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+        run: |
+          if [ "$FIXTURE" = healthy-node ]; then
+            python3 scripts/core_fixture.py healthy-node .qualification-core/healthy-node "$RUNNER_TEMP/core-profile.json"
+            echo 'application=.qualification-core/healthy-node' >> "$GITHUB_OUTPUT"
+          else
+            echo 'application=testdata/monorepo' >> "$GITHUB_OUTPUT"
+          fi
       - name: Run the packaged Action with the distributed candidate
         uses: ./
         id: verify
         with:
           upload-artifact: 'false'
-          path: testdata/${{ matrix.fixture }}
+          path: ${{ steps.profile.outputs.application }}
           candidate-path: ${{ runner.temp }}/candidate-release
           candidate-version: ${{ needs.build.outputs.version }}
           candidate-commit: ${{ needs.build.outputs.commit }}
@@ -326,6 +318,24 @@ jobs:
           candidate-sha256: ${{ needs.build.outputs.sha256 }}
           artifact-name: action-${{ matrix.fixture }}-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 90
+      - name: Preserve the explicit test profile
+        if: ${{ always() && matrix.fixture == 'healthy-node' }}
+        env:
+          REPORT_DIRECTORY: ${{ steps.verify.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}
+        run: |
+          mkdir -p "$REPORT_DIRECTORY"
+          if [ -f "$RUNNER_TEMP/core-profile.json" ]; then cp "$RUNNER_TEMP/core-profile.json" "$REPORT_DIRECTORY/core-profile.json"; fi
+      - name: Check the core profile did not execute experimental tests
+        if: ${{ matrix.fixture == 'healthy-node' }}
+        env:
+          CF_REPORT: ${{ steps.verify.outputs.report-json }}
+        run: |
+          PYTHONPATH=scripts python3 - <<'PYTHON'
+          import json, os
+          from core_fixture import require_experimental_skipped
+          report = json.load(open(os.environ["CF_REPORT"]))
+          require_experimental_skipped({item["experiment_id"]: item for item in report["evidence"]})
+          PYTHON
       - name: Verify selected workload, rejected build context and cancellation
         if: ${{ matrix.fixture == 'monorepo' }}
         env:
@@ -569,7 +579,7 @@ jobs:
           candidate-date: ${{ needs.build.outputs.date }}
           candidate-sha256: ${{ needs.build.outputs.sha256 }}
           report-path: ${{ runner.temp }}/native-evidence/native/verification.json
-          pull-request-number: '55'
+          pull-request-number: ${{ inputs.pull_request_number }}
           qualification-scope: ${{ github.run_id }}-${{ github.run_attempt }}
           artifact-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           output-directory: ${{ runner.temp }}/live-report
