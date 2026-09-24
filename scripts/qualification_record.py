@@ -79,7 +79,7 @@ def required_reports(case):
             cleanup = ["ERROR"]
         elif case.startswith("cleanup-") and case not in ("cleanup-owned-remnant", "cleanup-already-absent", "cleanup-same-name-unrelated"):
             cleanup = ["ERROR"]
-        elif case == "operational-docker-unavailable":
+        elif case in ("operational-docker-unavailable", "docker-endpoint-policy"):
             cleanup = ["PASS", "SKIPPED", "NOT_APPLICABLE"]
         return {"path": path, "expected": expected, "expected_native_cleanup": cleanup}
     if case in ("core-healthy-node", "core-healthy-python"):
@@ -102,6 +102,11 @@ def required_reports(case):
         return [report(f"replicas-{i}/report.json", APPLICATION) for i in (1, 2)]
     if case == "probe-pacing":
         return [report("default/stdout.json", FAIL), report("interval-2s/stdout.json", HEALTHY)]
+    if case == "scanner-policy":
+        return [report("verification.json", [["warn", 0]])]
+    if case == "docker-endpoint-policy":
+        return [report(name + ".json", [["blocked", 1]]) for name in
+                ("stored-context", "environment-context", "environment-host", "default-context-host", "tls-selector")]
     if case == "integration-failures":
         return [report(name + ".json", FAIL) for name in ("broken-shutdown", "broken-rollout")]
     if case == "monorepo-extra":

@@ -125,7 +125,7 @@ func VerificationText(w io.Writer, run model.VerificationRun) error {
 		return err
 	}
 	for _, evidence := range run.Evidence {
-		if _, err := fmt.Fprintf(w, "%-7s %-28s %s (%d ms)\n", strings.ToUpper(string(evidence.Status)), terminalText(evidence.Title), terminalText(evidence.Summary), evidence.DurationMS); err != nil {
+		if _, err := fmt.Fprintf(w, "%-7s %-28s %s (%d ms)\n", strings.ToUpper(string(evidence.Status)), terminalText(evidenceTitle(run, evidence)), terminalText(evidence.Summary), evidence.DurationMS); err != nil {
 			return err
 		}
 		if err := recoveryText(w, evidence); err != nil {
@@ -236,7 +236,7 @@ func VerificationMarkdown(w io.Writer, run model.VerificationRun) error {
 	measurementCount := 0
 	for _, evidence := range run.Evidence {
 		measurementCount += len(evidence.Measurements)
-		if _, err := fmt.Fprintf(w, "| %s | **%s** | %d ms | %s |\n", markdownText(evidence.Title), strings.ToUpper(string(evidence.Status)), evidence.DurationMS, markdownText(evidence.Summary)); err != nil {
+		if _, err := fmt.Fprintf(w, "| %s | **%s** | %d ms | %s |\n", markdownText(evidenceTitle(run, evidence)), strings.ToUpper(string(evidence.Status)), evidence.DurationMS, markdownText(evidence.Summary)); err != nil {
 			return err
 		}
 	}

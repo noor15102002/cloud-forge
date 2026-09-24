@@ -184,6 +184,7 @@ func capabilityPlan(analysis model.AnalysisResult, current plan, config model.Ru
 	if isWorker(config) {
 		workerCapabilities(result, planErr)
 	}
+	annotateMaturity(result, config)
 	sort.Slice(result.Capabilities, func(i, j int) bool { return result.Capabilities[i].Name < result.Capabilities[j].Name })
 	return result
 }

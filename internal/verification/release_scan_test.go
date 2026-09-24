@@ -25,7 +25,7 @@ func TestReleaseScanObservationStatusesAndCleanup(t *testing.T) {
 		{name: "truncated_output", truncated: true, scan: model.StatusError, overall: model.StatusError, exit: 2, diagnostic: "trivy_output_invalid"},
 		{name: "scanner_exit", failure: model.FailureExit, scan: model.StatusError, overall: model.StatusError, exit: 2, diagnostic: "trivy_scan_failed"},
 		{name: "scanner_canceled", failure: model.FailureCanceled, cancel: true, scan: model.StatusError, overall: model.StatusError, exit: 2, diagnostic: "verification_canceled"},
-		{name: "clean", scan: model.StatusPass, overall: model.StatusPass},
+		{name: "clean", scan: model.StatusPass, overall: model.StatusWarn},
 		{name: "findings", body: "findings", scan: model.StatusWarn, overall: model.StatusWarn},
 		{name: "case_alias", body: "case_alias", scan: model.StatusError, overall: model.StatusError, exit: 2, diagnostic: "trivy_output_invalid"},
 		{name: "wrong_subject", body: "wrong_subject", scan: model.StatusError, overall: model.StatusError, exit: 2, diagnostic: "trivy_output_invalid"},

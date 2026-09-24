@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: http-core-example
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: http-core-example
+  template:
+    metadata:
+      labels:
+        app: http-core-example
+    spec:
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: http
+          image: http-core-example:local
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            periodSeconds: 1
+            failureThreshold: 1
+            httpGet:
+              path: /ready
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: http-core-example
+spec:
+  selector:
+    app: http-core-example
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

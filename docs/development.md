@@ -25,9 +25,16 @@ The target application analyzer does not require Docker or Kubernetes tools.
 `cloudforge doctor` reports which tools are available without altering the
 machine.
 
-Runtime verification requires access to a Docker daemon plus `k3d`, `kubectl`,
-`k6`, and Trivy. Run `cloudforge verify testdata/healthy-node` for the local
-smoke test. The command creates and removes its own uniquely named cluster.
+Runtime verification requires the supported local Docker Engine plus its system
+Buildx plugin, `k3d`, `kubectl`, `k6` and Trivy. Follow the complete prerequisite
+and tool-version instructions in [first run](first-run.md). Use
+`cloudforge verify examples/http-core` for the local core smoke test. The command
+creates and removes its own uniquely named cluster. The older
+`testdata/healthy-node` fixture additionally enables experimental HPA and control
+protocols, so it is not the first-use core recipe.
+
+Keep the selected application checkout unchanged throughout verification. Both
+lifecycle builds read it separately; CloudForge does not snapshot source files.
 
 Action development also requires Node.js and `actionlint`. `make actions` tests
 the stable comment updater, rejects unsafe input combinations, and validates the

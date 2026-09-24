@@ -146,7 +146,7 @@ func TestBuildSelectionChangesCompatibility(t *testing.T) {
 	}
 	fp := newFingerprint(context.Background(), runnerFunc(func(_ context.Context, r command.Request) model.CommandResult { return successfulCommand(r) }), root, p, testOptions())
 	fp.ImageID = "sha256:" + strings.Repeat("b", 64)
-	for _, name := range []string{"docker", "k3d", "kubectl", "kubernetes", "k6", "trivy"} {
+	for _, name := range []string{"docker", "buildx", "k3d", "kubectl", "kubernetes", "k6", "trivy"} {
 		fp.Tools = append(fp.Tools, model.ToolVersion{Name: name, Version: "test"})
 	}
 	completeFingerprint(fp)

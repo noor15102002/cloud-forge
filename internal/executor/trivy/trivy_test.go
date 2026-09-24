@@ -105,8 +105,12 @@ func TestScanRequiresReliableMatchingSubject(t *testing.T) {
 			if len(scan.Findings) != tt.findings {
 				t.Fatalf("findings=%#v", scan.Findings)
 			}
-			if tt.findings == 0 && len(scan.Measurements) > 0 {
-				t.Fatalf("unusable scan fabricated counts: %v", scan.Measurements)
+			if tt.findings == 0 {
+				for _, measurement := range scan.Measurements {
+					if measurement.Name == "vulnerabilities" || measurement.Name == "known_fix_available" || strings.HasPrefix(measurement.Name, "severity_") {
+						t.Fatalf("unusable scan fabricated counts: %v", scan.Measurements)
+					}
+				}
 			}
 			if tt.findings > 0 {
 				found := false

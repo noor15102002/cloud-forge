@@ -6,11 +6,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
+	"github.com/noor15102002/cloud-forge/internal/executor/k3d"
+	"github.com/noor15102002/cloud-forge/internal/executor/trivy"
+	"github.com/noor15102002/cloud-forge/internal/runtimepolicy"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -33,58 +37,93 @@ func NewWithMemory(runner command.Runner, memory MemoryReader) *Doctor {
 	return &Doctor{runner: runner, memory: memory}
 }
 
-type toolSpec struct {
-	name, command string
-	args          []string
-	guidance      string
-}
-
-var tools = []toolSpec{
-	{"Docker", "docker", []string{"--version"}, "Install Docker and ensure it is available on PATH."},
-	{"k3d", "k3d", []string{"version"}, "Install k3d from https://k3d.io/."},
-	{"kubectl", "kubectl", []string{"version", "--client=true"}, "Install kubectl from the Kubernetes documentation."},
-	{"k6", "k6", []string{"version"}, "Install k6 from https://grafana.com/docs/k6/."},
-	{"Trivy", "trivy", []string{"--version"}, "Install Trivy from https://trivy.dev/."},
-}
-
-// Run executes every environment check and returns a structured report.
+// Run applies the same endpoint, tool and Kubernetes skew policy as verify,
+// but keeps each prerequisite actionable and never creates runtime resources.
 func (d *Doctor) Run(ctx context.Context) model.DoctorReport {
 	report := model.DoctorReport{SchemaVersion: model.SchemaVersion, Status: model.StatusPass}
-	for _, spec := range tools {
-		result := d.runner.Run(ctx, command.Request{Name: spec.command, Args: spec.args, Timeout: 10 * time.Second})
-		check := model.DoctorCheck{Name: spec.name, Status: model.StatusPass, DurationMS: result.DurationMS}
-		if result.FailureType != model.FailureNone {
-			check.Status = failureStatus(result.FailureType)
-			check.Detail = failureDetail(result.FailureType)
-			check.Guidance = spec.guidance
+	platform := model.DoctorCheck{Name: "Runtime platform", Status: model.StatusPass, Detail: "SUPPORTED: Linux/amd64 runtime contract."}
+	if !runtimepolicy.PlatformSupported(runtime.GOOS, runtime.GOARCH) {
+		platform.Status, platform.Detail = model.StatusFail, "UNSUPPORTED: runtime verification requires Linux/amd64."
+		platform.Guidance = "Analysis and verify --plan remain available without runtime prerequisites."
+	}
+	report.Checks = append(report.Checks, platform)
+	selection := runtimepolicy.ResolveDocker(ctx, d.runner, os.Getenv)
+	endpoint := model.DoctorCheck{Name: "Docker endpoint", Status: model.StatusPass, DurationMS: selection.Observation.DurationMS, Detail: "SUPPORTED: default local Unix socket; selection origin: " + selection.Origin + "."}
+	if selection.Status != "supported" {
+		endpoint.Status, endpoint.Detail = model.StatusFail, "UNSUPPORTED: selected Docker endpoint is outside the local runtime contract."
+		if selection.Status == "not_validated" {
+			endpoint.Status, endpoint.Detail = model.StatusError, "NOT_VALIDATED: effective Docker endpoint could not be resolved."
+			if selection.Observation.FailureType == model.FailureNotFound || selection.Observation.FailureType == model.FailureExit {
+				endpoint.Status = model.StatusFail
+			}
+		}
+		endpoint.Guidance = "Select the default local Linux Docker daemon and check Docker context metadata; remote endpoints, Docker VMs, TLS selectors and nondefault/rootless sockets are not qualified."
+	}
+	report.Checks = append(report.Checks, endpoint)
+	clientVersion := ""
+	for _, spec := range runtimepolicy.Tools() {
+		if ctx.Err() != nil {
+			report.Checks = append(report.Checks, model.DoctorCheck{Name: spec.Label, Status: model.StatusError, Detail: "Prerequisite observation was canceled; no further commands were started."})
+			report.Status = model.StatusError
+			return report
+		}
+		check := model.DoctorCheck{Name: spec.Label, Status: model.StatusPass}
+		if spec.Name == "docker" && (selection.Status != "supported" || platform.Status != model.StatusPass) {
+			check.Status, check.Detail = model.StatusBlocked, "Docker daemon observation was blocked by the runtime platform or endpoint prerequisite."
+			check.Guidance = "Resolve the platform and Docker endpoint findings first."
+			report.Checks = append(report.Checks, check)
+			continue
+		}
+		req := command.Request{Name: spec.Command, Args: spec.Args, Timeout: 10 * time.Second, OutputLimit: 16 * 1024}
+		if selection.Status == "supported" {
+			req = runtimepolicy.PinDocker(req)
+		}
+		var result model.CommandResult
+		switch spec.Name {
+		case "buildx":
+			result = runtimepolicy.BuildxVersion(ctx, doctorPinnedRunner{runner: d.runner, pinned: selection.Status == "supported"})
+		case "trivy":
+			result = trivy.Version(ctx, doctorPinnedRunner{runner: d.runner, pinned: selection.Status == "supported"})
+		default:
+			result = d.runner.Run(ctx, req)
+		}
+		check.DurationMS = result.DurationMS
+		if result.FailureType != model.FailureNone || result.ExitCode != 0 {
+			failure := result.FailureType
+			if failure == model.FailureNone {
+				failure = model.FailureExit
+			}
+			check.Status, check.Detail, check.Guidance = failureStatus(failure), failureDetail(failure), spec.Guidance
+			if spec.Name == "docker" {
+				check.Detail = dockerDaemonDetail(result)
+			}
+		} else if result.Truncated {
+			check.Status, check.Detail, check.Guidance = model.StatusError, "Version output exceeded its bound; no version was established.", spec.Guidance
 		} else {
-			check.Version = ParsedVersion(result.Stdout)
-			if check.Version == "" {
-				check.Version = ParsedVersion(result.Stderr)
+			if spec.Name == "kubectl" {
+				check.Version, _ = runtimepolicy.KubernetesVersions(result.Stdout)
+				clientVersion = check.Version
+			} else {
+				check.Version = ParsedVersion(result.Stdout)
 			}
 			if check.Version == "" {
-				check.Status = model.StatusFail
-				check.Detail = "Version output was empty or unrecognized."
-				check.Guidance = spec.guidance
+				check.Status, check.Detail, check.Guidance = model.StatusFail, "Version output was empty or unrecognized.", spec.Guidance
+			} else {
+				status, reason := runtimepolicy.VersionDisposition(spec, check.Version)
+				check.Detail = strings.ToUpper(status) + ": " + reason
+				if status == "not_validated" {
+					check.Status = model.StatusWarn
+				}
 			}
 		}
 		report.Checks = append(report.Checks, check)
 	}
-
-	daemon := d.runner.Run(ctx, command.Request{Name: "docker", Args: []string{"info", "--format", "{{.ServerVersion}}"}, Timeout: 10 * time.Second})
-	daemonCheck := model.DoctorCheck{Name: "Docker daemon", Status: model.StatusPass, DurationMS: daemon.DurationMS}
-	if daemon.FailureType != model.FailureNone {
-		daemonCheck.Status = failureStatus(daemon.FailureType)
-		daemonCheck.Detail = dockerDaemonDetail(daemon)
-		daemonCheck.Guidance = "Start Docker and ensure the current user can access its daemon, then run cloudforge doctor again."
-	} else {
-		daemonCheck.Version = ParsedVersion(daemon.Stdout)
-		if daemonCheck.Version == "" {
-			daemonCheck.Status = model.StatusFail
-			daemonCheck.Detail = "Docker daemon version output was unrecognized."
-		}
+	status, reason := runtimepolicy.KubectlCompatibility(clientVersion, k3d.KubernetesVersion)
+	skew := model.DoctorCheck{Name: "kubectl/Kubernetes compatibility", Status: model.StatusPass, Detail: strings.ToUpper(status) + ": " + reason}
+	if status != "supported" {
+		skew.Status, skew.Guidance = model.StatusFail, "Install kubectl v1.35.5 for the pinned Kubernetes server; runtime execution rejects unsupported client/server skew."
 	}
-	report.Checks = append(report.Checks, daemonCheck)
+	report.Checks = append(report.Checks, skew)
 
 	memoryCheck := model.DoctorCheck{Name: "Memory", Status: model.StatusPass}
 	if total, err := d.memory(); err != nil {
@@ -122,7 +161,7 @@ func overallStatus(checks []model.DoctorCheck) model.Status {
 		if check.Status == model.StatusError {
 			return model.StatusError
 		}
-		if check.Status == model.StatusFail {
+		if check.Status == model.StatusFail || check.Status == model.StatusBlocked {
 			status = model.StatusFail
 		} else if check.Status == model.StatusWarn && status == model.StatusPass {
 			status = model.StatusWarn
@@ -171,4 +210,18 @@ func linuxMemoryBytes() (uint64, error) {
 		}
 	}
 	return 0, fmt.Errorf("MemTotal was not present in /proc/meminfo")
+}
+
+// doctorPinnedRunner applies the resolved endpoint even to helpers that create
+// their own isolated request environment.
+type doctorPinnedRunner struct {
+	runner command.Runner
+	pinned bool
+}
+
+func (r doctorPinnedRunner) Run(ctx context.Context, req command.Request) model.CommandResult {
+	if r.pinned {
+		req = runtimepolicy.PinDocker(req)
+	}
+	return r.runner.Run(ctx, req)
 }

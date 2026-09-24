@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/noor15102002/cloud-forge/internal/command"
+	"github.com/noor15102002/cloud-forge/internal/runtimepolicy"
 	"github.com/noor15102002/cloud-forge/pkg/model"
 )
 
@@ -80,19 +81,18 @@ func (r backendCapacityReaders) check(ctx context.Context, runner command.Runner
 	if r.platform != "linux" {
 		return unsupported()
 	}
-	// DOCKER_CONTEXT takes precedence over DOCKER_HOST in the Docker CLI. With
-	// no host override, inspect the effective context without logging its name.
-	endpoint := r.getenv("DOCKER_HOST")
-	if endpoint == "" || r.getenv("DOCKER_CONTEXT") != "" {
-		result := runner.Run(ctx, command.Request{Name: "docker", Args: []string{"context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"}, Timeout: 10 * time.Second, OutputLimit: 4096})
-		if ctx.Err() != nil || failed(result) || result.Truncated || json.Unmarshal([]byte(result.Stdout), &endpoint) != nil {
+	// Service passes its already resolved/pinned runner. Standalone capacity
+	// checks use the same resolver; never re-read user selection mid-run.
+	if scoped, pinned := runner.(scopedRunner); !pinned || !scoped.dockerPinned {
+		selection := runtimepolicy.ResolveDocker(ctx, runner, r.getenv)
+		if selection.Status == "unsupported" {
+			return unsupported()
+		}
+		if selection.Status != "supported" {
 			return unobservable()
 		}
 	}
-	if endpoint != backendDockerEndpoint {
-		return unsupported()
-	}
-	pinned := scopedRunner{runner: runner, backendDocker: true}
+	pinned := scopedRunner{runner: runner, dockerPinned: true}
 	result := pinned.Run(ctx, command.Request{Name: "docker", Args: []string{"info", "--format", backendDockerInfoFormat}, Timeout: 10 * time.Second, OutputLimit: 16 * 1024})
 	var daemon struct {
 		Memory uint64 `json:"memory"`

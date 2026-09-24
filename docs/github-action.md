@@ -1,13 +1,21 @@
 # GitHub Action
 
-The released composite Action supports GitHub-hosted Linux/amd64 runners. Pin it
+The released composite Action supports GitHub-hosted Linux/amd64 runners. This
+setup becomes usable when the candidate and release assets are published; see
+[project status](project-status.md) before installing an unpublished candidate.
+Pin it
 to the full commit recorded in the prerelease's `release.json`. It installs the
 checksum-verified release archive, checks version/full commit/build date, installs
 pinned runtime tools, verifies one application and uploads JSON and Markdown.
 It does not rebuild CloudForge during a released invocation.
 
+Save this first workflow as `.github/workflows/cloudforge.yml` in the application
+repository. Replace `FULL_40_CHARACTER_RELEASE_COMMIT` with the exact 40-character
+`commit` from the published `release.json`; GitHub Actions does not expand a
+variable in `uses`. Keep the workflow name when adding the reporter below.
+
 ```yaml
-name: CloudForge
+name: CloudForge verification
 on:
   pull_request:
 permissions:
@@ -15,6 +23,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -30,7 +39,11 @@ Replace the placeholder with the exact released commit. A missing archive,
 checksum mismatch or mismatch between Action pin and binary producer stops
 execution. The Linux/amd64 runtime tool set is k3d 5.9.0, kubectl 1.35.5,
 Trivy 0.74.0 and k6 2.2.0; downloads are checked against upstream checksums.
-Docker is supplied by the disposable hosted runner.
+Docker Engine and its system Buildx plugin are supplied by the disposable hosted
+runner and their versions are observed. The default local Unix Docker endpoint
+is required. See [first run](first-run.md) for local installation and compatibility
+rules. A verification Action does not change the user's Docker context or use
+personal scanner policy.
 
 Local `uses: ./` builds a development binary when no candidate is supplied.
 The release qualification workflow supplies `candidate-path`, `candidate-version`,
@@ -57,7 +70,8 @@ Outputs are `report-json`,
 `report-markdown`, `binary` and `exit-code`. Keep the default
 `cloudforge-verification` artifact name when using the bundled PR reporter.
 
-Planner `SUPPORTED` is a scheduling disposition, not product maturity. The
+Planner `SUPPORTED` is a scheduling disposition, not product maturity. Capability
+maturity is shown separately. The
 [authoritative support table](supported-applications.md) separates the qualified
 HTTP core from experimental backend, worker, controlled and numerical features.
 
@@ -79,13 +93,65 @@ Dockerfiles and application code execute in the verification job. Give that job
 no write token, production credentials or secrets, and use a disposable runner.
 Runtime network policy does not make Docker build execution a hostile-code sandbox.
 
-The separate [`cloudforge-report.yml`](../.github/workflows/cloudforge-report.yml)
-workflow is loaded from the trusted default branch. It downloads the JSON artifact
-as untrusted data, builds its trusted renderer, rejects malformed/oversized reports,
-and regenerates Markdown. It never executes the pull request's code or trusts its
-uploaded Markdown. The reporter has only `actions: read`, `contents: read` and
-`pull-requests: write`. It updates one authenticated bot-owned comment and removes
-bot-owned duplicates; concurrency is grouped by pull request.
+Save this second workflow as `.github/workflows/cloudforge-report.yml` on your
+repository's **trusted default branch**. Its `workflows` entry exactly matches
+`name: CloudForge verification` above. If you rename one, change the other. Keep
+the default `cloudforge-verification` artifact name in both workflows. The
+repository's own internal reporter is tied to its integration workflow and is
+not the consumer template.
+
+Replace `FULL_40_CHARACTER_TRUSTED_REPORTER_COMMIT` with the full released
+CloudForge commit you trust to validate reports. For the first setup, use the same
+commit as the verification Action. This is an external subaction reference:
+the consumer repository does not need a local copy of CloudForge or its reporter.
+
+```yaml
+name: CloudForge pull request report
+on:
+  workflow_run:
+    workflows: [CloudForge verification]
+    types: [completed]
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+concurrency:
+  group: cloudforge-report-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
+  cancel-in-progress: true
+jobs:
+  report:
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0].number != null }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download the completed run's report as untrusted data
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cloudforge-verification
+          path: ${{ runner.temp }}/cloudforge-artifact
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Validate and publish the report
+        uses: noor15102002/cloud-forge/.github/actions/report@FULL_40_CHARACTER_TRUSTED_REPORTER_COMMIT
+        with:
+          report-path: ${{ runner.temp }}/cloudforge-artifact/verification.json
+          pull-request-number: ${{ github.event.workflow_run.pull_requests[0].number }}
+          github-token: ${{ github.token }}
+```
+
+The reporter definition comes from the trusted default branch and its renderer
+comes from the pinned CloudForge source. It checks no application code out,
+downloads only the triggering run's artifact as untrusted data, rejects malformed
+or oversized JSON, and regenerates Markdown. It never executes the pull request's
+code or trusts uploaded Markdown. It updates one authenticated bot-owned comment
+and removes bot-owned duplicates; concurrency is grouped by pull request.
+
+Reporting runs on completed verification jobs, including failed ones with retained
+reports. If verification ended before it could produce an artifact, the download
+fails visibly rather than posting fabricated evidence. If GitHub omits the pull
+request association from the event, the reporter skips; inspect the verification
+run's artifact directly. GitHub must allow Actions to write pull-request comments
+in the consumer repository. The verification job itself still has no write token.
 
 Normal reports include summary evidence and bounded findings. An oversized comment
 falls back to a compact summary, important evidence and a trusted workflow link

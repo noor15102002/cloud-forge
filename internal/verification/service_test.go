@@ -56,7 +56,7 @@ func TestRunProducesReadinessEvidenceAndCleansUp(t *testing.T) {
 	service := fixedService(runner)
 
 	outcome := service.Run(context.Background(), fixturePath(t), testOptions())
-	if outcome.ExitCode != 0 || outcome.Run.Status != model.StatusPass {
+	if outcome.ExitCode != 0 || outcome.Run.Status != model.StatusWarn {
 		t.Fatalf("unexpected outcome: %#v", outcome)
 	}
 	if len(outcome.Run.Evidence) != 13 || evidenceByID(outcome.Run.Evidence, "deployment-readiness").Measurements[0].Value != "2" {
@@ -935,6 +935,12 @@ func successfulCommand(request command.Request) model.CommandResult {
 		} else {
 			result.Stdout = versions[request.Name]
 		}
+	}
+	if request.Name == "docker" && containsArgument(request.Args, "context") {
+		result.Stdout = `"unix:///var/run/docker.sock"`
+	}
+	if request.Name == "docker" && containsArgument(request.Args, "buildx") && containsArgument(request.Args, "version") {
+		result.Stdout = "github.com/docker/buildx v0.21.2"
 	}
 	return result
 }

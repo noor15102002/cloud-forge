@@ -241,10 +241,10 @@ func TestBackendMemoryParsingRequiresAvailableAndRejectsOverflow(t *testing.T) {
 	}
 }
 
-func TestBackendRunnerPinsQualifiedDaemonWithoutChangingLegacySelection(t *testing.T) {
+func TestScopedRunnerPinsOnlyAnApprovedDaemon(t *testing.T) {
 	for _, backend := range []bool{false, true} {
 		for _, tool := range []string{"docker", "k3d", "trivy", "kubectl"} {
-			runner := scopedRunner{backendDocker: backend, dockerConfig: "/private/config", kubeconfig: "/private/kubeconfig", runner: runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
+			runner := scopedRunner{dockerPinned: backend, dockerConfig: "/private/config", kubeconfig: "/private/kubeconfig", runner: runnerFunc(func(_ context.Context, request command.Request) model.CommandResult {
 				values := map[string]string{}
 				for _, entry := range request.Env {
 					key, value, _ := strings.Cut(entry, "=")

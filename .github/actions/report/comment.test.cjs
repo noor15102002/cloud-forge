@@ -2,6 +2,10 @@
 
 const assert = require('node:assert/strict')
 const test = require('node:test')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const vm = require('node:vm')
 
 const {
   commentBody,
@@ -11,6 +15,35 @@ const {
   validateBody,
   validatePullRequestNumber
 } = require('./comment.cjs')
+
+test('external composite reporter resolves its own module instead of the nested action or consumer checkout', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cloudforge-external-reporter-'))
+  try {
+    const action = fs.readFileSync(path.join(__dirname, 'action.yml'), 'utf8')
+    assert.match(action, /CLOUDFORGE_REPORTER_ACTION_PATH: \$\{\{ github\.action_path \}\}/)
+    const script = action.split('        script: |\n')[1].split('\n').map(line => line.replace(/^          /, '')).join('\n')
+    fs.copyFileSync(path.join(__dirname, 'comment.cjs'), path.join(directory, 'comment.cjs'))
+    const markdown = path.join(directory, 'report.md')
+    fs.writeFileSync(markdown, `${marker}\n## Report\n**Status:** FAIL\n`)
+    const calls = []
+    const github = fakeGitHub([], calls)
+    const result = await vm.runInNewContext(`(async () => {${script}\n})()`, {
+      require, github,
+      process: {env: {
+        GITHUB_ACTION_PATH: '/unrelated/nested/github-script',
+        GITHUB_WORKSPACE: '/unrelated/consumer',
+        CLOUDFORGE_REPORTER_ACTION_PATH: directory,
+        CLOUDFORGE_MARKDOWN_PATH: markdown,
+        CLOUDFORGE_PR_NUMBER: '7'
+      }},
+      context: {repo: {owner: 'owner', repo: 'repo'}, payload: {}, serverUrl: 'https://github.com', runId: 123}
+    })
+    assert.equal(result, '99')
+    assert.ok(calls.some(call => call.operation === 'create'))
+  } finally {
+    fs.rmSync(directory, {recursive: true, force: true})
+  }
+})
 
 test('keeps rendered apostrophes, quotes, pipes, Unicode and neutralized markup unchanged', () => {
   const body = `${marker}\n## CloudForge verification\n\n**Status:** FAIL · **Application:** worker's "ready" — yes&#124;no &amp; &lt;unknown&gt;\n\n| Experiment | Status | Duration | Result |\n|---|---:|---:|---|\n| worker's "ready" | **FAIL** | 1 ms | one &#124; two &amp; three — &#64;team |\n`

@@ -38,6 +38,8 @@ def main():
         "reliability": base + ["scripts/pilot-reliability.py", str(args.binary), str(case_output)],
         "topology": base + ["scripts/pilot-topology.py", str(args.binary), str(case_output)],
         "probe-pacing": base + ["scripts/pilot-probe-pacing.py", str(args.binary), str(case_output)],
+        "scanner-policy": base + ["scripts/pilot-scanner-policy.py", str(args.binary), str(case_output)],
+        "docker-endpoint-policy": base + ["scripts/pilot-endpoint-policy.py", str(args.binary), str(case_output)],
     }
     for fixture in ("healthy-node", "healthy-python"):
         commands["core-" + fixture] = commands[fixture] + ["--core"]

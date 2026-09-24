@@ -43,7 +43,7 @@ func PlanText(w io.Writer, plan model.VerificationPlan) error {
 		}
 	}
 	for _, capability := range plan.Capabilities {
-		if _, err := fmt.Fprintf(w, "  %-10s %-25s %s\n", strings.ToUpper(capability.Disposition), terminalText(capability.Name), terminalText(capability.Reason)); err != nil {
+		if _, err := fmt.Fprintf(w, "  %-10s %-25s %s%s\n", strings.ToUpper(capability.Disposition), terminalText(capability.Name), maturityLabel(capability), terminalText(capability.Reason)); err != nil {
 			return err
 		}
 
@@ -114,7 +114,7 @@ func PlanMarkdown(w io.Writer, plan model.VerificationPlan) error {
 		return err
 	}
 	for _, c := range plan.Capabilities {
-		if _, err := fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s |\n", markdownText(c.Name), strings.ToUpper(c.Disposition), markdownText(c.Reason), markdownText(strings.Join(c.Prerequisites, ", ")), markdownText(c.Mutation), markdownText(c.RecoveryStrategy)); err != nil {
+		if _, err := fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s |\n", markdownText(c.Name), strings.ToUpper(c.Disposition), markdownText(maturityLabel(c)+c.Reason), markdownText(strings.Join(c.Prerequisites, ", ")), markdownText(c.Mutation), markdownText(c.RecoveryStrategy)); err != nil {
 			return err
 		}
 	}
@@ -142,6 +142,24 @@ func PlanMarkdown(w io.Writer, plan model.VerificationPlan) error {
 		}
 	}
 	return nil
+}
+
+func maturityLabel(capability model.Capability) string {
+	if maturity := model.RecordedMaturity(capability); maturity != "not_recorded" {
+		return "[" + strings.ToUpper(maturity) + "] "
+	}
+	return ""
+}
+
+func evidenceTitle(run model.VerificationRun, evidence model.Evidence) string {
+	if run.Plan != nil {
+		for _, c := range run.Plan.Capabilities {
+			if c.Name == evidence.ExperimentID && model.RecordedMaturity(c) == "experimental" {
+				return "[EXPERIMENTAL] " + evidence.Title
+			}
+		}
+	}
+	return evidence.Title
 }
 
 func buildText(w io.Writer, build *model.BuildSelection) error {
