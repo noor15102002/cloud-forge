@@ -16,25 +16,24 @@ PostgreSQL/pgvector, preparation, ClamAV, workers, controlled tests, HPA and num
 regression grading remain experimental. See [release qualification](docs/releasing.md)
 for the candidate gate and retained evidence requirements.
 
-**Publication is on hold for focused environment and first-run hardening.**
-The earlier Linux/amd64 `v0.1.0-alpha.1` archive from merged commit
-`977d863e94722bc236201d2deb16a856def7dee2` passed
-[installed-archive qualification](https://github.com/noor15102002/cloud-forge/actions/runs/36044464022):
-44 declared contracts covering 63 native invocations, with their original verdicts
-preserved. Its results remain valid for those bytes; they do not qualify the
-changed candidate. No public binary has been released. See the
-[current project status](docs/project-status.md) for immutable checksums, retained
-earlier attempts and experimental exclusions. Qualification applies to that
-archive and commit, not later documentation revisions.
+**[v0.1.0-alpha.1 is available as a prerelease](https://github.com/noor15102002/cloud-forge/releases/tag/v0.1.0-alpha.1).**
+The published Linux/amd64 archive comes from exactly
+`90f1c3c1560d4360b8ec90806154f65ea3d3d5a0` and passed
+[installed-archive qualification](https://github.com/noor15102002/cloud-forge/actions/runs/36069870214):
+47/47 declared contracts across 70 native CloudForge invocations. Deliberate
+application and operational faults retain their original `FAIL`, `BLOCKED` and `ERROR` outcomes;
+qualification success does not turn those observations into application success.
+The published assets were downloaded again and their hashes verified.
+See [project status](docs/project-status.md) for exact identities, preserved
+failed attempts and the next independent developer pilot.
 
 ## First run
 
 Follow the [first-run guide](docs/first-run.md) for the complete Linux/amd64
 archive installation, checksums, Docker Engine and system Buildx prerequisite,
 pinned tool installer and one small [HTTP-core example](examples/http-core).
-The release must be published before its download commands work. The example has
-two replicas, readiness and bounded GET load; it does not enable experimental
-HPA, control protocols, workers or backend preparation.
+The example has two replicas, readiness and bounded GET load; it does not enable
+experimental HPA, control protocols, workers or backend preparation.
 
 Runtime verification requires the supported local Docker socket plus Buildx,
 k3d, kubectl, k6 and Trivy. `doctor` checks availability and compatibility;
@@ -81,7 +80,10 @@ for its lifecycle images.
 
 Verification builds image A, scans that image with Trivy, creates an isolated k3d
 cluster, provisions declared test dependencies and measures readiness, lifecycle
-behavior and configured GET load. It records safe HTTP failure categories,
+behavior and configured GET load. Image import uses a private local archive capped
+at 4 GiB per image, targets an owned immutable node ID, verifies Docker-to-CRI
+image identity and cleans its staging files; it does not retry a failed transport.
+It records safe HTTP failure categories,
 request counts, sampling intervals and final health. A run with no failed probes
 cannot exclude shorter interruptions between samples. `downtime_ms` retains its
 historical meaning: the maximum sampled failure window, not a continuously

@@ -1,17 +1,34 @@
 # Prerelease identity and qualification
 
-The first public candidate is `v0.1.0-alpha.1`, Linux/amd64 only. Publication is
-conditional on the complete qualification record. The presence of a build or a
-historical green workflow is not release approval.
+[CloudForge v0.1.0-alpha.1](https://github.com/noor15102002/cloud-forge/releases/tag/v0.1.0-alpha.1) is a Linux/amd64 prerelease
+qualified for the bounded HTTP/Redis core. The published archive and binary are
+exactly the bytes qualified from `90f1c3c1560d4360b8ec90806154f65ea3d3d5a0` in
+[canonical run 36069870214](https://github.com/noor15102002/cloud-forge/actions/runs/36069870214):
+49/49 workflow jobs and 47/47 declared contracts across 70 native invocations.
+Expected native `FAIL`, `BLOCKED` and
+`ERROR` outcomes remain part of that evidence.
 
-`make release RELEASE_VERSION=v0.1.0-alpha.1 RELEASE_OUTPUT=/tmp/candidate`
+The public archive SHA-256 is `f3220070f3c6e7f707914d257e37340b251eb68e475d051e9d9506fd70df1c6d`; the contained binary is
+`bdcad6b55b8ae0d0c38cff7e3742cc2c95dff9d6de327e0a177a65b8c5c036d5`. Post-publication downloads matched the retained bytes and
+release metadata. [Project status](project-status.md) records all asset hashes,
+failed attempts and historical decisions. The tag identifies the binary's source;
+a subsequent documentation commit does not change that identity.
+The public [custody record](https://github.com/noor15102002/cloud-forge/releases/download/v0.1.0-alpha.1/PUBLICATION.json)
+and [qualification record](https://github.com/noor15102002/cloud-forge/releases/download/v0.1.0-alpha.1/QUALIFICATION.md)
+retain the publication checks and declared proof independently of Actions retention.
+
+The remaining sections describe the rules for qualifying future candidates.
+The presence of a build or a historical green workflow is not release approval.
+
+For a new version, for example,
+`make release RELEASE_VERSION=v0.1.0-alpha.2 RELEASE_OUTPUT=/tmp/candidate`
 requires a clean committed checkout and Go 1.27.1. It injects the version, full
 40-character HEAD commit and that commit's UTC timestamp. The timestamp is the
 reproducible build date (`SOURCE_DATE_EPOCH` convention), not a claim about the
 wall-clock time of every rebuild. The build uses fixed Linux/amd64 settings,
 disabled cgo, trimmed paths and deterministic archive metadata.
 
-The output contains `cloudforge_v0.1.0-alpha.1_linux_amd64.tar.gz`, `checksums.txt`
+The output contains `cloudforge_v0.1.0-alpha.2_linux_amd64.tar.gz`, `checksums.txt`
 and `release.json`. The archive contains the binary and license. The manifest
 records version, full commit, date, target, compiler version, source epoch,
 archive SHA-256 and binary SHA-256. `cloudforge version --format json` reports the
@@ -93,7 +110,13 @@ The gate includes:
   unrelated resource and kubeconfig sentinels; independent cleanup checks.
 - Separately retained experimental backend, worker, HPA and controlled-test
   evidence, outside the archive's qualified HTTP-core contract.
-- The packaged root Action using the same archive for Node and monorepo runs.
+- The packaged root Action using the same archive for the first-run HTTP example,
+  Node and selected monorepo runs.
+
+Local image import has a 4 GiB archive cap, private host/node staging, immutable
+owned-node targeting and exact Docker-to-CRI image verification. Failures and
+cancellation retain their original result and attempt bounded staging cleanup;
+there is no fallback to the previously failing transfer path.
 
 Focused Go regressions additionally cover malformed/truncated cleanup inventories,
 remaining resources, ownership collision, idempotency, temporary-directory failure,

@@ -1,21 +1,50 @@
-# Project status — September 24, 2026
+# Project status — 2026-09-24
 
-**Publication: ON HOLD pending qualification of the environment-hardening candidate.**
-CloudForge analyzes supported Node.js, TypeScript and Python HTTP workloads,
-builds and scans images, provisions disposable Kubernetes, tests readiness and
-lifecycle behavior, restores state, cleans owned resources and produces evidence.
-Selected monorepos and explicit Redis are included in the bounded core scope.
+**Publication: [v0.1.0-alpha.1 prerelease](https://github.com/noor15102002/cloud-forge/releases/tag/v0.1.0-alpha.1).**
+The qualified scope is the bounded Linux/amd64 HTTP/Redis core: analysis and
+single-workload selection, Docker build and image-A scan, disposable Kubernetes,
+readiness, lifecycle observations, bounded GET load, restoration, cleanup,
+evidence reporting and the GitHub Action. Experimental capabilities remain
+outside this release qualification.
 
-The earlier archive passed its declared qualification contracts in the prepared
-runner environment. Subsequent review found ambient Trivy policy and Docker
-endpoint-selection gaps at the developer-machine boundary. The current change
-isolates and records the scanner policy, pins the selected supported Docker
-endpoint, aligns doctor/Buildx prerequisites and labels experimental capabilities.
-It also supplies a core-only first-run example and consumer reporter instructions.
-A new archive must pass qualification before publication; the historical results
-below remain unchanged and do not qualify new bytes.
+## Published archive identity and custody
 
-## Replacement archives remain unpublished
+| Item | Verified value |
+| --- | --- |
+| Version / platform | `v0.1.0-alpha.1` / Linux/amd64 |
+| Exact source and tag commit | `90f1c3c1560d4360b8ec90806154f65ea3d3d5a0` |
+| Canonical qualification | [Run 36069870214](https://github.com/noor15102002/cloud-forge/actions/runs/36069870214) |
+| Workflow jobs | 49/49 |
+| Declared qualification contracts | 47/47 |
+| Native CloudForge invocations | 70 |
+| Preserved native outcomes | 21 WARN, 12 FAIL, 7 BLOCKED, 30 ERROR |
+| Public archive SHA-256 | `f3220070f3c6e7f707914d257e37340b251eb68e475d051e9d9506fd70df1c6d` |
+| Contained binary SHA-256 | `bdcad6b55b8ae0d0c38cff7e3742cc2c95dff9d6de327e0a177a65b8c5c036d5` |
+| Public `checksums.txt` SHA-256 | `3a93ae9834f267418c3dcab8a96221a23540e1eced8e6ff1ac4ef7b99cd45ddf` |
+| Public `release.json` SHA-256 | `a13708ddb68f35c40d603cd20b73dd6612f7d0d5319737fce267dcc7cceef729` |
+
+These are the qualified retained bytes, published without rebuilding and then
+downloaded again from the public prerelease. The release tag and manifest were
+checked against the same source commit, version and platform. Later documentation
+commits do not become the binary's qualified source.
+The durable [publication custody record](https://github.com/noor15102002/cloud-forge/releases/download/v0.1.0-alpha.1/PUBLICATION.json)
+and [qualification record](https://github.com/noor15102002/cloud-forge/releases/download/v0.1.0-alpha.1/QUALIFICATION.md)
+are attached to the public prerelease.
+
+Qualification contracts test expected behavior, including deliberate faults.
+Native `FAIL`, `BLOCKED` and `ERROR` results remain preserved; successful harness
+assertions do not convert them into `PASS`. Independent teardown does not change
+native cleanup failures. This release proves only the behavior and conditions
+recorded in its evidence, not general production readiness or business flows.
+
+The release includes fixed scanner policy isolation, supported local Docker
+endpoint enforcement, honest Buildx `NOT_VALIDATED` reporting, the core first-run
+example and explicit maturity labels. Local image import streams one private
+archive with a 4 GiB cap, uses the owned node's immutable ID, verifies the exact
+Docker-to-CRI image identity, and performs bounded staging cleanup. It does not
+retry the formerly failing k3d transfer path.
+
+## Earlier replacement archives remain unpublished
 
 [PR #58](https://github.com/noor15102002/cloud-forge/pull/58) merged the environment
 hardening as `b0b5eb02a32637a0a1043b92472ca2cca8954327`. Its
@@ -43,13 +72,12 @@ cancellation contracts passed. The focused run remains **NO GO**. Available
 records do not establish an OOM, daemon restart, disk-pressure or exact internal
 transfer cause.
 
-The next correction uses the pinned runtime's explicit local archive importer,
-with a 4 GiB streaming cap, private staging, immutable owned-node targeting,
-exact Docker-to-CRI identity verification and bounded staging cleanup. It does
-not retry the failing transport or reinterpret its previous errors. The Redis
-harness records all independent cases after proven cleanup, while cancellation
-or cleanup uncertainty stops scheduling. These changes need protected checks
-and a new exact archive qualification; neither earlier archive is a substitute.
+The published correction uses the pinned runtime's explicit local archive
+importer described above. The Redis harness preserves early execution errors,
+continues independent cases only after confirmed cleanup, and stops scheduling
+on cancellation or cleanup uncertainty. The later successful qualification does
+not establish the exact internal cause of an earlier transfer error and does not
+regrade either failed archive or the focused follow-up run.
 
 ## Historical qualified candidate (unpublished)
 
@@ -87,9 +115,9 @@ PASS. Live reporting reused the retained cleanup-fault report and preserved both
 the original application FAIL and cleanup ERROR; it was not another native run.
 
 Qualification applies only to the archive and commit above. A subsequent
-documentation commit does not become the qualified binary source. No public
-binary release or release tag has been published. These bytes are retained as
-historical evidence and will not be published as the environment-hardened alpha.
+documentation commit does not become the qualified binary source. That archive
+was never publicly released. Those bytes remain historical evidence and are not the
+published environment-hardened alpha.
 
 ## Earlier attempts remain evidence
 
@@ -124,10 +152,13 @@ numerical regression grading remain experimental; this archive gate does not
 qualify them. Shared execution, observation, identity, artifact and cleanup
 defects remain release blockers regardless of which experiment exposes them.
 
-The next step is exact-archive qualification of the environment-hardening change,
-including hostile ambient scanner settings, rejected Docker endpoint selection
-and the first-run example. Publication follows only after that gate, with a bounded
-support statement, durable evidence and independently checked public downloads.
-No private Peaxis application was
-changed or executed during this qualification. See
-[release qualification](releasing.md) and [support boundaries](supported-applications.md).
+The next step is a small independent onboarding pilot with 3–5 developers using
+the published archive and first-run guide. That pilot is still pending: record
+installation/prerequisite friction, whether the support boundary is understood,
+the usefulness of evidence and cleanup behavior. Qualification on prepared
+runners does not establish effortless setup on every developer machine.
+
+No private Peaxis application was changed or executed during this qualification.
+The alpha remains scoped to the published [support boundaries](supported-applications.md);
+new workload categories and dependency providers are not part of this release.
+See [release qualification](releasing.md) for the retained proof requirements.

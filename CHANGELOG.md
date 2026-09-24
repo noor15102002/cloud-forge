@@ -3,13 +3,20 @@
 All notable changes will be documented here. CloudForge follows Semantic
 Versioning once releases begin.
 
-## Unreleased — narrow prerelease hardening
+## v0.1.0-alpha.1 — 2026-09-24
+
+First public prerelease, limited to the qualified Linux/amd64 HTTP/Redis core.
+[Release](https://github.com/noor15102002/cloud-forge/releases/tag/v0.1.0-alpha.1) ·
+[exact source](https://github.com/noor15102002/cloud-forge/commit/90f1c3c1560d4360b8ec90806154f65ea3d3d5a0) ·
+[qualification](https://github.com/noor15102002/cloud-forge/actions/runs/36069870214).
+Expected native fault outcomes remain preserved; qualification success is not a
+general production-readiness claim.
 
 - Update the networking dependency for GO-2026-5942; the affected DNS package
   was outside CloudForge's imported/called code paths.
 
-- Import one bounded private image archive through the runtime's explicit local
-  importer; preserve failures, verify owned-node and exact image identities, and
+- Import one private image archive with a 4 GiB streaming cap through the runtime's
+  explicit local importer; preserve failures, verify owned-node and exact image identities, and
   remove staging files after success, failure or cancellation.
 - Continue independent Redis qualification cases only after confirmed cleanup;
   retain early execution errors and fail the complete qualification contract.
@@ -25,8 +32,8 @@ Versioning once releases begin.
   and add a core-only first-run example plus complete consumer Action instructions.
 - Separate bounded HTTP-core qualification from experimental HPA/worker results;
   retain explicit fixture profiles and original failures without regrading them.
-- Retain allowlisted public-fixture Docker prerequisite and k3d import diagnostics
-  without retries, deadline changes or application log capture.
+- Retain allowlisted public-fixture Docker prerequisite and local image-import
+  diagnostics without retries, deadline changes or application log capture.
 - Reject unusable, ambiguous or mismatched Trivy observations as ERROR; retain
   collision-safe normalized package findings and concise image-A scan summaries.
 - Establish invocation ownership before cleanup and verify complete removal,
@@ -38,7 +45,8 @@ Versioning once releases begin.
 - Preserve all eight historical report schemas, reject duplicate keys, improve
   Markdown/comments and treat numerical performance comparisons as advisory.
 - Prepare reproducible, stamped Linux/amd64 archives and an exact-artifact
-  qualification workflow. Publication remains conditional on candidate evidence.
+  qualification workflow; publish and re-download the exact qualified bytes
+  without rebuilding.
 
 Earlier entries below describe historical implementation milestones. The current
 release promise is defined by [the support and maturity table](docs/supported-applications.md),

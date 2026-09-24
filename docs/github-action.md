@@ -1,18 +1,17 @@
 # GitHub Action
 
-The released composite Action supports GitHub-hosted Linux/amd64 runners. This
-setup becomes usable when the candidate and release assets are published; see
-[project status](project-status.md) before installing an unpublished candidate.
-Pin it
-to the full commit recorded in the prerelease's `release.json`. It installs the
+The released composite Action supports GitHub-hosted Linux/amd64 runners. The
+examples below pin the exact [v0.1.0-alpha.1 prerelease](https://github.com/noor15102002/cloud-forge/releases/tag/v0.1.0-alpha.1)
+source commit recorded in `release.json`:
+`90f1c3c1560d4360b8ec90806154f65ea3d3d5a0`. It installs the
 checksum-verified release archive, checks version/full commit/build date, installs
 pinned runtime tools, verifies one application and uploads JSON and Markdown.
 It does not rebuild CloudForge during a released invocation.
 
 Save this first workflow as `.github/workflows/cloudforge.yml` in the application
-repository. Replace `FULL_40_CHARACTER_RELEASE_COMMIT` with the exact 40-character
-`commit` from the published `release.json`; GitHub Actions does not expand a
-variable in `uses`. Keep the workflow name when adding the reporter below.
+repository. The literal full commit in `uses` matches this prerelease;
+GitHub Actions does not expand a variable there. Keep the workflow name when
+adding the reporter below.
 
 ```yaml
 name: CloudForge verification
@@ -28,15 +27,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: noor15102002/cloud-forge@FULL_40_CHARACTER_RELEASE_COMMIT
+      - uses: noor15102002/cloud-forge@90f1c3c1560d4360b8ec90806154f65ea3d3d5a0
         with:
           release-version: v0.1.0-alpha.1
           path: .
           artifact-name: cloudforge-verification
 ```
 
-Replace the placeholder with the exact released commit. A missing archive,
-checksum mismatch or mismatch between Action pin and binary producer stops
+A missing archive, checksum mismatch or mismatch between Action pin and binary producer stops
 execution. The Linux/amd64 runtime tool set is k3d 5.9.0, kubectl 1.35.5,
 Trivy 0.74.0 and k6 2.2.0; downloads are checked against upstream checksums.
 Docker Engine and its system Buildx plugin are supplied by the disposable hosted
@@ -100,10 +98,10 @@ the default `cloudforge-verification` artifact name in both workflows. The
 repository's own internal reporter is tied to its integration workflow and is
 not the consumer template.
 
-Replace `FULL_40_CHARACTER_TRUSTED_REPORTER_COMMIT` with the full released
-CloudForge commit you trust to validate reports. For the first setup, use the same
-commit as the verification Action. This is an external subaction reference:
-the consumer repository does not need a local copy of CloudForge or its reporter.
+The trusted reporter below is pinned to the same released CloudForge commit.
+Review and update that trust decision explicitly when adopting a later release.
+This external subaction reference works from the consumer repository without a
+local copy of CloudForge or its reporter.
 
 ```yaml
 name: CloudForge pull request report
@@ -132,12 +130,18 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
       - name: Validate and publish the report
-        uses: noor15102002/cloud-forge/.github/actions/report@FULL_40_CHARACTER_TRUSTED_REPORTER_COMMIT
+        uses: noor15102002/cloud-forge/.github/actions/report@90f1c3c1560d4360b8ec90806154f65ea3d3d5a0
         with:
           report-path: ${{ runner.temp }}/cloudforge-artifact/verification.json
           pull-request-number: ${{ github.event.workflow_run.pull_requests[0].number }}
           github-token: ${{ github.token }}
 ```
+
+The root verification Action installs the published archive. The ordinary trusted
+reporter separately builds a rendering-only executable from its pinned CloudForge
+source using Go 1.27.1; it does not rebuild or replace the published runtime
+archive. Internal qualification can instead supply the explicit canonical
+candidate inputs to the reporter.
 
 The reporter definition comes from the trusted default branch and its renderer
 comes from the pinned CloudForge source. It checks no application code out,
