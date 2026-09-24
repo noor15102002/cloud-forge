@@ -6,7 +6,7 @@ toolchain go1.27.1
 
 require (
 	github.com/moby/buildkit v0.31.1
-	github.com/pelletier/go-toml/v2 v2.3.1
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.1
 	github.com/yuin/goldmark v1.7.13
