@@ -38,10 +38,86 @@ SEVERITIES = "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
 POLICY = {"scan_policy": "cloudforge-default-v1", "scan_scanners": "vuln", "scan_severities": SEVERITIES,
           "scan_ignore_policy": "none", "scan_include_unfixed": "true", "scan_ambient_configuration": "disabled",
           "scan_ambient_ignore_files": "disabled", "scan_cache": "private_fresh", "scan_image_source": "docker"}
+INVENTORY_ENTRIES = 256
+INVENTORY_DEPTH = 8
 
 
 def write_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def runtime_inventory(root):
+    """Bounded metadata only; never open file contents or follow symbolic links.
+
+    Directory descriptors and O_NOFOLLOW keep concurrent replacement with a
+    symlink from making this observer inspect an unrelated path. An incomplete
+    observation cannot establish that the runtime directory is empty.
+    """
+    result = {"schema_version": "scanner-runtime-inventory-v1", "scope": "private_public_fixture_runtime_directory",
+              "started_at": guards.observer_timestamp(), "entry_limit": INVENTORY_ENTRIES, "depth_limit": INVENTORY_DEPTH,
+              "file_contents_read": False, "symlink_targets_read": False, "entries": [], "errors": [], "truncated": False}
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+    def file_type(mode):
+        for predicate, name in ((stat.S_ISREG, "regular"), (stat.S_ISDIR, "directory"), (stat.S_ISLNK, "symlink"),
+                                (stat.S_ISFIFO, "fifo"), (stat.S_ISSOCK, "socket"), (stat.S_ISCHR, "character_device"), (stat.S_ISBLK, "block_device")):
+            if predicate(mode):
+                return name
+        return "other"
+
+    def visit(descriptor, prefix, depth):
+        remaining = INVENTORY_ENTRIES - len(result["entries"])
+        names = []
+        try:
+            with os.scandir(descriptor) as stream:
+                for entry in stream:
+                    if len(names) >= remaining:
+                        result["truncated"] = True
+                        break
+                    names.append(entry.name)
+        except OSError as error:
+            result["errors"].append({"path": prefix or ".", "operation": "list_directory", "errno": error.errno})
+            return
+        children = []
+        for name in sorted(names):
+            path = prefix + "/" + name if prefix else name
+            try:
+                info = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            except OSError as error:
+                result["errors"].append({"path": path, "operation": "metadata", "errno": error.errno})
+                continue
+            kind = file_type(info.st_mode)
+            result["entries"].append({"path": path, "type": kind, "size_bytes": info.st_size,
+                                      "mode": oct(stat.S_IMODE(info.st_mode))})
+            if kind == "directory":
+                children.append((name, path))
+        for name, path in children:
+            if depth >= INVENTORY_DEPTH or len(result["entries"]) >= INVENTORY_ENTRIES:
+                result["truncated"] = True
+                continue
+            child = None
+            try:
+                child = os.open(name, flags, dir_fd=descriptor)
+                visit(child, path, depth + 1)
+            except OSError as error:
+                result["errors"].append({"path": path, "operation": "open_directory_nofollow", "errno": error.errno})
+            finally:
+                if child is not None:
+                    os.close(child)
+
+    descriptor = None
+    try:
+        descriptor = os.open(root, flags)
+        visit(descriptor, "", 0)
+    except OSError as error:
+        result["errors"].append({"path": ".", "operation": "open_root_nofollow", "errno": error.errno})
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    result["complete"] = not result["errors"] and not result["truncated"]
+    result["empty"] = result["complete"] and not result["entries"]
+    result["finished_at"] = guards.observer_timestamp()
+    return result
 
 
 def extract_package(data, destination):
@@ -290,7 +366,9 @@ def main():
             result = run_observed([str(binary), "verify", str(app), "--format", "json"], output / "verification.json", timeout=1200, env=environment, own_session=True)
         finally:
             os.chdir(previous)
-            write_json(output / "temporary-cleanup.json", {"runtime_directory_empty": not any(runtime.iterdir()),
+            inventory = runtime_inventory(runtime)
+            write_json(output / "runtime-inventory.json", inventory)
+            write_json(output / "temporary-cleanup.json", {"runtime_directory_empty": inventory["empty"],
                        "original_fixture_unchanged": hashes(ROOT / "testdata/healthy-node") == original,
                        "selected_fixture_unchanged": hashes(app) == selected})
         raw_path, raw_scan = read_real_observation(output)

@@ -7,7 +7,7 @@ on:
         description: Run the original fault matrix or focused environment-hardening checks
         type: choice
         default: all
-        options: [all, environment-hardening]
+        options: [all, environment-hardening, scanner-policy]
 
 permissions:
   contents: read
@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        case: ${{ fromJSON(inputs.scope == 'environment-hardening' && '["scanner-policy","docker-endpoint-policy","operational-scanner-zero","operational-scanner-findings","operational-startup-failure"]' || '["operational-scanner-null","operational-scanner-empty","operational-scanner-unsupported","operational-scanner-truncated","operational-scanner-case-alias","operational-scanner-zero","operational-scanner-findings","operational-scanner-subject","operational-scanner-exit","operational-docker-unavailable","operational-disk-full","operational-registry-503","operational-node-observation","operational-startup-failure","restoration-failure","operational-cleanup-inventory","cleanup-owned-remnant","cleanup-already-absent","cleanup-inventory-malformed","cleanup-inventory-truncated","cleanup-remove-failure","cleanup-same-name-unrelated","cleanup-foreign-owner","cleanup-replaced-identity","cleanup-builder-fallback"]') }}
+        case: ${{ fromJSON(inputs.scope == 'scanner-policy' && '["scanner-policy"]' || inputs.scope == 'environment-hardening' && '["scanner-policy","docker-endpoint-policy","operational-scanner-zero","operational-scanner-findings","operational-startup-failure"]' || '["operational-scanner-null","operational-scanner-empty","operational-scanner-unsupported","operational-scanner-truncated","operational-scanner-case-alias","operational-scanner-zero","operational-scanner-findings","operational-scanner-subject","operational-scanner-exit","operational-docker-unavailable","operational-disk-full","operational-registry-503","operational-node-observation","operational-startup-failure","restoration-failure","operational-cleanup-inventory","cleanup-owned-remnant","cleanup-already-absent","cleanup-inventory-malformed","cleanup-inventory-truncated","cleanup-remove-failure","cleanup-same-name-unrelated","cleanup-foreign-owner","cleanup-replaced-identity","cleanup-builder-fallback"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

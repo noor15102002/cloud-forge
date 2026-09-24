@@ -60,6 +60,51 @@ def native_report():
 
 
 class ScannerPolicyPilotTests(unittest.TestCase):
+    def test_runtime_inventory_records_metadata_without_following_links_or_opening_fifo(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime, outside = root / "runtime", root / "outside"
+            runtime.mkdir()
+            outside.mkdir()
+            (outside / "must-not-be-observed").write_text("private contents must not be read")
+            (runtime / "external-link").symlink_to(outside, target_is_directory=True)
+            os.mkfifo(runtime / "pipe")
+            (runtime / "nested").mkdir()
+            (runtime / "nested/remaining-file").write_bytes(b"public fixture metadata")
+            with patch.object(Path, "read_bytes", side_effect=AssertionError("inventory must not read contents")):
+                result = pilot.runtime_inventory(runtime)
+            entries = {entry["path"]: entry for entry in result["entries"]}
+            self.assertTrue(result["complete"])
+            self.assertFalse(result["empty"])
+            self.assertFalse(result["file_contents_read"])
+            self.assertFalse(result["symlink_targets_read"])
+            self.assertEqual(entries["external-link"]["type"], "symlink")
+            self.assertEqual(entries["pipe"]["type"], "fifo")
+            self.assertEqual(entries["nested/remaining-file"]["size_bytes"], len(b"public fixture metadata"))
+            self.assertNotIn("must-not-be-observed", json.dumps(result))
+
+    def test_runtime_inventory_is_bounded_and_incomplete_is_never_empty(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.assertTrue(pilot.runtime_inventory(root)["empty"])
+            for number in range(pilot.INVENTORY_ENTRIES + 1):
+                (root / f"entry-{number:03}").touch()
+            result = pilot.runtime_inventory(root)
+            self.assertEqual(len(result["entries"]), pilot.INVENTORY_ENTRIES)
+            self.assertTrue(result["truncated"])
+            self.assertFalse(result["complete"])
+            self.assertFalse(result["empty"])
+
+    def test_runtime_inventory_rejects_a_symlink_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "outside").mkdir()
+            (root / "link").symlink_to(root / "outside", target_is_directory=True)
+            result = pilot.runtime_inventory(root / "link")
+            self.assertFalse(result["complete"])
+            self.assertFalse(result["empty"])
+            self.assertEqual(result["errors"][0]["operation"], "open_root_nofollow")
+
     def test_fixture_adds_only_verified_inert_package_and_copy_instruction(self):
         data = archive()
         with tempfile.TemporaryDirectory() as temporary, pinned(data):
@@ -206,6 +251,7 @@ class ScannerPolicyPilotTests(unittest.TestCase):
             self.assertEqual((output / "verification.stderr.txt").read_text(), "original native error\n")
             self.assertEqual(json.loads((output / "verification.exit.json").read_text())["exit_code"], 7)
             self.assertFalse((output / "scanner-policy-result.json").exists())
+            self.assertTrue(json.loads((output / "runtime-inventory.json").read_text())["complete"])
 
 
 if __name__ == "__main__":
