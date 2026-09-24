@@ -43,10 +43,20 @@ bindings, secret omission, API errors, cancellation and cleanup.
 ## Corrections found during validation
 
 A k3d tools-mode import could return success while the image was unavailable in
-the node. CloudForge now waits for cluster readiness, uses direct import mode and
-confirms the image through the node CRI. Unavailable test images are execution
+the node. At this milestone CloudForge added a cluster-readiness wait, direct
+import mode and a node CRI confirmation. Unavailable test images were execution
 errors, without an application startup finding. Public fixture import diagnostics
 are bounded and exclude credential retrieval and application logs.
+
+During September 24 prerelease qualification, the direct importer returned a
+closed Docker connection/pipe error before a Redis failure case could start.
+The [retained run](https://github.com/noor15102002/cloud-forge/actions/runs/36057389830)
+remains unqualified: native ERROR and successful cleanup are separate observations.
+The current correction uses `tools-node` to stage the archive in the owned image
+volume, rejects importer errors even when k3d logs them with exit zero, and checks
+the exact Docker config digest against a bounded CRI identity response. It adds
+no import retry and does not reinterpret historical failures. Runtime qualification
+of the corrected archive is still required.
 
 A final canceled HTTP request could erase the previously observed response code.
 Readiness measurements now retain the last HTTP response while semantic failure

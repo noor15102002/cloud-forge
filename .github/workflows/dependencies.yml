@@ -2,6 +2,13 @@ name: Dependency runtime
 
 on:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Declared scope for the Redis reference fixtures
+        required: true
+        default: full
+        type: choice
+        options: [full, core]
 
 permissions:
   contents: read
@@ -28,11 +35,17 @@ jobs:
       - name: Verify Redis dependencies and semantic readiness
         env:
           FIXTURE: ${{ matrix.fixture }}
+          PROFILE: ${{ inputs.profile }}
         run: |
           go build -trimpath -o /tmp/cloudforge ./cmd/cloudforge
           RECORD_CASE=redis-node
           if [ "$FIXTURE" = healthy-python-redis ]; then RECORD_CASE=redis-python; fi
-          python3 scripts/qualification-run.py --case "$RECORD_CASE" --binary /tmp/cloudforge --evidence "$RUNNER_TEMP/dependency-evidence" --records "$RUNNER_TEMP/qualification-records" --timeout 4500 -- python3 scripts/pilot-dependencies.py /tmp/cloudforge "$FIXTURE" "$RUNNER_TEMP/dependency-evidence"
+          extra=()
+          if [ "$PROFILE" = core ]; then
+            RECORD_CASE="core-$RECORD_CASE"
+            extra+=(--core)
+          fi
+          python3 scripts/qualification-run.py --case "$RECORD_CASE" --binary /tmp/cloudforge --evidence "$RUNNER_TEMP/dependency-evidence" --records "$RUNNER_TEMP/qualification-records" --timeout 4500 -- python3 scripts/pilot-dependencies.py /tmp/cloudforge "$FIXTURE" "$RUNNER_TEMP/dependency-evidence" "${extra[@]}"
       - name: Independently check cleanup before any upload
         if: always()
         timeout-minutes: 3

@@ -290,6 +290,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 	builderAttempted := false
 	k3dClient := k3d.New(scoped)
 	k3dClient.SetOwnership(dockerClient.OwnershipToken())
+	k3dClient.SetWorkspace(temporary)
 	kubernetesClient := kubernetes.New(scoped)
 	clusterAttempted := false
 	clusterCreated := false
@@ -513,7 +514,7 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		return out
 	}
 	if result := k3dClient.ImportImage(ctx, plan.clusterName, plan.image); failed(result) {
-		out.addCommandDiagnostic("image_import_failed", "The application image could not be confirmed in the isolated node after import.", result)
+		out.addCommandDiagnostic("image_import_failed", "The application image could not be safely imported and confirmed in the isolated node.", result)
 		return out
 	}
 	if !s.startDependencies(ctx, kubernetesClient, plan, temporary, &out) {
@@ -1366,7 +1367,12 @@ func (out *Outcome) addCommandDiagnostic(code, message string, result model.Comm
 	})
 }
 
-func commandGuidance(result model.CommandResult, err error) string {
+func commandGuidance(result model.CommandResult, err error) (guidance string) {
+	defer func() {
+		if strings.Contains(result.Stderr, k3d.ImportCleanupWarning) {
+			guidance += " " + k3d.ImportCleanupWarning
+		}
+	}()
 	if err != nil {
 		return err.Error()
 	}
@@ -1387,7 +1393,7 @@ func commandGuidance(result model.CommandResult, err error) string {
 	case model.FailureExit:
 		return fmt.Sprintf("%s exited with code %d; run cloudforge doctor and inspect the tool's local logs.", result.Command, result.ExitCode)
 	default:
-		return fmt.Sprintf("%s could not be executed; run cloudforge doctor.", result.Command)
+		return fmt.Sprintf("%s could not be executed or observed reliably; run cloudforge doctor and inspect the tool's local logs.", result.Command)
 	}
 }
 

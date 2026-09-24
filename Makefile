@@ -41,10 +41,12 @@ actions:
 	python3 scripts/test-pilot-cleanup-faults.py
 	python3 scripts/test-pilot-restoration.py
 	python3 scripts/test-core-qualification.py
+	python3 scripts/test-pilot-dependencies.py
 	python3 scripts/test-attempt5-gates.py
 	python3 scripts/test-worker-heartbeat-observation.py
 	python3 scripts/test-pilot-cancellation.py
 	python3 scripts/test-pilot-reliability-import.py
+	python3 scripts/test-local-import-observer.py
 	actionlint
 
 external: build

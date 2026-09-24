@@ -24,6 +24,11 @@ func (r scopedRunner) Run(ctx context.Context, req command.Request) model.Comman
 	if req.Name == "kubectl" || req.Name == "k3d" {
 		req.Env = append(req.Env, "KUBECONFIG="+r.kubeconfig)
 	}
+	if req.Name == "k3d" {
+		// Use the helpers belonging to the observed k3d version; caller image
+		// overrides must not replace code in this run's private infrastructure.
+		req.Env = append(req.Env, "K3D_IMAGE_TOOLS=", "K3D_IMAGE_LOADBALANCER=", "K3D_HELPER_IMAGE_TAG=")
+	}
 	if r.dockerConfig != "" {
 		req.Env = append(req.Env, "DOCKER_CONFIG="+r.dockerConfig, "BUILDX_CONFIG="+filepath.Join(r.dockerConfig, "buildx"), "BUILDX_BUILDER=")
 	}

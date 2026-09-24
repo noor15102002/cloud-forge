@@ -20,6 +20,7 @@ const NodeImage = "rancher/k3s:v1.35.5-k3s1"
 type Client struct {
 	runner         command.Runner
 	ownershipToken string
+	workspace      string
 }
 
 // New creates a k3d CLI adapter.
@@ -27,6 +28,9 @@ func New(runner command.Runner) *Client { return &Client{runner: runner} }
 
 // SetOwnership adds this invocation's private token to every created runtime node.
 func (c *Client) SetOwnership(token string) { c.ownershipToken = token }
+
+// SetWorkspace supplies the already owned private verification directory.
+func (c *Client) SetWorkspace(directory string) { c.workspace = directory }
 
 // Create creates a minimal cluster, publishes one NodePort on loopback, and waits for its API.
 func (c *Client) Create(ctx context.Context, name string, nodePort int) model.CommandResult {
@@ -56,27 +60,6 @@ func (c *Client) CreateWithMemory(ctx context.Context, name string, nodePort int
 		Name: "k3d", Args: args,
 		Timeout: 2 * time.Minute, OutputLimit: 128 * 1024,
 	})
-}
-
-// ImportImage loads a local image into every node in a cluster.
-func (c *Client) ImportImage(ctx context.Context, cluster, image string) model.CommandResult {
-	imported := c.runner.Run(ctx, command.Request{
-		Name: "k3d", Args: []string{"image", "import", image, "--cluster", cluster, "--mode", "direct"},
-		Timeout: 3 * time.Minute, OutputLimit: 128 * 1024,
-	})
-	if imported.ExitCode != 0 || imported.FailureType != model.FailureNone {
-		return imported
-	}
-	// Use the direct importer because k3d 5.9's tools importer can log a node
-	// import error but return success. Independently confirm the image in the
-	// single server's CRI before deploying either image.
-	// The generated cluster name targets only this run's node; no shell is used.
-	checked := c.runner.Run(ctx, command.Request{
-		Name: "docker", Args: []string{"exec", "k3d-" + cluster + "-server-0", "crictl", "inspecti", image},
-		Timeout: 15 * time.Second, OutputLimit: 64 * 1024,
-	})
-	checked.DurationMS += imported.DurationMS
-	return checked
 }
 
 // Delete removes a CloudForge-owned cluster.

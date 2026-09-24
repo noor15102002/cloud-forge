@@ -231,7 +231,7 @@ func (s *Service) runRollingDeployment(ctx context.Context, k3dClient *k3d.Clien
 		return lifecycleExecutionError("rolling-deployment", title, "rollout_image_build_failed", "CloudForge could not build the version B image.", commandGuidance(buildResult, nil), trafficObservation{}, model.Measurement{Name: "version_b_build_duration_ms", Value: strconv.FormatInt(buildResult.DurationMS, 10), Unit: "ms"})
 	}
 	if result := k3dClient.ImportImage(ctx, current.clusterName, current.rolloutImage); failed(result) {
-		return lifecycleExecutionError("rolling-deployment", title, "rollout_image_import_failed", "k3d could not import the version B image.", commandGuidance(result, nil), trafficObservation{})
+		return lifecycleExecutionError("rolling-deployment", title, "rollout_image_import_failed", "The isolated runtime could not import and confirm the version B image.", commandGuidance(result, nil), trafficObservation{})
 	}
 	// Building/importing B can change node capacity or application health after
 	// prepareExperiment's baseline check. Re-establish the intended A baseline

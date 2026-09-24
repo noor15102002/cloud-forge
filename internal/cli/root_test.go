@@ -192,6 +192,11 @@ func cliTestRunner(vulnerable bool) cliRunnerFunc {
 			return result
 		}
 		result := model.CommandResult{Command: request.Name, Arguments: request.Args}
+		if request.StdoutFile != nil {
+			if err := os.WriteFile(request.StdoutFile.Path, []byte("test image archive"), 0o600); err != nil {
+				result.ExitCode, result.FailureType = -1, model.FailureExecution
+			}
+		}
 		if request.Name == "docker" && strings.Contains(strings.Join(request.Args, " "), ".RepoDigests") {
 			result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" []`
 		}
@@ -229,6 +234,12 @@ func cliTestRunner(vulnerable bool) cliRunnerFunc {
 			} else {
 				result.Stdout = validTrivyReport(request)
 			}
+		}
+		if request.Name == "docker" && slices.Contains(request.Args, "{{json .Id}}") {
+			result.Stdout = `"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`
+		}
+		if request.Name == "docker" && slices.Contains(request.Args, "inspecti") {
+			result.Stdout = `{"id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
 		}
 		if request.Name == "k6" && slices.Contains(request.Args, "run") {
 			result.Stdout = `{"metrics":{"http_reqs":{"values":{"count":200,"rate":10}},"http_req_failed":{"values":{"rate":0}},"http_req_duration":{"values":{"med":10,"p(95)":20,"p(99)":30}}}}`

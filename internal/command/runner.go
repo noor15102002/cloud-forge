@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/noor15102002/cloud-forge/pkg/model"
@@ -24,6 +25,10 @@ type Request struct {
 	// ClearEnv opts into an environment consisting only of Env. The default
 	// inherits the caller environment for backwards-compatible tool execution.
 	ClearEnv bool
+	// StdoutFile streams binary stdout to an exclusive private file instead of
+	// including it in the result. The caller owns the parent directory and the
+	// successfully completed file; failed or incomplete captures are removed.
+	StdoutFile *OutputFile
 }
 
 // Runner executes commands and returns normalized results.
@@ -48,6 +53,17 @@ func (ExecRunner) Run(ctx context.Context, req Request) model.CommandResult {
 
 	stdout := &limitedBuffer{limit: limit}
 	stderr := &limitedBuffer{limit: limit}
+	var capture *fileCapture
+	if req.StdoutFile != nil {
+		var err error
+		capture, err = openOutputFile(*req.StdoutFile, cancel)
+		if err != nil {
+			return redactOutputPath(model.CommandResult{
+				Command: req.Name, Arguments: append([]string(nil), req.Args...),
+				ExitCode: -1, FailureType: model.FailureExecution,
+			}, req.StdoutFile.Path, limit)
+		}
+	}
 	// #nosec G204 -- callers provide executable and argument arrays; no shell is involved.
 	cmd := exec.CommandContext(commandCtx, req.Name, req.Args...)
 	cmd.Dir = req.Dir
@@ -59,6 +75,9 @@ func (ExecRunner) Run(ctx context.Context, req Request) model.CommandResult {
 	}
 	configureCancellation(cmd)
 	cmd.Stdout = stdout
+	if capture != nil {
+		cmd.Stdout = capture.output
+	}
 	cmd.Stderr = stderr
 	started := time.Now()
 	err := cmd.Run()
@@ -68,14 +87,36 @@ func (ExecRunner) Run(ctx context.Context, req Request) model.CommandResult {
 		DurationMS: time.Since(started).Milliseconds(),
 		Truncated:  stdout.truncated || stderr.truncated,
 	}
-	if err == nil {
-		return result
+	if err != nil {
+		classifyFailure(commandCtx, &result, err)
+		if cmd.ProcessState != nil {
+			// An output-copy error may occur after a successful child exit.
+			// Keep the observed exit even when the capture itself is invalid.
+			result.ExitCode = cmd.ProcessState.ExitCode()
+		}
 	}
+	if capture != nil {
+		result.Stdout = ""
+		result.Truncated = result.Truncated || capture.output.truncated
+		result = redactOutputPath(result, req.StdoutFile.Path, limit)
+		// A sink failure cancels the process group itself. Preserve that cause
+		// rather than misreporting the internal cancellation as a user request.
+		if capture.output.err != nil || (err == nil && result.Truncated) {
+			result.FailureType = model.FailureExecution
+		}
+		if finishErr := capture.finish(result.FailureType == model.FailureNone && !result.Truncated); finishErr != nil && result.FailureType == model.FailureNone {
+			result.FailureType = model.FailureExecution
+		}
+	}
+	return result
+}
+
+func classifyFailure(ctx context.Context, result *model.CommandResult, err error) {
 	result.ExitCode = -1
 	switch {
-	case errors.Is(commandCtx.Err(), context.DeadlineExceeded):
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		result.FailureType = model.FailureTimeout
-	case errors.Is(commandCtx.Err(), context.Canceled):
+	case errors.Is(ctx.Err(), context.Canceled):
 		result.FailureType = model.FailureCanceled
 	default:
 		var exitErr *exec.ExitError
@@ -88,6 +129,21 @@ func (ExecRunner) Run(ctx context.Context, req Request) model.CommandResult {
 		} else {
 			result.FailureType = model.FailureExecution
 		}
+	}
+}
+
+func redactOutputPath(result model.CommandResult, path string, limit int) model.CommandResult {
+	if path == "" {
+		return result
+	}
+	result.Command = strings.ReplaceAll(result.Command, path, "[private output]")
+	for i := range result.Arguments {
+		result.Arguments[i] = strings.ReplaceAll(result.Arguments[i], path, "[private output]")
+	}
+	result.Stderr = strings.ReplaceAll(result.Stderr, path, "[private output]")
+	if len(result.Stderr) > limit {
+		result.Stderr = result.Stderr[:limit]
+		result.Truncated = true
 	}
 	return result
 }
