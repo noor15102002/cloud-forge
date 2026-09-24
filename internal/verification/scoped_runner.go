@@ -16,6 +16,7 @@ type scopedRunner struct {
 	runner       command.Runner
 	kubeconfig   string
 	dockerConfig string
+	tempDir      string
 	dockerPinned bool
 }
 
@@ -25,6 +26,12 @@ func (r scopedRunner) Run(ctx context.Context, req command.Request) model.Comman
 	}
 	if r.dockerConfig != "" {
 		req.Env = append(req.Env, "DOCKER_CONFIG="+r.dockerConfig, "BUILDX_CONFIG="+filepath.Join(r.dockerConfig, "buildx"), "BUILDX_BUILDER=")
+	}
+	if r.tempDir != "" && !req.ClearEnv {
+		// Runtime tools may leave their own temporary files after succeeding.
+		// Keep those files inside the already owned cleanup boundary. A tool
+		// with a controlled environment (Trivy) keeps its stricter private temp.
+		req.Env = append(req.Env, "TMPDIR="+r.tempDir)
 	}
 	if r.dockerPinned {
 		req = runtimepolicy.PinDocker(req)

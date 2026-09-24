@@ -85,6 +85,12 @@ This observation window does not extend application execution or individual
 cleanup command deadlines. A failing or unreachable Docker daemon can still
 prevent cleanup; such errors and independently observed leftovers are retained.
 
+Runtime subprocesses use a temporary directory inside the owned verification
+workspace. This contains files left by tools such as k3d so workspace cleanup
+removes them after success, failure or cancellation. Trivy retains its stricter
+private temporary directory, and Buildx version inspection uses its own bounded
+preflight directory. CloudForge does not sweep the user's global temporary files.
+
 Each run uses private kubeconfig and Docker builder configuration. The default
 kubectl context and builder remain unchanged. Runtime execution accepts only the
 default local Docker Engine endpoint, `unix:///var/run/docker.sock`. The same

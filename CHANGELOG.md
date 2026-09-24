@@ -9,6 +9,8 @@ Versioning once releases begin.
   explicit vulnerability policy without allowing ambient settings to hide findings.
 - Resolve Docker selection once, reject unsupported endpoints before execution,
   and pin the approved local socket across preflight, builds, scans and cleanup.
+- Contain runtime-tool temporary files inside the owned workspace so normal
+  cleanup also removes k3d hosts-file remnants observed during qualification.
 - Align doctor with runtime compatibility and private-config Buildx availability;
   record the observed Buildx version without claiming an unvalidated version is supported.
 - Label core/experimental capability maturity independently from native verdicts,

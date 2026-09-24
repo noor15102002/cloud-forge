@@ -94,5 +94,5 @@ func BuildxVersion(ctx context.Context, runner command.Runner) (result model.Com
 			result = model.CommandResult{ExitCode: -1, FailureType: model.FailureExecution}
 		}
 	}()
-	return runner.Run(ctx, command.Request{Name: "docker", Args: []string{"buildx", "version"}, Timeout: 10 * time.Second, OutputLimit: 16 * 1024, Env: []string{"DOCKER_CONFIG=" + directory, "BUILDX_CONFIG=" + filepath.Join(directory, "buildx"), "BUILDX_BUILDER="}})
+	return runner.Run(ctx, command.Request{Name: "docker", Args: []string{"buildx", "version"}, Timeout: 10 * time.Second, OutputLimit: 16 * 1024, Env: []string{"DOCKER_CONFIG=" + directory, "BUILDX_CONFIG=" + filepath.Join(directory, "buildx"), "BUILDX_BUILDER=", "TMPDIR=" + directory}})
 }

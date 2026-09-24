@@ -279,7 +279,12 @@ func (s *Service) Run(ctx context.Context, path string, options Options) (out Ou
 		out.addError("workspace_failed", "CloudForge could not create its private Docker configuration.", err.Error())
 		return out
 	}
-	scoped := scopedRunner{runner: s.runner, kubeconfig: kubeconfigPath, dockerConfig: dockerConfig, dockerPinned: true}
+	runtimeTemp := filepath.Join(temporary, "temp")
+	if err := os.Mkdir(runtimeTemp, 0o700); err != nil {
+		out.addError("workspace_failed", "CloudForge could not create its private subprocess temporary directory.", err.Error())
+		return out
+	}
+	scoped := scopedRunner{runner: s.runner, kubeconfig: kubeconfigPath, dockerConfig: dockerConfig, tempDir: runtimeTemp, dockerPinned: true}
 	dockerClient := docker.New(scoped)
 	dockerClient.IsolateBuild(plan.clusterName)
 	builderAttempted := false

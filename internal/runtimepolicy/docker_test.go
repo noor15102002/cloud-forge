@@ -160,7 +160,7 @@ func TestBuildxPreflightUsesPrivatePluginVisibilityAndCleansTemporaryState(t *te
 			env[key] = value
 		}
 		directory = env["DOCKER_CONFIG"]
-		if directory == "" || env["BUILDX_CONFIG"] != filepath.Join(directory, "buildx") || env["BUILDX_BUILDER"] != "" {
+		if directory == "" || env["BUILDX_CONFIG"] != filepath.Join(directory, "buildx") || env["BUILDX_BUILDER"] != "" || env["TMPDIR"] != directory {
 			t.Fatalf("plugin preflight differs from private runtime: %+v", req)
 		}
 		entries, err := os.ReadDir(directory)
@@ -169,6 +169,9 @@ func TestBuildxPreflightUsesPrivatePluginVisibilityAndCleansTemporaryState(t *te
 		}
 		if req.Timeout != 10*time.Second || req.OutputLimit != 16*1024 {
 			t.Fatal("plugin observation unbounded")
+		}
+		if err := os.WriteFile(filepath.Join(env["TMPDIR"], "preflight-tool-residue"), []byte("synthetic"), 0o600); err != nil {
+			t.Fatal(err)
 		}
 		return model.CommandResult{Stdout: "github.com/docker/buildx v0.21.2"}
 	}))
