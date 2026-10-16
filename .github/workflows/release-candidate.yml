@@ -46,7 +46,7 @@ jobs:
       - name: Preserve this static attempt
         if: always()
         timeout-minutes: 5
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: static-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/static-evidence
@@ -87,7 +87,7 @@ jobs:
       - name: Preserve exactly the built release files
         if: always()
         timeout-minutes: 5
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/release
@@ -96,7 +96,7 @@ jobs:
       - name: Preserve the independent reproducibility comparison
         if: always()
         timeout-minutes: 3
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: reproducibility-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -131,7 +131,7 @@ jobs:
           cp "$RUNNER_TEMP/candidate-install/installation.json" "$RUNNER_TEMP/install-evidence/"
       - if: always()
         timeout-minutes: 5
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: install-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/install-evidence
@@ -225,7 +225,7 @@ jobs:
         if: always()
         continue-on-error: true
         timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: generic-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
           path: ${{ runner.temp }}/qualification/records/initial
@@ -236,7 +236,7 @@ jobs:
         if: always()
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: generic-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/qualification
@@ -256,7 +256,7 @@ jobs:
         if: always()
         continue-on-error: true
         timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: generic-${{ matrix.case }}-${{ github.run_id }}-${{ github.run_attempt }}-record-final
           path: ${{ runner.temp }}/qualification/records/final
@@ -372,7 +372,7 @@ jobs:
         if: always()
         continue-on-error: true
         timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: action-${{ matrix.fixture }}-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
           path: ${{ steps.verify.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}/qualification-records/initial
@@ -383,7 +383,7 @@ jobs:
         if: always()
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: action-${{ matrix.fixture }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.verify.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}
@@ -403,7 +403,7 @@ jobs:
         if: always()
         continue-on-error: true
         timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: action-${{ matrix.fixture }}-${{ github.run_id }}-${{ github.run_attempt }}-record-final
           path: ${{ steps.verify.outputs.report-directory || format('{0}/action-unavailable', runner.temp) }}/qualification-records/final
@@ -437,7 +437,7 @@ jobs:
         if: ${{ always() && matrix.fixture == 'monorepo' }}
         continue-on-error: true
         timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: action-monorepo-extra-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
           path: ${{ runner.temp }}/monorepo-records/initial
@@ -448,7 +448,7 @@ jobs:
         if: ${{ always() && matrix.fixture == 'monorepo' }}
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: action-monorepo-extra-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/monorepo-evidence
@@ -468,7 +468,7 @@ jobs:
         if: ${{ always() && matrix.fixture == 'monorepo' }}
         continue-on-error: true
         timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: action-monorepo-extra-${{ github.run_id }}-${{ github.run_attempt }}-record-final
           path: ${{ runner.temp }}/monorepo-records/final
@@ -502,7 +502,7 @@ jobs:
         if: ${{ always() && matrix.fixture == 'monorepo' }}
         continue-on-error: true
         timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: action-monorepo-cancel-${{ github.run_id }}-${{ github.run_attempt }}-record-initial
           path: ${{ runner.temp }}/cancellation-records/initial
@@ -513,7 +513,7 @@ jobs:
         if: ${{ always() && matrix.fixture == 'monorepo' }}
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: action-monorepo-cancel-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/monorepo-cancellation
@@ -533,7 +533,7 @@ jobs:
         if: ${{ always() && matrix.fixture == 'monorepo' }}
         continue-on-error: true
         timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: action-monorepo-cancel-${{ github.run_id }}-${{ github.run_attempt }}-record-final
           path: ${{ runner.temp }}/cancellation-records/final
@@ -592,7 +592,7 @@ jobs:
       - name: Preserve live API observations and comment scope
         if: always()
         timeout-minutes: 3
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: live-report-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/live-report
